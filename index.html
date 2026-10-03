@@ -1,0 +1,3081 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cubitt - Sistema de Registro de Ventas</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⌚</text></svg>">
+  <!-- Motor OCR en el navegador para escaneo de comprobantes y facturas -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand-wrapper">
+        <span class="brand-logo-text">CUBITT</span>
+        <span class="brand-badge">POS & Ventas</span>
+      </div>
+      <div class="header-stats">
+        <div class="header-stat-box">
+          <div class="stat-label">Ventas Hoy</div>
+          <div class="stat-val" id="topTotalSalesCount">0</div>
+        </div>
+        <div class="header-stat-box">
+          <div class="stat-label">Total Facturado</div>
+          <div class="stat-val" id="topTotalMoney">$0.00</div>
+        </div>
+        <div class="header-stat-box">
+          <div class="stat-label">Créditos Pendientes</div>
+          <div class="stat-val" id="topPendingCredit" style="color: #60a5fa;">$0.00</div>
+        </div>
+        <div class="header-stat-box">
+          <div class="stat-label">CXP Por Pagar</div>
+          <div class="stat-val" id="topPendingCXP" style="color: #f87171;">$0.00</div>
+        </div>
+      </div>
+
+      <!-- Current User Profile & Logout -->
+      <div class="header-user-section" id="headerUserSection" style="display: none;">
+        <div class="header-user-pill" id="headerUserPill">
+          <div class="header-user-avatar" id="headerUserAvatar">CU</div>
+          <div class="header-user-info">
+            <div class="header-user-name" id="headerUserName">Usuario</div>
+            <div class="header-user-role" id="headerUserRoleBadge">Rol</div>
+          </div>
+          <button type="button" class="header-logout-btn" onclick="handleLogout()" title="Cerrar sesión">
+            <span>🚪 Salir</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="nav-tabs">
+    <div class="nav-container">
+      <button class="nav-tab-btn active" data-tab="pos" id="navBtnPos" onclick="switchTab('pos')">
+        <span>📝 Registrar Venta</span>
+      </button>
+
+      <button class="nav-tab-btn" data-tab="history" id="navBtnHistory" onclick="switchTab('history')">
+        <span>📊 Historial</span>
+        <span class="badge-count" id="badgeHistoryCount">0</span>
+      </button>
+
+      <button class="nav-tab-btn" data-tab="inventory" id="navBtnInventory" onclick="switchTab('inventory')">
+        <span>🏷️ Inventario & Facturas</span>
+        <span class="badge-count" id="badgeInventoryStock">0</span>
+      </button>
+
+      <button class="nav-tab-btn" data-tab="clients" id="navBtnClients" onclick="switchTab('clients')">
+        <span>👥 Clientes</span>
+        <span class="badge-count" id="badgeClientsCount">0</span>
+      </button>
+
+      <!-- Dropdown 1: Finanzas & Cuentas (Cobrar y Pagar) -->
+      <div class="nav-dropdown" id="navDropdownFinances">
+        <button type="button" class="nav-tab-btn nav-dropdown-btn" id="navBtnFinances" onclick="toggleNavDropdown('navDropdownFinances', event)">
+          <span>💰 Finanzas</span>
+          <span class="badge-count" id="badgeCuentasTotal">0</span>
+          <span class="dropdown-chevron">▾</span>
+        </button>
+        <div class="nav-dropdown-menu">
+          <button type="button" class="nav-dropdown-item" id="navItemCredits" onclick="switchTab('credits'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #eff6ff; color: #2563eb;">💳</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Cuentas por Cobrar</div>
+              <div class="dropdown-item-subtitle">Créditos, abonos y control de cobranza</div>
+            </div>
+            <span class="badge-count" id="badgeCreditCount">0</span>
+          </button>
+          <button type="button" class="nav-dropdown-item" id="navItemPayables" onclick="switchTab('payables'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #fef2f2; color: #dc2626;">💸</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Cuentas por Pagar (CXP)</div>
+              <div class="dropdown-item-subtitle">Proveedores, comisiones y conciliación</div>
+            </div>
+            <span class="badge-count" id="badgePayablesCount">0</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Dropdown 2: Equipo & Metas -->
+      <div class="nav-dropdown" id="navDropdownSellers">
+        <button type="button" class="nav-tab-btn nav-dropdown-btn" id="navBtnSellers" onclick="toggleNavDropdown('navDropdownSellers', event)">
+          <span>👔 Equipo & Metas</span>
+          <span class="badge-count" id="badgeSellersCount">0</span>
+          <span class="dropdown-chevron">▾</span>
+        </button>
+        <div class="nav-dropdown-menu">
+          <button type="button" class="nav-dropdown-item" id="navItemSellersDir" onclick="switchTab('sellers'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #f0fdf4; color: #16a34a;">👥</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Directorio de Vendedores</div>
+              <div class="dropdown-item-subtitle">Lista de asesores, ventas y facturación</div>
+            </div>
+          </button>
+          <button type="button" class="nav-dropdown-item" id="navItemGoals" onclick="switchTab('goals'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #ecfdf5; color: #059669;">🎯</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Metas & Bonos ($50)</div>
+              <div class="dropdown-item-subtitle">Bono de $50 ganado por cada $1,000</div>
+            </div>
+            <span class="badge-count" id="badgeGoalsBonus" style="background: #10b981; color: #fff;">$0</span>
+          </button>
+          <button type="button" class="nav-dropdown-item" id="navItemCreateSeller" onclick="openCreateSellerModal(); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #e0e7ff; color: #4338ca;">➕</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Registrar Nuevo Vendedor</div>
+              <div class="dropdown-item-subtitle">Crear ficha de asesor independiente</div>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Dropdown 3: Más Opciones (Catálogo, Bajo Pedido, Usuarios) -->
+      <div class="nav-dropdown" id="navDropdownMore">
+        <button type="button" class="nav-tab-btn nav-dropdown-btn" id="navBtnMore" onclick="toggleNavDropdown('navDropdownMore', event)">
+          <span>⚙️ Más Opciones</span>
+          <span class="dropdown-chevron">▾</span>
+        </button>
+        <div class="nav-dropdown-menu">
+          <button type="button" class="nav-dropdown-item" id="navItemCatalog" onclick="switchTab('catalog'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #f8fafc; color: #475569;">📦</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Catálogo de Productos</div>
+              <div class="dropdown-item-subtitle">Precios oficiales, fotos y descripción</div>
+            </div>
+          </button>
+          <button type="button" class="nav-dropdown-item" id="navItemOrders" onclick="switchTab('orders'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #fffbeb; color: #d97706;">🚚</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Ventas Bajo Pedido</div>
+              <div class="dropdown-item-subtitle">Seguimiento de compras y entregas</div>
+            </div>
+            <span class="badge-count" id="badgeBajoPedidoCount">0</span>
+          </button>
+          <button type="button" class="nav-dropdown-item" id="navItemUsers" onclick="switchTab('users'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #f5f3ff; color: #7c3aed;">🔐</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Gestión de Usuarios</div>
+              <div class="dropdown-item-subtitle">Permisos, roles y contraseñas (Gerencia)</div>
+            </div>
+            <span class="badge-count" id="badgeUsersCount">0</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main-content">
+
+    <!-- TAB 1: POS / REGISTRAR VENTA -->
+    <section class="tab-pane active" id="tab-pos">
+      <div class="pos-layout">
+
+        <!-- Form Column -->
+        <div class="app-card">
+          <div class="card-title">
+            <span>Nueva Venta</span>
+            <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">Cubitt Retail System</span>
+          </div>
+
+          <!-- Sale Date and Time (Supports past historical dates) -->
+          <div style="margin-bottom: 1.25rem;">
+            <label class="form-label" for="saleDateInput">
+              <span>📅 Fecha y Hora de la Venta *</span>
+              <span class="label-hint">Puedes seleccionar fechas anteriores para registrar ventas pasadas</span>
+            </label>
+            <input type="datetime-local" id="saleDateInput" class="form-control" style="font-weight: 600;">
+          </div>
+
+          <!-- Product Code Search Bar -->
+          <div class="search-wrapper">
+            <label class="form-label" for="productSearchInput">
+              <span>Código o Nombre del Producto *</span>
+              <span class="label-hint">Escribe el código (ej. CTHR-1, CT-COF1, CTHB24)</span>
+            </label>
+            <div class="search-input-box">
+              <span class="search-icon">🔍</span>
+              <input type="text" id="productSearchInput" class="search-input" placeholder="Buscar por descripción o código (ej: Termo Café, CTHR-1, Reloj...)" autocomplete="off">
+              <button type="button" id="clearSearchBtn" class="clear-search-btn" title="Limpiar">&times;</button>
+            </div>
+            <!-- Live Autocomplete Dropdown -->
+            <div id="autocompleteDropdown" class="autocomplete-dropdown"></div>
+          </div>
+
+          <!-- Product Image & Info Preview Card -->
+          <div id="productPreviewBox" class="product-preview-container">
+            <div class="no-product-selected">
+              <div class="no-product-icon">
+                <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"/>
+                </svg>
+              </div>
+              <p style="font-weight: 600;">Escribe o selecciona un código de producto</p>
+              <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 4px;">Ejemplos: <strong>CTHR-1</strong>, <strong>CT-COF1</strong>, <strong>CT-PWANC1</strong>, <strong>CTHB24-1</strong></p>
+            </div>
+          </div>
+
+          <!-- Sales Inputs Section -->
+          <div class="form-section">
+            <div class="form-row">
+              <!-- Quantity Stepper -->
+              <div class="form-group">
+                <label class="form-label" for="saleQtyInput">Cantidad Vendida</label>
+                <div class="qty-stepper">
+                  <button type="button" class="qty-btn" onclick="stepQty(-1)">−</button>
+                  <input type="number" id="saleQtyInput" class="qty-input" value="1" min="1">
+                  <button type="button" class="qty-btn" onclick="stepQty(1)">+</button>
+                </div>
+              </div>
+
+              <!-- Sale Price Input -->
+              <div class="form-group">
+                <label class="form-label" for="salePriceInput">
+                  <span>Precio de Venta Unitario</span>
+                  <span class="label-hint">Editable</span>
+                </label>
+                <div class="currency-input-wrap">
+                  <span class="currency-prefix">$</span>
+                  <input type="number" id="salePriceInput" class="form-control with-prefix" placeholder="0.00" step="0.01" min="0">
+                </div>
+              </div>
+            </div>
+
+            <!-- Modalidad de Disponibilidad: Entrega Inmediata vs Venta Bajo Pedido -->
+            <div class="form-group" style="margin-bottom: 1.25rem;">
+              <label class="form-label">
+                <span>📦 Modalidad de Entrega / Stock *</span>
+                <span class="label-hint">¿El producto está disponible en tienda o es por encargo?</span>
+              </label>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div class="order-mode-card selected" id="modeImmediate" onclick="setOrderMode('inmediata')">
+                  <div style="font-size: 1.3rem;">🟢</div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.88rem; color: #0f172a;">Entrega Inmediata</div>
+                    <div style="font-size: 0.73rem; color: #64748b;">Producto disponible en stock</div>
+                  </div>
+                </div>
+                <div class="order-mode-card" id="modeBajoPedido" onclick="setOrderMode('bajo_pedido')">
+                  <div style="font-size: 1.3rem;">📦</div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.88rem; color: #b45309;">Venta Bajo Pedido</div>
+                    <div style="font-size: 0.73rem; color: #92400e;">Solicitar compra / Por encargo</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bajo Pedido Details Panel (Collapsible) -->
+              <div id="bajoPedidoPanel" style="display: none; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                <div style="display: flex; align-items: center; gap: 6px; font-weight: 700; color: #92400e; font-size: 0.86rem; margin-bottom: 8px;">
+                  <span>ℹ️ Esta venta se registrará en el renglón de "Ventas Bajo Pedido" para solicitar compra</span>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label class="form-label" for="orderExpectedDate">Fecha Estimada de Llegada</label>
+                    <input type="date" id="orderExpectedDate" class="form-control" style="background: #ffffff;">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="orderSupplierNotes">Detalle del Encargo / Proveedor</label>
+                    <input type="text" id="orderSupplierNotes" class="form-control" style="background: #ffffff;" placeholder="Ej: Pedir al Distribuidor, color especial...">
+                  </div>
+                </div>
+                <div style="font-size: 0.76rem; color: #78350f; line-height: 1.4;">
+                  • Podrás hacer seguimiento en la pestaña <strong>"📦 Bajo Pedido"</strong> y marcarlo como <strong>"Entregado"</strong> en cuanto llegue y se entregue al cliente.
+                </div>
+              </div>
+            </div>
+
+            <!-- Payment Type (Contado vs Crédito) -->
+            <div class="form-group">
+              <label class="form-label">Modalidad de Pago *</label>
+              <div class="payment-type-selector">
+                <div class="payment-type-card selected contado" data-type="contado" onclick="setPaymentType('contado')">
+                  <div class="payment-icon-wrap">💵</div>
+                  <div>
+                    <div class="payment-card-title">De Contado</div>
+                    <div class="payment-card-sub">Pago directo</div>
+                  </div>
+                </div>
+
+                <div class="payment-type-card mercadolibre" data-type="contado_mercadolibre" onclick="setPaymentType('contado_mercadolibre')">
+                  <div class="payment-icon-wrap">🟡</div>
+                  <div>
+                    <div class="payment-card-title">Contado - MercadoLibre</div>
+                    <div class="payment-card-sub">12% comisión • Genera CXP</div>
+                  </div>
+                </div>
+
+                <div class="payment-type-card credito" data-type="credito" onclick="setPaymentType('credito')">
+                  <div class="payment-icon-wrap">📋</div>
+                  <div>
+                    <div class="payment-card-title">A Crédito</div>
+                    <div class="payment-card-sub">Cashea o Vendedor JP</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Conditional Payment Details Panel -->
+            <div id="conditionalPaymentPanel" class="conditional-panel">
+              <!-- Contado Details -->
+              <div id="contadoPanel">
+                <div class="form-group">
+                  <label class="form-label" for="paymentMethodSelect">Método de Pago (Contado)</label>
+                  <select id="paymentMethodSelect" class="form-control" onchange="handlePaymentMethodChange()">
+                    <option value="Efectivo ($ USD)">💵 Efectivo ($ USD)</option>
+                    <option value="Pago Móvil / Transferencia">📱 Pago Móvil / Transferencia (Bs)</option>
+                    <option value="Zelle">⚡ Zelle ($ USD)</option>
+                    <option value="Panamá USD $">🇵🇦 Panamá USD $</option>
+                    <option value="Binance USD $">🪙 Binance USD $ (USDT)</option>
+                    <option value="PayPal USD $">🅿️ PayPal USD $</option>
+                    <option value="Zinli USD $">💳 Zinli USD $</option>
+                    <option value="Tarjeta / Punto de Venta">💳 Tarjeta / Punto de Venta</option>
+                    <option value="Contado - MercadoLibre">🟡 Contado - MercadoLibre (12% comisión)</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- MercadoLibre Details Panel -->
+              <div id="mercadolibrePanel" style="display: none;">
+                <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; margin-bottom: 0.5rem;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px;">
+                    <span style="font-weight: 700; color: #92400e; font-size: 0.95rem;">🟡 Venta Contado por MercadoLibre</span>
+                    <span style="font-size: 0.75rem; background: #fef3c7; color: #92400e; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid #fde68a;">Comisión 12%</span>
+                  </div>
+                  <p style="font-size: 0.8rem; color: #78350f; margin: 4px 0 8px 0;">
+                    El cliente paga de contado a través de MercadoLibre. Se deduce automáticamente la comisión del 12% y se genera una Cuenta por Pagar (CXP) a nombre de MercadoLibre.
+                  </p>
+                  <div id="mercadolibreFinancialBreakdown" class="financial-breakdown-box" style="background: #ffffff; border-color: #fde68a; margin-top: 6px;">
+                    <!-- Populated dynamically via updateLiveCalculations -->
+                  </div>
+                </div>
+              </div>
+
+              <!-- Crédito Details -->
+              <div id="creditoPanel" style="display: none;">
+                <!-- Credit Subtype Selector -->
+                <div class="form-group" style="margin-bottom: 1rem;">
+                  <label class="form-label">Tipo de Crédito *</label>
+                  <div class="credit-subtype-selector">
+                    <div class="credit-subtype-card selected bull" data-subtype="cashea_bull" onclick="setCreditSubtype('cashea_bull')">
+                      <div class="subtype-title">
+                        <span>Cashea Bull</span>
+                        <span style="font-size: 0.72rem; color: #2563eb; font-weight: 700;">3% + IVA</span>
+                      </div>
+                      <div class="subtype-desc">Comisión Cashea 3% • IVA 16% facturado en PVP</div>
+                    </div>
+
+                    <div class="credit-subtype-card tmania" data-subtype="cashea_tmania" onclick="setCreditSubtype('cashea_tmania')">
+                      <div class="subtype-title">
+                        <span>Cashea T-Mania</span>
+                        <span style="font-size: 0.72rem; color: #7c3aed; font-weight: 700;">8% + 10%</span>
+                      </div>
+                      <div class="subtype-desc">Comisión Cashea 8% + T-Mania 10% (Sin IVA)</div>
+                    </div>
+
+                    <div class="credit-subtype-card jp" data-subtype="jp" onclick="setCreditSubtype('jp')">
+                      <div class="subtype-title">
+                        <span>Crédito JP</span>
+                        <span style="font-size: 0.72rem; color: #059669; font-weight: 700;">0% Comis.</span>
+                      </div>
+                      <div class="subtype-desc">Venta particular • Cobranza por vendedores</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Live Financial Breakdown for Credit -->
+                <div id="creditFinancialBreakdown" class="financial-breakdown-box">
+                  <!-- Populated dynamically via updateLiveCalculations -->
+                </div>
+
+                <!-- JP specific fields -->
+                <div id="jpFieldsWrap" style="display: none; margin-top: 1rem;">
+                  <div class="form-row">
+                    <div class="form-group">
+                      <label class="form-label" for="vendedorInput">
+                        <span>Vendedor Responsable *</span>
+                        <span class="label-hint">Gestor del cobro</span>
+                      </label>
+                      <input type="text" id="vendedorInput" class="form-control" placeholder="Ej: Juan Pérez">
+                    </div>
+                    <div class="form-group">
+                      <label class="form-label" for="creditDueDate">Fecha Límite de Cobro *</label>
+                      <input type="date" id="creditDueDate" class="form-control">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Down payment / Inicial -->
+                <div class="form-row" style="margin-top: 1rem;">
+                  <div class="form-group">
+                    <label class="form-label" for="creditInitialPayment">
+                      <span>Cuota Inicial / Abono ($)</span>
+                      <span class="label-hint">Monto recibido</span>
+                    </label>
+                    <div class="currency-input-wrap">
+                      <span class="currency-prefix">$</span>
+                      <input type="number" id="creditInitialPayment" class="form-control with-prefix" value="0" step="0.01" min="0">
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="creditInitialMethodSelect">Método de la Inicial / Abono</label>
+                    <select id="creditInitialMethodSelect" class="form-control">
+                      <option value="Efectivo ($ USD)">💵 Efectivo ($ USD)</option>
+                      <option value="Pago Móvil / Transferencia">📱 Pago Móvil / Transferencia</option>
+                      <option value="Zelle">⚡ Zelle</option>
+                      <option value="Panamá USD $">🇵🇦 Panamá USD $</option>
+                      <option value="Binance USD $">🪙 Binance USD $</option>
+                      <option value="PayPal USD $">🅿️ PayPal USD $</option>
+                      <option value="Zinli USD $">💳 Zinli USD $</option>
+                      <option value="Punto / Tarjeta">💳 Punto / Tarjeta</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding: 8px 12px; background: #ffffff; border-radius: 6px; border: 1px solid #bfdbfe;">
+                  <span style="font-size: 0.85rem; font-weight: 600; color: #1e40af;" id="creditBalanceLabel">Saldo Restante por Cobrar:</span>
+                  <span id="creditBalancePreview" style="font-size: 1.15rem; font-weight: 800; color: #ef4444;">$0.00</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Customer & Sale Notes & Seller -->
+            <div class="form-row">
+              <div class="form-group" style="position: relative;">
+                <label class="form-label" for="clientNameInput">
+                  <span>Nombre del Cliente</span>
+                  <span class="label-hint">(Escribe o selecciona cliente)</span>
+                </label>
+                <input type="text" id="clientNameInput" class="form-control" placeholder="Ej: Carlos Pérez" autocomplete="off">
+                <div id="clientAutocompleteDropdown" class="autocomplete-dropdown"></div>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="clientPhoneInput">
+                  <span>Teléfono / WhatsApp</span>
+                  <span class="label-hint">Para recordatorio</span>
+                </label>
+                <input type="tel" id="clientPhoneInput" class="form-control" placeholder="Ej: 04141234567">
+              </div>
+            </div>
+
+            <!-- Vendedor Responsable & Observaciones -->
+            <div class="form-row">
+              <div class="form-group">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label class="form-label" for="saleSellerSelect" style="margin-bottom: 0;">
+                    <span>👔 Vendedor Responsable *</span>
+                  </label>
+                  <div style="display: flex; gap: 4px;" id="posSellerAdminButtons">
+                    <button type="button" class="btn btn-outline btn-xs" onclick="openCreateSellerModal()" title="Registrar nuevo vendedor">
+                      + Nuevo
+                    </button>
+                    <button type="button" class="btn btn-outline btn-xs" onclick="openManageSellersModal()" title="Gestionar equipo de vendedores">
+                      ⚙️ Equipo
+                    </button>
+                  </div>
+                </div>
+                <select id="saleSellerSelect" class="form-control" onchange="handleSaleSellerChange()">
+                  <option value="">-- Seleccionar Vendedor --</option>
+                  <!-- Populated dynamically -->
+                </select>
+                <div id="posSellerLockedNotice" style="display: none;" class="seller-locked-notice">
+                  <span>🔒 Vendedor fijo asignado:</span>
+                  <span id="posSellerLockedName" style="color: #2563eb;"></span>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="saleNotesInput">Observaciones / Notas (Opcional)</label>
+                <input type="text" id="saleNotesInput" class="form-control" placeholder="Ej: Incluye protector de regalo, color negro...">
+              </div>
+            </div>
+
+            <!-- 3 Comisiones Adicionales Modificables (Generan CXP) -->
+            <div class="additional-commissions-box">
+              <div class="commissions-header">
+                <span>💼 Comisiones Adicionales (Generan Cuenta por Pagar CXP)</span>
+                <span style="font-size: 0.75rem; color: #64748b; font-weight: normal;">Modificables en base a la información de venta</span>
+              </div>
+
+              <!-- Comisión 1 -->
+              <div class="commission-slot-card" id="commCard1">
+                <div class="commission-slot-inputs">
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Concepto 1</label>
+                    <input type="text" id="comm1Concept" class="form-control" style="padding: 6px 10px; font-size: 0.85rem;" value="Comisión Vendedor / Asesor">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Beneficiario (A quién)</label>
+                    <input type="text" id="comm1Beneficiary" class="form-control" style="padding: 6px 10px; font-size: 0.85rem;" placeholder="Ej: Pedro Asesor">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Monto ($ USD)</label>
+                    <div class="currency-input-wrap">
+                      <span class="currency-prefix">$</span>
+                      <input type="number" id="comm1Value" class="form-control with-prefix" style="padding: 6px 10px; font-size: 0.85rem;" value="0" step="0.5" min="0">
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Comisión 2 -->
+              <div class="commission-slot-card" id="commCard2">
+                <div class="commission-slot-inputs">
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Concepto 2</label>
+                    <input type="text" id="comm2Concept" class="form-control" style="padding: 6px 10px; font-size: 0.85rem;" value="Comisión Aliado Comercial">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Beneficiario (A quién)</label>
+                    <input type="text" id="comm2Beneficiary" class="form-control" style="padding: 6px 10px; font-size: 0.85rem;" placeholder="Ej: Tienda Aliada">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Monto ($ USD)</label>
+                    <div class="currency-input-wrap">
+                      <span class="currency-prefix">$</span>
+                      <input type="number" id="comm2Value" class="form-control with-prefix" style="padding: 6px 10px; font-size: 0.85rem;" value="0" step="0.5" min="0">
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Comisión 3 -->
+              <div class="commission-slot-card" id="commCard3">
+                <div class="commission-slot-inputs">
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Concepto 3</label>
+                    <input type="text" id="comm3Concept" class="form-control" style="padding: 6px 10px; font-size: 0.85rem;" value="Comisión Delivery / Mensajería">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Beneficiario (A quién)</label>
+                    <input type="text" id="comm3Beneficiary" class="form-control" style="padding: 6px 10px; font-size: 0.85rem;" placeholder="Ej: Repartidor">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" style="font-size: 0.75rem;">Monto ($ USD)</label>
+                    <div class="currency-input-wrap">
+                      <span class="currency-prefix">$</span>
+                      <input type="number" id="comm3Value" class="form-control with-prefix" style="padding: 6px 10px; font-size: 0.85rem;" value="0" step="0.5" min="0">
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Calculation Box -->
+            <div class="calc-summary-box">
+              <div class="calc-row">
+                <span>Subtotal Artículos:</span>
+                <strong id="calcSubtotal">$0.00</strong>
+              </div>
+              <div class="calc-row" id="calcAdditionalCommRow" style="display: none; color: #b91c1c;">
+                <span>- Comisiones Adicionales CXP:</span>
+                <strong id="calcAdditionalCommTotal">-$0.00</strong>
+              </div>
+              <div class="calc-row">
+                <span>Margen / Ganancia Neta Real:</span>
+                <span id="calcProfit" style="color: #059669; font-weight: 600;">$0.00 (0%)</span>
+              </div>
+              <div class="calc-row total-row">
+                <span>TOTAL A COBRAR:</span>
+                <span class="total-amount-display" id="calcTotal">$0.00</span>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="form-actions-grid">
+              <button type="button" class="btn btn-primary" onclick="handleRegisterSaleDirect()">
+                <span>⚡ Registrar Venta Directa</span>
+              </button>
+              <button type="button" class="btn btn-outline" onclick="handleAddToCart()">
+                <span>🛒 Añadir al Pedido</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Side: Order / Cart Panel & Quick Helpers -->
+        <div>
+          <!-- Cart Box (visible when items are added) -->
+          <div class="app-card" id="cartCard" style="display: none; margin-bottom: 1.5rem; border-color: #3b82f6;">
+            <div class="card-title">
+              <span>🛒 Pedido en Curso</span>
+              <span id="cartItemCount" style="font-size: 0.8rem; font-weight: 600; color: #2563eb;">0 productos</span>
+            </div>
+            <div id="cartItemsList" class="cart-items-list"></div>
+            <div class="calc-summary-box" style="margin-bottom: 1rem;">
+              <div class="calc-row total-row">
+                <span>Total Pedido:</span>
+                <span class="total-amount-display" id="cartGrandTotal">$0.00</span>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-success btn-block" onclick="handleCheckoutCart()">
+                <span>✅ Completar Venta del Pedido</span>
+              </button>
+              <button class="btn btn-outline" onclick="clearCart()" title="Vaciar Pedido" style="color: #ef4444;">
+                🗑️
+              </button>
+            </div>
+          </div>
+
+          <!-- Quick Shortcuts Card -->
+          <div class="app-card">
+            <div class="card-title">
+              <span>Accesos Rápidos al Catálogo</span>
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+              Haz clic en cualquier categoría para explorar productos y cargarlos inmediatamente en el formulario:
+            </p>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              <button class="btn btn-outline" style="justify-content: space-between;" onclick="quickFilterCatalog('CAFE')">
+                <span>☕ Termos para Café (Coffee Mug)</span>
+                <span style="color: #64748b; font-size: 0.8rem;">Ver →</span>
+              </button>
+              <button class="btn btn-outline" style="justify-content: space-between;" onclick="quickFilterCatalog('AGUA')">
+                <span>💧 Termos para Agua (Hydro & Tumbler)</span>
+                <span style="color: #64748b; font-size: 0.8rem;">Ver →</span>
+              </button>
+              <button class="btn btn-outline" style="justify-content: space-between;" onclick="quickFilterCatalog('RELOJ')">
+                <span>⌚ Relojes Inteligentes (Smartwatches)</span>
+                <span style="color: #64748b; font-size: 0.8rem;">Ver →</span>
+              </button>
+              <button class="btn btn-outline" style="justify-content: space-between;" onclick="quickFilterCatalog('AUDIFONO')">
+                <span>🎧 Audífonos Inalámbricos</span>
+                <span style="color: #64748b; font-size: 0.8rem;">Ver →</span>
+              </button>
+              <button class="btn btn-outline" style="justify-content: space-between;" onclick="quickFilterCatalog('BOCINA')">
+                <span>🔊 Bocinas Bluetooth</span>
+                <span style="color: #64748b; font-size: 0.8rem;">Ver →</span>
+              </button>
+              <button class="btn btn-outline" style="justify-content: space-between;" onclick="quickFilterCatalog('BOLSOS')">
+                <span>🎒 Bolsos y Mochilas Cubitt</span>
+                <span style="color: #64748b; font-size: 0.8rem;">Ver →</span>
+              </button>
+              <button class="btn btn-outline" style="justify-content: space-between;" onclick="quickFilterCatalog('CORREA')">
+                <span>🔗 Correas de Silicona para Reloj</span>
+                <span style="color: #64748b; font-size: 0.8rem;">Ver →</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 2: HISTORIAL DE VENTAS -->
+    <section class="tab-pane" id="tab-history">
+      <!-- Metrics Dashboard -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-icon-box green">💰</div>
+          <div>
+            <div class="metric-title">Total Facturado</div>
+            <div class="metric-value" id="histMetricTotal">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box blue">📈</div>
+          <div>
+            <div class="metric-title">Ganancia Estimada</div>
+            <div class="metric-value" id="histMetricProfit">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box purple">💵</div>
+          <div>
+            <div class="metric-title">Cobrado de Contado</div>
+            <div class="metric-value" id="histMetricContado">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box amber">⏳</div>
+          <div>
+            <div class="metric-title">Por Cobrar en Créditos</div>
+            <div class="metric-value" id="histMetricCredito">$0.00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filters Bar -->
+      <div class="app-card" style="margin-bottom: 1.5rem;">
+        <div class="filters-bar">
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Modalidad:</span>
+            <div class="filter-chip active" data-hist-type="all">Todas</div>
+            <div class="filter-chip" data-hist-type="contado">Contado Directo</div>
+            <div class="filter-chip" data-hist-type="contado_mercadolibre">🟡 MercadoLibre</div>
+            <div class="filter-chip" data-hist-type="cashea_bull">Cashea Bull</div>
+            <div class="filter-chip" data-hist-type="cashea_tmania">Cashea T-Mania</div>
+            <div class="filter-chip" data-hist-type="jp">Crédito JP</div>
+          </div>
+
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Período:</span>
+            <div class="filter-chip active" data-hist-date="all">Todo</div>
+            <div class="filter-chip" data-hist-date="today">Hoy</div>
+            <div class="filter-chip" data-hist-date="week">Esta Semana</div>
+            <div class="filter-chip" data-hist-date="month">Este Mes</div>
+          </div>
+
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <input type="text" id="historySearchInput" class="form-control" style="width: 200px; padding: 6px 12px; font-size: 0.85rem;" placeholder="Buscar cliente, código...">
+            <button class="btn btn-outline btn-sm" onclick="exportSalesToCSV()" title="Exportar a Excel / CSV">
+              📥 Excel
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="clearAllSalesHistory()" title="Vaciar Historial" style="color: #ef4444; border-color: #fecaca;">
+              🗑️ Limpiar
+            </button>
+          </div>
+        </div>
+
+        <!-- Sales Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Venta / Fecha</th>
+                <th>Artículos</th>
+                <th>Cliente</th>
+                <th>Modalidad</th>
+                <th>Total ($)</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="salesHistoryTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="historyEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            No hay registros de ventas que coincidan con los filtros.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: CUENTAS POR COBRAR (CRÉDITOS) -->
+    <section class="tab-pane" id="tab-credits">
+      <div class="card-title" style="margin-bottom: 1rem;">
+        <span>Cartera de Clientes a Crédito</span>
+        <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal;">Control de cuentas pendientes y registro de pagos</span>
+      </div>
+      <div id="creditsListContainer">
+        <!-- Dynamically rendered -->
+      </div>
+      <div id="creditsEmptyState" class="app-card" style="text-align: center; padding: 3rem; color: #94a3b8; display: none;">
+        🎉 ¡Excelente! No tienes ventas con créditos pendientes de cobro.
+      </div>
+    </section>
+
+    <!-- TAB 4: CATÁLOGO DE PRODUCTOS -->
+    <section class="tab-pane" id="tab-catalog">
+      <div class="app-card" style="margin-bottom: 1.5rem;">
+        <div class="filters-bar">
+          <div style="flex: 1; min-width: 240px;">
+            <input type="text" id="catalogSearchInput" class="form-control" placeholder="Buscar por descripción, título o código (ej: Termo Café, CTHR-1...)">
+          </div>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <select id="catalogCategorySelect" class="form-control" style="width: auto;">
+              <option value="all">Todas las Categorías</option>
+              <option value="CAFE">☕ Termos para Café (Coffee Mug)</option>
+              <option value="AGUA">💧 Termos para Agua (Hydro / Tumbler)</option>
+              <option value="RELOJ">⌚ Relojes Inteligentes</option>
+              <option value="AUDIFONO">🎧 Audífonos Inalámbricos</option>
+              <option value="BOCINA">🔊 Bocinas Bluetooth</option>
+              <option value="BOLSOS">🎒 Bolsos y Mochilas</option>
+              <option value="CORREA">🔗 Correas de Silicona</option>
+              <option value="GORRA">🧢 Gorras</option>
+              <option value="TOTE">🛍️ Tote Bags</option>
+              <option value="SPORTBELT">🏃 Sportbelt</option>
+              <option value="BASCULA">⚖️ Básculas Digitales</option>
+              <option value="CARGADOR">🔌 Cargadores</option>
+              <option value="PROTECTOR">📱 Protectores de Pantalla</option>
+            </select>
+            <select id="catalogStatusSelect" class="form-control" style="width: auto;">
+              <option value="all">Todos los Estados</option>
+              <option value="DISPONIBLE">Solo Disponibles</option>
+              <option value="AGOTADO">Agotados</option>
+              <option value="TRANSITO">En Tránsito</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="openCreateProductModal()">
+              <span>+ Nuevo Producto</span>
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="resetCatalogToDefault()" title="Restablecer catálogo a lista original">
+              <span>🔄 Restablecer</span>
+            </button>
+          </div>
+          <span id="catalogTotalCount" style="font-weight: 700; font-size: 0.9rem; color: var(--text-muted);">0 productos</span>
+        </div>
+      </div>
+
+      <div class="catalog-grid" id="catalogGrid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- TAB 5: CUENTAS POR PAGAR (CXP - COMISIONES) -->
+    <section class="tab-pane" id="tab-payables">
+      <!-- Metrics Dashboard CXP -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-icon-box amber">⏳</div>
+          <div>
+            <div class="metric-title">Por Pagar (Pendientes)</div>
+            <div class="metric-value" id="cxpMetricPending" style="color: #ef4444;">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box green">✅</div>
+          <div>
+            <div class="metric-title">Total Conciliado / Pagado</div>
+            <div class="metric-value" id="cxpMetricPaid">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box blue">📊</div>
+          <div>
+            <div class="metric-title">Comisiones Totales</div>
+            <div class="metric-value" id="cxpMetricTotal">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box purple">📋</div>
+          <div>
+            <div class="metric-title">Cuentas Pendientes</div>
+            <div class="metric-value" id="cxpMetricPendingCount">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filters Bar CXP -->
+      <div class="app-card" style="margin-bottom: 1.5rem;">
+        <div class="filters-bar">
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estado:</span>
+            <div class="filter-chip active" data-cxp-status="all">Todas</div>
+            <div class="filter-chip" data-cxp-status="pendiente">Pendientes</div>
+            <div class="filter-chip" data-cxp-status="conciliado">Conciliadas / Pagadas</div>
+          </div>
+
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Origen:</span>
+            <div class="filter-chip active" data-cxp-cat="all">Todos</div>
+            <div class="filter-chip" data-cxp-cat="CASHEA">Cashea</div>
+            <div class="filter-chip" data-cxp-cat="IVA">IVA Fiscal</div>
+            <div class="filter-chip" data-cxp-cat="TMANIA">T-Mania</div>
+            <div class="filter-chip" data-cxp-cat="MERCADOLIBRE">MercadoLibre</div>
+            <div class="filter-chip" data-cxp-cat="ADICIONAL">Comisiones</div>
+          </div>
+
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <input type="text" id="cxpSearchInput" class="form-control" style="width: 220px; padding: 6px 12px; font-size: 0.85rem;" placeholder="Buscar beneficiario, venta...">
+            <button class="btn btn-outline btn-sm" onclick="exportPayablesToCSV()" title="Exportar CXP a Excel">
+              📥 Excel CXP
+            </button>
+          </div>
+        </div>
+
+        <!-- CXP Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID CXP / Venta</th>
+                <th>Beneficiario</th>
+                <th>Concepto</th>
+                <th>Monto ($)</th>
+                <th>Estado</th>
+                <th>Conciliación / Pago</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody id="cxpTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="cxpEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            No hay registros de comisiones o cuentas por pagar pendientes.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 6: DIRECTORIO / REGISTRO DE CLIENTES -->
+    <section class="tab-pane" id="tab-clients">
+      <!-- Metrics Dashboard Clientes -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-icon-box blue">👥</div>
+          <div>
+            <div class="metric-title">Clientes Registrados</div>
+            <div class="metric-value" id="clientMetricTotalCount">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box amber">⏳</div>
+          <div>
+            <div class="metric-title">Clientes con Deuda</div>
+            <div class="metric-value" id="clientMetricDebtorsCount" style="color: #ef4444;">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box purple">💳</div>
+          <div>
+            <div class="metric-title">Saldo Total por Cobrar</div>
+            <div class="metric-value" id="clientMetricTotalDebt" style="color: #dc2626;">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box green">💰</div>
+          <div>
+            <div class="metric-title">Total Facturado a Clientes</div>
+            <div class="metric-value" id="clientMetricTotalPurchased">$0.00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filters & Actions Bar Clientes -->
+      <div class="app-card" style="margin-bottom: 1.5rem;">
+        <div class="filters-bar">
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estado:</span>
+            <div class="filter-chip active" data-client-filter="all">Todos</div>
+            <div class="filter-chip" data-client-filter="debt">Con Deuda Pendiente</div>
+            <div class="filter-chip" data-client-filter="clear">Al Día</div>
+          </div>
+
+          <div style="flex: 1; min-width: 220px;">
+            <input type="text" id="clientSearchInput" class="form-control" placeholder="Buscar cliente por nombre, teléfono, cédula...">
+          </div>
+
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-primary btn-sm" onclick="openCreateClientModal()">
+              <span>+ Nuevo Cliente</span>
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="openManageSellersModal()" title="Registrar y Gestionar Equipo de Vendedores">
+              <span>👔 Vendedores</span>
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="exportClientsToCSV()" title="Exportar Clientes a Excel">
+              📥 Excel Clientes
+            </button>
+          </div>
+        </div>
+
+        <!-- Clientes Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Contacto / WhatsApp</th>
+                <th>Vendedor Asignado</th>
+                <th>Total Comprado ($)</th>
+                <th>Saldo Deudor (Debe)</th>
+                <th>Última Compra</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="clientsTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="clientsEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            No se encontraron clientes registrados con los filtros actuales.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: GESTIÓN Y DIRECTORIO DE VENDEDORES -->
+    <section class="tab-pane" id="tab-sellers">
+      <!-- Header Bar Vendedores -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <div class="card-title" style="margin: 0; font-size: 1.35rem;">
+            <span>👔 Directorio y Gestión de Vendedores</span>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+            Administración del equipo comercial, comisiones asignadas, contacto y rendimiento de ventas
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn btn-primary" onclick="openCreateSellerModal()">
+            <span>+ Registrar Nuevo Vendedor</span>
+          </button>
+          <button class="btn btn-outline" onclick="exportSellersToCSV()" title="Exportar Directorio de Vendedores a Excel">
+            <span>📥 Excel Vendedores</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Metrics Dashboard Vendedores -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-icon-box blue">👔</div>
+          <div>
+            <div class="metric-title">Total Vendedores</div>
+            <div class="metric-value" id="sellerTabMetricTotal">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box green">🟢</div>
+          <div>
+            <div class="metric-title">Vendedores Activos</div>
+            <div class="metric-value" id="sellerTabMetricActive" style="color: #16a34a;">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box purple">🛍️</div>
+          <div>
+            <div class="metric-title">Ventas Asignadas</div>
+            <div class="metric-value" id="sellerTabMetricSales">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box amber">💰</div>
+          <div>
+            <div class="metric-title">Total Facturado por Equipo</div>
+            <div class="metric-value" id="sellerTabMetricMoney">$0.00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filters & Actions Bar Vendedores -->
+      <div class="app-card" style="margin-bottom: 1.5rem;">
+        <div class="filters-bar">
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estado:</span>
+            <div class="filter-chip active" data-seller-tab-filter="all" onclick="setSellerTabFilter('all')">Todos</div>
+            <div class="filter-chip" data-seller-tab-filter="active" onclick="setSellerTabFilter('active')">Activos</div>
+            <div class="filter-chip" data-seller-tab-filter="inactive" onclick="setSellerTabFilter('inactive')">Inactivos</div>
+          </div>
+
+          <div style="flex: 1; min-width: 220px;">
+            <input type="text" id="sellerTabSearchInput" class="form-control" placeholder="Buscar vendedor por nombre, teléfono, email, tienda..." oninput="handleSellerTabSearch(this.value)">
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-primary btn-sm" onclick="openCreateSellerModal()">
+              <span>+ Nuevo Vendedor</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Sellers Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Vendedor / Asesor</th>
+                <th>Teléfono / WhatsApp</th>
+                <th>Correo Electrónico</th>
+                <th>Estado</th>
+                <th>Ventas Realizadas</th>
+                <th>Total Facturado ($)</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="sellersTabTableBody">
+              <!-- Dynamically populated via renderSellersTab() -->
+            </tbody>
+          </table>
+          <div id="sellersTabEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            No se encontraron vendedores registrados con los filtros actuales.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: VENTAS BAJO PEDIDO / SOLICITUDES DE COMPRA -->
+    <section class="tab-pane" id="tab-orders">
+      <!-- Header Bar Bajo Pedido -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <div class="card-title" style="margin: 0; font-size: 1.35rem;">
+            <span>📦 Ventas Bajo Pedido & Solicitudes de Compra</span>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+            Renglón de productos solicitados por clientes sin stock en tienda • Compras a proveedores y confirmación de entrega
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn btn-primary" onclick="switchToBajoPedidoPOS()">
+            <span>+ Registrar Nuevo Pedido</span>
+          </button>
+          <button class="btn btn-outline" onclick="exportProcurementListToCSV()" title="Exportar consolidado de productos que debes comprar al proveedor">
+            <span>📋 Lista para Proveedor (Excel)</span>
+          </button>
+          <button class="btn btn-outline" onclick="exportOrdersToCSV()" title="Exportar todos los pedidos de clientes a Excel">
+            <span>📥 Reporte Pedidos (CSV)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Metrics Dashboard Bajo Pedido -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-icon-box purple">📦</div>
+          <div>
+            <div class="metric-title">Total Pedidos Registrados</div>
+            <div class="metric-value" id="ordersMetricTotal">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box amber">🟡</div>
+          <div>
+            <div class="metric-title">Pendientes por Comprar</div>
+            <div class="metric-value" id="ordersMetricToBuy" style="color: #b45309;">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box blue">🚚</div>
+          <div>
+            <div class="metric-title">En Camino / En Tienda</div>
+            <div class="metric-value" id="ordersMetricInTransit" style="color: #0284c7;">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box green">✅</div>
+          <div>
+            <div class="metric-title">Pedidos Entregados</div>
+            <div class="metric-value" id="ordersMetricDelivered" style="color: #16a34a;">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filters & Actions Bar Bajo Pedido -->
+      <div class="app-card" style="margin-bottom: 1.5rem;">
+        <div class="filters-bar">
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estado:</span>
+            <div class="filter-chip active" data-order-filter="all" onclick="setOrdersFilter('all')">Todos</div>
+            <div class="filter-chip" data-order-filter="PENDIENTE_COMPRA" onclick="setOrdersFilter('PENDIENTE_COMPRA')">🟡 Por Comprar</div>
+            <div class="filter-chip" data-order-filter="EN_CAMINO" onclick="setOrdersFilter('EN_CAMINO')">🔵 En Camino</div>
+            <div class="filter-chip" data-order-filter="LISTO_ENTREGA" onclick="setOrdersFilter('LISTO_ENTREGA')">🟣 Listos para Entrega</div>
+            <div class="filter-chip" data-order-filter="ENTREGADO" onclick="setOrdersFilter('ENTREGADO')">✅ Entregados</div>
+          </div>
+
+          <div style="flex: 1; min-width: 220px;">
+            <input type="text" id="ordersSearchInput" class="form-control" placeholder="Buscar pedido por producto, cliente, teléfono, vendedor o N° venta..." oninput="handleOrdersSearch(this.value)">
+          </div>
+        </div>
+
+        <!-- Orders Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>N° Pedido & Fecha</th>
+                <th>Producto Solicitado & Cantidad</th>
+                <th>Cliente & Contacto</th>
+                <th>Vendedor</th>
+                <th>Monto / Pago</th>
+                <th>Estado del Pedido</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="ordersTableBody">
+              <!-- Dynamically populated via renderOrdersTab() -->
+            </tbody>
+          </table>
+          <div id="ordersEmptyState" style="text-align: center; padding: 3.5rem 1rem; color: #94a3b8; display: none;">
+            <div style="font-size: 2.5rem; margin-bottom: 8px;">📦</div>
+            <div style="font-weight: 700; color: #475569; font-size: 1.05rem;">No hay ventas bajo pedido registradas con los filtros actuales.</div>
+            <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 4px;">Cuando un cliente te pida un producto sin stock disponible en tienda, regístralo como <strong>"Venta Bajo Pedido"</strong> en el POS.</p>
+            <button class="btn btn-primary btn-sm" onclick="switchToBajoPedidoPOS()" style="margin-top: 10px;">+ Registrar Pedido Ahora</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: GESTIÓN DE USUARIOS Y ACCESOS -->
+    <section class="tab-pane" id="tab-users">
+      <!-- Header Bar Usuarios -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <div class="card-title" style="margin: 0; font-size: 1.35rem;">
+            <span>🔐 Gestión de Usuarios y Accesos</span>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+            Administración de cuentas, usuario y clave, roles (Gerencia, Inversor, Vendedor) y vinculación comercial
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn btn-primary" onclick="openCreateUserModal()">
+            <span>+ Crear Nuevo Usuario</span>
+          </button>
+          <button class="btn btn-outline" onclick="exportUsersToCSV()" title="Exportar Directorio de Usuarios a Excel">
+            <span>📥 Excel Usuarios</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Metrics Dashboard Usuarios -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-icon-box blue">🔐</div>
+          <div>
+            <div class="metric-title">Total Usuarios</div>
+            <div class="metric-value" id="userTabMetricTotal">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box green">🟢</div>
+          <div>
+            <div class="metric-title">Usuarios Activos</div>
+            <div class="metric-value" id="userTabMetricActive" style="color: #16a34a;">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box purple">👑</div>
+          <div>
+            <div class="metric-title">Gerencia & Inversores</div>
+            <div class="metric-value" id="userTabMetricAdminInv" style="color: #7c3aed;">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box amber">👔</div>
+          <div>
+            <div class="metric-title">Vendedores Vinculados</div>
+            <div class="metric-value" id="userTabMetricSellers" style="color: #d97706;">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filters & Actions Bar Usuarios -->
+      <div class="app-card" style="margin-bottom: 1.5rem;">
+        <div class="filters-bar">
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Rol:</span>
+            <div class="filter-chip active" data-user-role="all" onclick="setUserRoleFilter('all')">Todos</div>
+            <div class="filter-chip" data-user-role="gerencia" onclick="setUserRoleFilter('gerencia')">👑 Gerencia</div>
+            <div class="filter-chip" data-user-role="inversor" onclick="setUserRoleFilter('inversor')">💼 Inversor</div>
+            <div class="filter-chip" data-user-role="vendedor" onclick="setUserRoleFilter('vendedor')">👔 Vendedor</div>
+          </div>
+
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estado:</span>
+            <div class="filter-chip active" data-user-status="all" onclick="setUserStatusFilter('all')">Todos</div>
+            <div class="filter-chip" data-user-status="ACTIVO" onclick="setUserStatusFilter('ACTIVO')">Activos</div>
+            <div class="filter-chip" data-user-status="INACTIVO" onclick="setUserStatusFilter('INACTIVO')">Inactivos</div>
+          </div>
+
+          <div style="flex: 1; min-width: 220px;">
+            <input type="text" id="userTabSearchInput" class="form-control" placeholder="Buscar por usuario, nombre, rol o vendedor asociado..." oninput="handleUserSearch(this.value)">
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-primary btn-sm" onclick="openCreateUserModal()">
+              <span>+ Nuevo Usuario</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Users Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Usuario / Nombre</th>
+                <th>Tipo de Usuario (Rol)</th>
+                <th>Vendedor Asociado</th>
+                <th>Clave de Acceso</th>
+                <th>Estado</th>
+                <th>Fecha Alta</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="usersTabTableBody">
+              <!-- Dynamically populated via renderUsersTab() -->
+            </tbody>
+          </table>
+          <div id="usersTabEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            <div style="font-size: 2.2rem; margin-bottom: 6px;">👥</div>
+            <div style="font-weight: 700; color: #475569; font-size: 1rem;">No se encontraron usuarios registrados con los filtros actuales.</div>
+            <button class="btn btn-primary btn-sm" onclick="openCreateUserModal()" style="margin-top: 10px;">+ Crear Usuario Ahora</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: METAS Y COMISIONES POR VENTAS -->
+    <section class="tab-pane" id="tab-goals">
+      <!-- Header Bar Metas -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <div class="card-title" style="margin: 0; font-size: 1.35rem;">
+            <span>🎯 Plan de Metas & Bonos de Comisiones</span>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+            Incentivo escalonado: <strong>+$50 de bono</strong> por cada <strong>$1,000 acumulados</strong> en ventas facturadas o cobradas ($2,000 = +$100, $3,000 = +$150...)
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn btn-outline" onclick="exportGoalsReportCSV()" title="Exportar reporte de metas y bonos">
+            <span>📥 Exportar Metas CSV</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Hero Card: Rendimiento del Usuario Activo / Visión de Metas -->
+      <div class="goals-hero-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <span class="brand-badge" style="background: rgba(16, 185, 129, 0.2); border-color: #10b981; color: #a7f3d0; margin-bottom: 6px;">
+              🏆 ESTADO DE METAS
+            </span>
+            <h2 style="font-size: 1.45rem; font-weight: 800; margin: 4px 0 0 0;" id="goalsActiveSellerTitle">Mis Metas de Ventas</h2>
+            <div style="font-size: 0.82rem; color: #94a3b8;" id="goalsActiveSellerSubtitle">Cálculo en vivo de volumen vendido y bonos acumulados</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">Comisión por Metas Ganada</div>
+            <div style="font-size: 2.2rem; font-weight: 900; color: #10b981;" id="goalsActiveTotalBonus">+$0.00</div>
+          </div>
+        </div>
+
+        <!-- 4 Metric Boxes -->
+        <div class="goals-stats-row">
+          <div class="goals-stat-item">
+            <div class="goals-stat-label">Total Facturado / Cobrado</div>
+            <div class="goals-stat-number" id="goalsActiveTotalSold">$0.00</div>
+          </div>
+          <div class="goals-stat-item">
+            <div class="goals-stat-label">Metas de $1,000 Alcanzadas</div>
+            <div class="goals-stat-number bonus" id="goalsActiveTiersCount">0 Metas</div>
+          </div>
+          <div class="goals-stat-item">
+            <div class="goals-stat-label">Próxima Meta a Alcanzar</div>
+            <div class="goals-stat-number target" id="goalsActiveNextTarget">$1,000.00</div>
+          </div>
+          <div class="goals-stat-item">
+            <div class="goals-stat-label">Faltante para Siguiente Bono (+$50)</div>
+            <div class="goals-stat-number" style="color: #fbbf24;" id="goalsActiveRemaining">$1,000.00</div>
+          </div>
+        </div>
+
+        <!-- Progress Bar towards Next Milestone -->
+        <div class="goals-progress-wrapper">
+          <div class="goals-progress-header">
+            <span>Progreso hacia la próxima meta de <span id="goalsNextMilestoneLabel" style="color: #38bdf8;">$1,000.00</span></span>
+            <span id="goalsProgressPct" style="color: #10b981;">0%</span>
+          </div>
+          <div class="goals-progress-track">
+            <div class="goals-progress-fill" id="goalsProgressBar" style="width: 0%;"></div>
+          </div>
+
+          <!-- Milestones Steps Bar -->
+          <div class="milestones-steps-bar" id="goalsMilestoneStepsContainer">
+            <!-- Dynamically populated steps: 1k, 2k, 3k, 4k, 5k... -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Leaderboard / Ranking de Todos los Vendedores (Visible para Gerencia e Inversionistas) -->
+      <div class="app-card" id="goalsTeamCard">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <div class="card-title" style="margin: 0; font-size: 1.15rem;">
+              <span>📊 Ranking y Liquidación de Bonos por Vendedor</span>
+            </div>
+            <div style="font-size: 0.82rem; color: var(--text-muted); margin-top: 2px;">
+              Seguimiento de cumplimiento individual de metas y bonificaciones generadas
+            </div>
+          </div>
+          <div style="flex: 1; max-width: 300px; min-width: 200px;">
+            <input type="text" id="goalsSearchInput" class="form-control" placeholder="Buscar vendedor..." oninput="handleGoalsSearch(this.value)">
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Vendedor / Asesor</th>
+                <th>Total Facturado ($)</th>
+                <th>Metas ($1,000) Logradas</th>
+                <th>Bono Total Ganado ($)</th>
+                <th>Próxima Meta</th>
+                <th>Falta para Siguiente Bono ($50)</th>
+                <th>Progreso Meta Actual</th>
+              </tr>
+            </thead>
+            <tbody id="goalsTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="goalsEmptyState" style="text-align: center; padding: 2.5rem 1rem; color: #94a3b8; display: none;">
+            <div style="font-size: 2rem; margin-bottom: 6px;">🎯</div>
+            <div>No hay ventas registradas para calcular metas en este momento.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: GESTIÓN DE INVENTARIO Y FACTURAS DE INGRESO -->
+    <section class="tab-pane" id="tab-inventory">
+      <!-- Header Bar Inventario -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;">
+        <div>
+          <div class="card-title" style="margin: 0; font-size: 1.35rem;">
+            <span>📦 Control de Inventario & Ingreso de Facturas</span>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+            Alimentación de existencias a través de facturas de compra, sincronización de CXP y escaneo con Asistente IA
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn btn-primary" onclick="openInvoiceUploadModal('manual')" style="background: linear-gradient(135deg, #10b981, #059669); border: none; font-weight: 800; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);">
+            <span>✏️ Carga Manual de Factura</span>
+          </button>
+          <button class="btn btn-outline" onclick="openInvoiceUploadModal('ai')" style="font-weight: 700; border-color: #6366f1; color: #4338ca;">
+            <span>🤖 Asistente IA (Gemini)</span>
+          </button>
+          <button class="btn btn-outline" onclick="exportInventoryToCSV()" title="Exportar existencias de stock a Excel">
+            <span>📥 Exportar Stock CSV</span>
+          </button>
+          <button class="btn btn-outline" onclick="resetInventoryStockToZero()" style="color: #dc2626; border-color: #fca5a5;" title="Reiniciar todas las existencias a 0 unidades para arrancar desde cero con facturas">
+            <span>🔄 Poner Todo en 0</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Metrics Grid Inventario -->
+      <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+        <div class="metric-card">
+          <div class="metric-icon-box blue">📦</div>
+          <div>
+            <div class="metric-title">Unidades Físicas en Stock</div>
+            <div class="metric-value" id="invMetricTotalUnits">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box green">💵</div>
+          <div>
+            <div class="metric-title">Valorización al Costo</div>
+            <div class="metric-value" id="invMetricCostValuation" style="color: #059669;">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box purple">🏷️</div>
+          <div>
+            <div class="metric-title">Valorización a PVP (Venta)</div>
+            <div class="metric-value" id="invMetricPvpValuation" style="color: #7c3aed;">$0.00</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box amber">🧾</div>
+          <div>
+            <div class="metric-title">Facturas Procesadas</div>
+            <div class="metric-value" id="invMetricInvoicesCount" style="color: #d97706;">0</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-icon-box red">⚠️</div>
+          <div>
+            <div class="metric-title">Stock Bajo o Agotado</div>
+            <div class="metric-value" id="invMetricLowStockCount" style="color: #dc2626;">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-Nav Switcher inside Inventory -->
+      <div class="inventory-subnav">
+        <button type="button" class="inventory-subnav-btn active" id="subtabInvStockBtn" onclick="switchInventorySubTab('stock')">
+          <span>📦 Existencias de Stock</span>
+        </button>
+        <button type="button" class="inventory-subnav-btn" id="subtabInvInvoicesBtn" onclick="switchInventorySubTab('invoices')">
+          <span>🧾 Facturas de Compra & Ingresos</span>
+        </button>
+        <button type="button" class="inventory-subnav-btn" id="subtabInvMovementsBtn" onclick="switchInventorySubTab('movements')">
+          <span>🔄 Movimientos de Inventario</span>
+        </button>
+      </div>
+
+      <!-- SECTION 1: EXISTENCIAS DE STOCK -->
+      <div id="invStockSection" class="app-card">
+        <div class="filters-bar" style="margin-bottom: 1.25rem;">
+          <div style="flex: 1; min-width: 240px;">
+            <input type="text" id="invStockSearchInput" class="form-control" placeholder="Buscar por código, descripción o categoría..." oninput="handleInventoryStockSearch(this.value)">
+          </div>
+
+          <div style="min-width: 180px;">
+            <select id="invStockCategorySelect" class="form-control" onchange="handleInventoryCategoryChange(this.value)">
+              <option value="all">Todas las Categorías</option>
+              <!-- Populated dynamically -->
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estado:</span>
+            <div class="filter-chip active" data-inv-status="all" onclick="setInventoryStatusFilter('all')">Todos</div>
+            <div class="filter-chip" data-inv-status="disponible" onclick="setInventoryStatusFilter('disponible')">🟢 Con Stock (>0)</div>
+            <div class="filter-chip" data-inv-status="bajo" onclick="setInventoryStatusFilter('bajo')">🟡 Bajo (≤3)</div>
+            <div class="filter-chip" data-inv-status="agotado" onclick="setInventoryStatusFilter('agotado')">🔴 Agotados</div>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Producto / Código</th>
+                <th>Categoría</th>
+                <th>Costo / Mayor ($)</th>
+                <th>PVP Tienda ($)</th>
+                <th>Margen Unit.</th>
+                <th>Stock Físico</th>
+                <th>Valor Total Stock ($)</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryStockTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="invStockEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            <div style="font-size: 2.2rem; margin-bottom: 6px;">📦</div>
+            <div style="font-weight: 700; color: #475569;">No se encontraron productos en el inventario con los filtros seleccionados.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 2: FACTURAS DE COMPRA E INGRESOS -->
+      <div id="invInvoicesSection" class="app-card" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 10px;">
+          <div style="flex: 1; max-width: 360px; min-width: 220px;">
+            <input type="text" id="invInvoicesSearchInput" class="form-control" placeholder="Buscar por N° factura, proveedor..." oninput="handleInvoicesSearch(this.value)">
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-primary btn-sm" onclick="openInvoiceUploadModal('manual')" style="background: #059669; border: none; font-weight: 700;">
+              <span>✏️ + Carga Manual</span>
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="openInvoiceUploadModal('ai')" style="font-weight: 700; border-color: #6366f1; color: #4338ca;">
+              <span>🤖 Asistente IA</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>N° Factura</th>
+                <th>Foto / Adjunto</th>
+                <th>Proveedor / Emisor</th>
+                <th>Razón Social Compra</th>
+                <th>Fecha Emisión</th>
+                <th>Condición Pago</th>
+                <th>Total Factura ($ / Bs.)</th>
+                <th>Productos Recibidos</th>
+                <th>Estado de Pago</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryInvoicesTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="invInvoicesEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            <div style="font-size: 2.2rem; margin-bottom: 6px;">🧾</div>
+            <div style="font-weight: 700; color: #475569;">No hay facturas de compra registradas aún.</div>
+            <div style="display: flex; gap: 8px; justify-content: center; margin-top: 10px; flex-wrap: wrap;">
+              <button class="btn btn-primary btn-sm" onclick="openInvoiceUploadModal('manual')" style="background: #059669; border: none; font-weight: 700;">✏️ Cargar Factura Manual</button>
+              <button class="btn btn-outline btn-sm" onclick="openInvoiceUploadModal('ai')">🤖 Cargar con Asistente IA</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 3: MOVIMIENTOS DE INVENTARIO -->
+      <div id="invMovementsSection" class="app-card" style="display: none;">
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Fecha y Hora</th>
+                <th>Tipo de Movimiento</th>
+                <th>Producto</th>
+                <th>Cantidad</th>
+                <th>Referencia</th>
+                <th>Responsable</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryMovementsTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="invMovementsEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            <div style="font-size: 2.2rem; margin-bottom: 6px;">🔄</div>
+            <div>Aún no se han registrado movimientos de inventario.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL: Ver / Imprimir Ticket de Venta -->
+  <div class="modal-overlay" id="ticketModal">
+    <div class="modal-box">
+      <button class="modal-close-btn" onclick="closeTicketModal()">&times;</button>
+      <div id="printableTicketArea"></div>
+      <div style="display: flex; gap: 10px; margin-top: 1.25rem;">
+        <button class="btn btn-primary btn-block" onclick="printTicket()">
+          <span>🖨️ Imprimir Recibo</span>
+        </button>
+        <button class="btn btn-outline" onclick="closeTicketModal()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Registrar Abono en Crédito -->
+  <div class="modal-overlay" id="abonoModal">
+    <div class="modal-box">
+      <button class="modal-close-btn" onclick="closeAbonoModal()">&times;</button>
+      <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 0.5rem;">Registrar Abono a Crédito</h3>
+      <div style="background: #f8fafc; padding: 12px; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem;">
+        <div>Cliente: <strong id="abonoClientName">-</strong></div>
+        <div>Venta N°: <strong id="abonoSaleId">-</strong></div>
+        <div style="margin-top: 4px; color: #ef4444; font-weight: 700;">Saldo Pendiente: <span id="abonoBalanceDue">$0.00</span></div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="abonoAmountInput">Monto del Abono ($)</label>
+        <div class="currency-input-wrap">
+          <span class="currency-prefix">$</span>
+          <input type="number" id="abonoAmountInput" class="form-control with-prefix" step="0.01" min="0.01">
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="abonoMethodSelect">Forma de Pago del Abono</label>
+        <select id="abonoMethodSelect" class="form-control">
+          <option value="Efectivo ($ USD)">💵 Efectivo ($ USD)</option>
+          <option value="Pago Móvil / Transferencia">📱 Pago Móvil / Transferencia (Bs)</option>
+          <option value="Zelle">⚡ Zelle ($ USD)</option>
+          <option value="Panamá USD $">🇵🇦 Panamá USD $</option>
+          <option value="Binance USD $">🪙 Binance USD $ (USDT)</option>
+          <option value="PayPal USD $">🅿️ PayPal USD $</option>
+          <option value="Zinli USD $">💳 Zinli USD $</option>
+          <option value="Tarjeta / Punto de Venta">💳 Tarjeta / Punto de Venta</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label class="form-label" for="abonoNotesInput">Nota / Referencia de Pago (Opcional)</label>
+        <input type="text" id="abonoNotesInput" class="form-control" placeholder="Ej: Pago móvil ref #582910">
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-success btn-block" onclick="handleSaveAbono()">Guardar Abono</button>
+        <button class="btn btn-outline" onclick="closeAbonoModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Marcar Pedido como Entregado -->
+  <div class="modal-overlay" id="deliverOrderModal">
+    <div class="modal-box" style="max-width: 500px;">
+      <button class="modal-close-btn" onclick="closeDeliverOrderModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.25rem;">
+        <span style="font-size: 1.4rem;">📦</span>
+        <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0; color: #0f172a;">Marcar Pedido como Entregado</h3>
+      </div>
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.25rem;">Registra la entrega del producto al cliente y actualiza el estado de la venta.</p>
+
+      <input type="hidden" id="deliverSaleId">
+
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 1rem; font-size: 0.85rem;">
+        <div><strong>Venta N°:</strong> <span id="deliverSaleIdText" style="color: #2563eb; font-weight: 700;">-</span></div>
+        <div style="margin-top: 3px;"><strong>Cliente:</strong> <span id="deliverClientName">-</span> (<span id="deliverClientPhone">-</span>)</div>
+        <div style="margin-top: 3px;"><strong>Producto:</strong> <span id="deliverProductName" style="font-weight: 600;">-</span></div>
+        <div style="margin-top: 6px; padding-top: 6px; border-top: 1px dashed #cbd5e1;" id="deliverPaymentInfo">
+          <!-- Dynamic payment info -->
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="deliverDateInput">Fecha y Hora de Entrega *</label>
+        <input type="datetime-local" id="deliverDateInput" class="form-control" style="font-weight: 600;">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label class="form-label" for="deliverNotesInput">Notas de Entrega / Receptor</label>
+        <input type="text" id="deliverNotesInput" class="form-control" placeholder="Ej: Entregado en tienda conforme, entregado a titular...">
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="confirmOrderDelivery()" style="background: #16a34a; border-color: #16a34a;">
+          <span>✅ Confirmar Entrega Realizada</span>
+        </button>
+        <button class="btn btn-outline" onclick="closeDeliverOrderModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Conciliar / Pagar Comisión (CXP) -->
+  <div class="modal-overlay" id="conciliarModal">
+    <div class="modal-box">
+      <button class="modal-close-btn" onclick="closeConciliarModal()">&times;</button>
+      <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 0.5rem;">Conciliar Pago de Comisión (CXP)</h3>
+      <div style="background: #f8fafc; padding: 12px; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem;">
+        <div>Beneficiario: <strong id="conciliarBeneficiary">-</strong></div>
+        <div>Concepto: <span id="conciliarConcept">-</span></div>
+        <div>Venta Asociada: <strong id="conciliarSaleId">-</strong></div>
+        <div style="margin-top: 4px; color: #ef4444; font-weight: 800; font-size: 1.15rem;">Monto a Liquidar: <span id="conciliarAmount">$0.00</span></div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="conciliarDateInput">Fecha del Pago / Liquidación</label>
+        <input type="date" id="conciliarDateInput" class="form-control">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="conciliarMethodSelect">Método de Pago Utilizado</label>
+        <select id="conciliarMethodSelect" class="form-control">
+          <option value="Efectivo ($ USD)">💵 Efectivo ($ USD)</option>
+          <option value="Pago Móvil / Transferencia">📱 Pago Móvil / Transferencia (Bs)</option>
+          <option value="Zelle">⚡ Zelle ($ USD)</option>
+          <option value="Panamá USD $">🇵🇦 Panamá USD $</option>
+          <option value="Binance USD $">🪙 Binance USD $ (USDT)</option>
+          <option value="PayPal USD $">🅿️ PayPal USD $</option>
+          <option value="Zinli USD $">💳 Zinli USD $</option>
+          <option value="Tarjeta / Punto de Venta">💳 Tarjeta / Punto de Venta</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label class="form-label" for="conciliarRefInput">N° de Referencia o Comprobante</label>
+        <input type="text" id="conciliarRefInput" class="form-control" placeholder="Ej: Ref #39201 bancario o Zelle">
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-success btn-block" onclick="handleConfirmConciliacion()">✅ Confirmar Pago y Conciliar</button>
+        <button class="btn btn-outline" onclick="closeConciliarModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Modificar / Editar Transacción -->
+  <div class="modal-overlay" id="editSaleModal">
+    <div class="modal-box" style="max-width: 820px; max-height: 90vh; overflow-y: auto;">
+      <button class="modal-close-btn" onclick="closeEditSaleModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.25rem;">
+        <span style="font-size: 1.3rem;">✏️</span>
+        <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0;">Modificar Transacción <span id="editSaleIdLabel" style="color: #2563eb;">#CUB-XXXX</span></h3>
+      </div>
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.25rem;">Edita datos del cliente, productos, precios, crédito o comisiones. Las cuentas por pagar (CXP) y utilidades se actualizarán automáticamente.</p>
+
+      <!-- Section 1: Fecha y Cliente -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 1rem;">
+        <div style="font-weight: 700; font-size: 0.88rem; color: #1e293b; margin-bottom: 10px;">👤 Datos de la Venta y Cliente</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="editSaleDateInput">Fecha y Hora de la Venta</label>
+            <input type="datetime-local" id="editSaleDateInput" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="editClientNameInput">Nombre del Cliente</label>
+            <input type="text" id="editClientNameInput" class="form-control" placeholder="Ej: Carlos Gómez">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="editClientPhoneInput">Teléfono / WhatsApp</label>
+            <input type="tel" id="editClientPhoneInput" class="form-control" placeholder="Ej: 0414-9876543">
+          </div>
+        </div>
+        <div class="form-row" style="margin-top: 8px;">
+          <div class="form-group">
+            <label class="form-label" for="editSaleIsBajoPedido">Modalidad de Disponibilidad</label>
+            <select id="editSaleIsBajoPedido" class="form-control" onchange="handleEditSaleBajoPedidoChange()">
+              <option value="false">🟢 Entrega Inmediata (Stock en Tienda)</option>
+              <option value="true">📦 Venta Bajo Pedido (Por Encargo / Solicitar Compra)</option>
+            </select>
+          </div>
+          <div class="form-group" id="editSaleOrderStatusGroup" style="display: none;">
+            <label class="form-label" for="editSaleOrderStatus">Estado del Pedido</label>
+            <select id="editSaleOrderStatus" class="form-control">
+              <option value="PENDIENTE_COMPRA">🟡 Pendiente por Comprar</option>
+              <option value="EN_CAMINO">🔵 En Camino / Pedido a Proveedor</option>
+              <option value="LISTO_ENTREGA">🟣 Listo para Entrega en Tienda</option>
+              <option value="ENTREGADO">✅ Entregado al Cliente</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top: 8px;">
+          <label class="form-label" for="editSaleNotesInput">Notas / Observaciones</label>
+          <input type="text" id="editSaleNotesInput" class="form-control" placeholder="Observaciones de la venta...">
+        </div>
+      </div>
+
+      <!-- Section 2: Modalidad y Pago -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 1rem;">
+        <div style="font-weight: 700; font-size: 0.88rem; color: #1e293b; margin-bottom: 10px;">💳 Modalidad y Método de Pago</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="editPaymentTypeSelect">Tipo de Operación</label>
+            <select id="editPaymentTypeSelect" class="form-control" onchange="handleEditPaymentTypeChange()">
+              <option value="contado">💵 De Contado</option>
+              <option value="contado_mercadolibre">🟡 Contado - MercadoLibre (12% comisión)</option>
+              <option value="credito">📋 A Crédito</option>
+            </select>
+          </div>
+          <div class="form-group" id="editPaymentMethodGroup">
+            <label class="form-label" for="editPaymentMethodSelect">Método de Pago</label>
+            <select id="editPaymentMethodSelect" class="form-control" onchange="updateEditModalCalculations()">
+              <option value="Efectivo ($ USD)">💵 Efectivo ($ USD)</option>
+              <option value="Pago Móvil / Transferencia">📱 Pago Móvil / Transferencia (Bs)</option>
+              <option value="Zelle">⚡ Zelle ($ USD)</option>
+              <option value="Panamá USD $">🇵🇦 Panamá USD $</option>
+              <option value="Binance USD $">🪙 Binance USD $ (USDT)</option>
+              <option value="PayPal USD $">🅿️ PayPal USD $</option>
+              <option value="Zinli USD $">💳 Zinli USD $</option>
+              <option value="Tarjeta / Punto de Venta">💳 Tarjeta / Punto de Venta</option>
+              <option value="Contado - MercadoLibre">🟡 Contado - MercadoLibre (12% comisión)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label class="form-label" for="editSaleSellerSelect" style="margin-bottom: 0;">Vendedor Responsable</label>
+            <button type="button" class="btn btn-outline btn-xs" onclick="openCreateSellerModal()">+ Nuevo</button>
+          </div>
+          <select id="editSaleSellerSelect" class="form-control">
+            <option value="">-- Sin Asignar --</option>
+          </select>
+        </div>
+
+        <!-- Crédito Subfields in Edit Modal -->
+        <div id="editCreditFieldsWrap" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cbd5e1;">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="editCreditSubtypeSelect">Tipo de Crédito</label>
+              <select id="editCreditSubtypeSelect" class="form-control" onchange="updateEditModalCalculations()">
+                <option value="cashea_bull">Cashea Bull (3% Comis. + 16% IVA)</option>
+                <option value="cashea_tmania">Cashea T-Mania (8% Cashea + 10% T-Mania)</option>
+                <option value="jp">Crédito JP (Particular, 0% comisiones)</option>
+              </select>
+            </div>
+            <div class="form-group" id="editVendedorGroup" style="display: none;">
+              <input type="hidden" id="editVendedorInput">
+            </div>
+          </div>
+
+          <div class="form-row" style="margin-top: 8px;">
+            <div class="form-group">
+              <label class="form-label" for="editCreditDueDateInput">Fecha Límite de Cobro</label>
+              <input type="date" id="editCreditDueDateInput" class="form-control">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="editCreditAbonoInput">Abono Inicial / Pagos Acumulados ($)</label>
+              <div class="currency-input-wrap">
+                <span class="currency-prefix">$</span>
+                <input type="number" id="editCreditAbonoInput" class="form-control with-prefix" step="0.01" min="0" oninput="updateEditModalCalculations()">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Saldo Pendiente Restante</label>
+              <div id="editCreditBalanceDisplay" style="font-weight: 800; font-size: 1.15rem; color: #ef4444; padding: 8px 12px; background: #fee2e2; border-radius: 6px; text-align: center;">$0.00</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Productos en la Venta -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <div style="font-weight: 700; font-size: 0.88rem; color: #1e293b;">📦 Artículos en esta Transacción</div>
+          <button type="button" class="btn btn-outline btn-sm" onclick="showEditAddProductRow()">+ Agregar Producto</button>
+        </div>
+
+        <div id="editAddProductRow" style="display: none; background: #e0f2fe; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <select id="editProductSelect" class="form-control" style="flex: 2; min-width: 200px;"></select>
+            <input type="number" id="editAddQty" class="form-control" value="1" min="1" style="width: 70px;">
+            <button type="button" class="btn btn-primary btn-sm" onclick="confirmAddProductToEdit()">Añadir</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="hideEditAddProductRow()">Cancelar</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table" style="font-size: 0.84rem;">
+            <thead>
+              <tr>
+                <th>Código / Producto</th>
+                <th style="width: 90px;">Cantidad</th>
+                <th style="width: 110px;">Precio Unit. ($)</th>
+                <th>Subtotal</th>
+                <th style="width: 50px;"></th>
+              </tr>
+            </thead>
+            <tbody id="editSaleItemsTableBody">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Section 4: Comisiones Adicionales ($ USD Fijo) -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 1rem;">
+        <div style="font-weight: 700; font-size: 0.88rem; color: #1e293b; margin-bottom: 10px;">💼 Comisiones Adicionales (en $ USD fijos)</div>
+        
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Slot 1 -->
+          <div style="display: grid; grid-template-columns: 2fr 2fr 1.2fr; gap: 8px; align-items: center; background: #ffffff; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <input type="text" id="editComm1Concept" class="form-control" style="font-size: 0.82rem; padding: 6px 8px;" placeholder="Concepto 1 (ej: Asesor)">
+            <input type="text" id="editComm1Beneficiary" class="form-control" style="font-size: 0.82rem; padding: 6px 8px;" placeholder="Beneficiario 1">
+            <div class="currency-input-wrap">
+              <span class="currency-prefix">$</span>
+              <input type="number" id="editComm1Value" class="form-control with-prefix" style="font-size: 0.82rem; padding: 6px 8px;" value="0" step="0.5" min="0" oninput="updateEditModalCalculations()">
+            </div>
+          </div>
+
+          <!-- Slot 2 -->
+          <div style="display: grid; grid-template-columns: 2fr 2fr 1.2fr; gap: 8px; align-items: center; background: #ffffff; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <input type="text" id="editComm2Concept" class="form-control" style="font-size: 0.82rem; padding: 6px 8px;" placeholder="Concepto 2 (ej: Aliado)">
+            <input type="text" id="editComm2Beneficiary" class="form-control" style="font-size: 0.82rem; padding: 6px 8px;" placeholder="Beneficiario 2">
+            <div class="currency-input-wrap">
+              <span class="currency-prefix">$</span>
+              <input type="number" id="editComm2Value" class="form-control with-prefix" style="font-size: 0.82rem; padding: 6px 8px;" value="0" step="0.5" min="0" oninput="updateEditModalCalculations()">
+            </div>
+          </div>
+
+          <!-- Slot 3 -->
+          <div style="display: grid; grid-template-columns: 2fr 2fr 1.2fr; gap: 8px; align-items: center; background: #ffffff; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <input type="text" id="editComm3Concept" class="form-control" style="font-size: 0.82rem; padding: 6px 8px;" placeholder="Concepto 3 (ej: Delivery)">
+            <input type="text" id="editComm3Beneficiary" class="form-control" style="font-size: 0.82rem; padding: 6px 8px;" placeholder="Beneficiario 3">
+            <div class="currency-input-wrap">
+              <span class="currency-prefix">$</span>
+              <input type="number" id="editComm3Value" class="form-control with-prefix" style="font-size: 0.82rem; padding: 6px 8px;" value="0" step="0.5" min="0" oninput="updateEditModalCalculations()">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Financial Recalculation Summary Box in Edit Modal -->
+      <div id="editFinancialSummaryBox" style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px; margin-bottom: 1.25rem; font-size: 0.85rem;">
+        <!-- Filled dynamically -->
+      </div>
+
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button type="button" class="btn btn-outline" onclick="closeEditSaleModal()">Cancelar</button>
+        <button type="button" class="btn btn-primary" onclick="saveEditedSale()" style="padding: 10px 24px;">💾 Guardar Cambios</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Ficha del Cliente (Perfil, Datos, Métricas y Transacciones) -->
+  <div class="modal-overlay" id="clientProfileModal">
+    <div class="modal-box" style="max-width: 820px; max-height: 90vh; overflow-y: auto;">
+      <button class="modal-close-btn" onclick="closeClientProfileModal()">&times;</button>
+      
+      <!-- Profile Header -->
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #e2e8f0; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <div id="profileAvatar" class="client-avatar-circle" style="width: 54px; height: 54px; font-size: 1.4rem;">
+            CR
+          </div>
+          <div>
+            <h3 id="profileName" style="font-size: 1.35rem; font-weight: 800; margin: 0; color: #0f172a;">Carlos Rodríguez</h3>
+            <div id="profileIdCard" style="font-size: 0.8rem; color: #64748b;">C.I. V-18239401</div>
+          </div>
+        </div>
+        <div id="profileDebtBadge">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <!-- Info Cards Row -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 1.25rem;">
+        <div style="background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0;">
+          <div style="font-size: 0.72rem; color: #64748b; font-weight: 600; text-transform: uppercase;">Teléfono / WhatsApp</div>
+          <div id="profilePhone" style="font-weight: 700; font-size: 0.95rem; margin-top: 2px;">-</div>
+        </div>
+        <div style="background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0;">
+          <div style="font-size: 0.72rem; color: #64748b; font-weight: 600; text-transform: uppercase;">Total Comprado</div>
+          <div id="profileTotalPurchased" style="font-weight: 800; font-size: 1.15rem; color: #0f172a; margin-top: 2px;">$0.00</div>
+        </div>
+        <div style="background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0;">
+          <div style="font-size: 0.72rem; color: #64748b; font-weight: 600; text-transform: uppercase;">Total Pagado</div>
+          <div id="profileTotalPaid" style="font-weight: 800; font-size: 1.15rem; color: #16a34a; margin-top: 2px;">$0.00</div>
+        </div>
+        <div style="background: #fef2f2; padding: 10px 14px; border-radius: 8px; border: 1px solid #fecaca;">
+          <div style="font-size: 0.72rem; color: #b91c1c; font-weight: 700; text-transform: uppercase;">Saldo Pendiente (Debe)</div>
+          <div id="profileTotalDebt" style="font-weight: 800; font-size: 1.25rem; color: #dc2626; margin-top: 2px;">$0.00</div>
+        </div>
+      </div>
+
+      <!-- Extra contact details (Email, Address, Notes, Seller) -->
+      <div id="profileExtraWrap" style="background: #f8fafc; padding: 12px 16px; border-radius: 8px; margin-bottom: 1.25rem; font-size: 0.85rem; display: flex; flex-direction: column; gap: 4px;">
+        <div><strong>👔 Vendedor Asignado:</strong> <span id="profileSellerName" style="color: #2563eb; font-weight: 700;">-</span></div>
+        <div><strong>Email:</strong> <span id="profileEmail">-</span></div>
+        <div><strong>Dirección:</strong> <span id="profileAddress">-</span></div>
+        <div><strong>Notas:</strong> <span id="profileNotes">-</span></div>
+      </div>
+
+      <!-- Historial de Transacciones del Cliente -->
+      <div style="margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h4 style="font-weight: 800; font-size: 1rem; margin: 0; color: #0f172a;">Historial de Transacciones del Cliente</h4>
+          <span id="profileTxCount" style="font-size: 0.82rem; color: #64748b; font-weight: 600;">0 ventas</span>
+        </div>
+        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
+          <table class="data-table" style="font-size: 0.82rem;">
+            <thead>
+              <tr>
+                <th>Venta / Fecha</th>
+                <th>Artículos</th>
+                <th>Vendedor</th>
+                <th>Modalidad</th>
+                <th>Total ($)</th>
+                <th>Estado / Deuda</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="profileSalesTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Footer Buttons -->
+      <div style="display: flex; gap: 10px; justify-content: space-between; flex-wrap: wrap;">
+        <div style="display: flex; gap: 8px;">
+          <a id="profileWhatsAppBtn" href="#" target="_blank" class="btn btn-outline" style="color: #25d366; border-color: #bbf7d0;">
+            💬 Enviar WhatsApp
+          </a>
+          <button class="btn btn-outline" onclick="openEditCurrentProfileClient()">
+            ✏️ Editar Datos
+          </button>
+        </div>
+        <button class="btn btn-outline" onclick="closeClientProfileModal()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Crear / Editar Cliente -->
+  <div class="modal-overlay" id="clientEditModal">
+    <div class="modal-box" style="max-width: 520px;">
+      <button class="modal-close-btn" onclick="closeClientEditModal()">&times;</button>
+      <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 0.5rem;" id="clientEditModalTitle">Registrar Nuevo Cliente</h3>
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.25rem;">Completa los datos para llevar el control de compras, créditos y saldo deudor.</p>
+
+      <input type="hidden" id="clientEditId">
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="clientEditName">Nombre Completo *</label>
+        <input type="text" id="clientEditName" class="form-control" placeholder="Ej: Carlos Gómez">
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="clientEditPhone">Teléfono / WhatsApp *</label>
+          <input type="tel" id="clientEditPhone" class="form-control" placeholder="Ej: 0414-9876543">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="clientEditIdCard">Cédula / RIF (Opcional)</label>
+          <input type="text" id="clientEditIdCard" class="form-control" placeholder="Ej: V-19876543">
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="clientEditEmail">Correo Electrónico (Opcional)</label>
+        <input type="email" id="clientEditEmail" class="form-control" placeholder="Ej: cliente@correo.com">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="clientEditAddress">Dirección / Ubicación (Opcional)</label>
+        <input type="text" id="clientEditAddress" class="form-control" placeholder="Ej: Caracas, Chacao">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <label class="form-label" for="clientEditSellerSelect" style="margin-bottom: 0;">Vendedor Asignado</label>
+          <button type="button" class="btn btn-outline btn-xs" onclick="openCreateSellerModal()" title="Registrar nuevo vendedor">
+            + Nuevo Vendedor
+          </button>
+        </div>
+        <select id="clientEditSellerSelect" class="form-control">
+          <option value="">-- Sin Asignar (Tienda Principal) --</option>
+          <!-- Populated dynamically -->
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label class="form-label" for="clientEditNotes">Observaciones / Notas Internas</label>
+        <input type="text" id="clientEditNotes" class="form-control" placeholder="Ej: Cliente preferencial, entrega en oficina...">
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="saveClientFromModal()">💾 Guardar Cliente</button>
+        <button class="btn btn-outline" onclick="closeClientEditModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Crear / Editar Producto (CRUD Manual) -->
+  <div class="modal-overlay" id="productEditModal">
+    <div class="modal-box" style="max-width: 680px; max-height: 90vh; overflow-y: auto;">
+      <button class="modal-close-btn" onclick="closeProductEditModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.25rem;">
+        <span style="font-size: 1.3rem;">📦</span>
+        <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0;" id="productEditModalTitle">Ficha del Producto</h3>
+      </div>
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.15rem;">Modifica el título/descripción, costo, precios, código, categoría y hasta 4 fotografías del producto.</p>
+
+      <input type="hidden" id="productEditOriginalCode">
+
+      <!-- TÍTULO / DESCRIPCIÓN DEL PRODUCTO (CAMPO PRINCIPAL) -->
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="productEditDescription">
+          <strong>Título / Descripción del Producto *</strong>
+          <span style="font-size: 0.75rem; color: #64748b; font-weight: normal;">(Título principal con el que se buscará y mostrará)</span>
+        </label>
+        <input type="text" id="productEditDescription" class="form-control" placeholder="Ej: Termo Coffee Mug Color Negro Obsidiana" style="font-weight: 700; font-size: 0.95rem;">
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="productEditCode">Código del Producto *</label>
+          <input type="text" id="productEditCode" class="form-control" placeholder="Ej: CT-COF1, CTHR-1..." style="font-weight: 700; text-transform: uppercase;">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="productEditStatus">Estado de Disponibilidad</label>
+          <select id="productEditStatus" class="form-control">
+            <option value="DISPONIBLE">🟢 DISPONIBLE</option>
+            <option value="AGOTADO">🔴 AGOTADO</option>
+            <option value="TRANSITO">🟡 EN TRÁNSITO</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="productEditCategorySelect">Categoría del Producto *</label>
+        <select id="productEditCategorySelect" class="form-control" onchange="handleProductCategoryChange()">
+          <option value="TERMO PARA CAFÉ">☕ Termos para Café (Coffee Mug)</option>
+          <option value="TERMO PARA AGUA">💧 Termos para Agua (Hydro / Tumbler)</option>
+          <option value="RELOJ INTELIGENTE C/ CONEXIÓN BLUETOOTH">⌚ Relojes Inteligentes</option>
+          <option value="AUDÍFONO INALÁMBRICO BLUETOOTH">🎧 Audífonos Inalámbricos</option>
+          <option value="BOCINA BLUETOOTH">🔊 Bocinas Bluetooth</option>
+          <option value="BOLSOS CUBITT">🎒 Bolsos y Mochilas</option>
+          <option value="CORREA CUBITT DE SILICON P/RELOJ">🔗 Correas de Silicona</option>
+          <option value="GORRA">🧢 Gorras</option>
+          <option value="TOTE BAG">🛍️ Tote Bags</option>
+          <option value="SPORTBELT">🏃 Sportbelt</option>
+          <option value="BÁSCULA DIGITAL">⚖️ Básculas Digitales</option>
+          <option value="CARGADOR PARA RELOJ">🔌 Cargadores</option>
+          <option value="PROTECTOR DE PANTALLA P/RELOJ">📱 Protectores de Pantalla</option>
+          <option value="custom">➕ Otra Categoría Personalizada...</option>
+        </select>
+        <input type="text" id="productEditCategoryCustom" class="form-control" style="display: none; margin-top: 6px;" placeholder="Escribe el nombre de la categoría...">
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1.15rem;">
+        <div class="form-group">
+          <label class="form-label" for="productEditMayor">
+            <strong>Costo del Producto ($ USD) *</strong>
+            <span style="font-size: 0.72rem; color: #64748b; font-weight: normal;">(Costo mayorista / adquisición)</span>
+          </label>
+          <div class="currency-input-wrap">
+            <span class="currency-prefix">$</span>
+            <input type="number" id="productEditMayor" class="form-control with-prefix" step="0.01" min="0" placeholder="0.00" style="font-weight: 700;">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="productEditPvp">
+            <strong>Precio PVP Tienda ($ USD) *</strong>
+            <span style="font-size: 0.72rem; color: #64748b; font-weight: normal;">(Precio de venta al público)</span>
+          </label>
+          <div class="currency-input-wrap">
+            <span class="currency-prefix">$</span>
+            <input type="number" id="productEditPvp" class="form-control with-prefix" step="0.01" min="0" placeholder="0.00" style="font-weight: 700; color: #059669;">
+          </div>
+        </div>
+      </div>
+
+      <!-- FOTOGRAFÍAS DEL PRODUCTO (HASTA 4 FOTOS) -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 4px;">
+          <label class="form-label" style="font-weight: 700; margin: 0; display: flex; align-items: center; gap: 6px;">
+            <span>📷</span> Galería de Fotos del Producto (Hasta 4 fotos)
+          </label>
+          <span style="font-size: 0.72rem; color: #64748b;">La <strong>Foto 1</strong> es la portada principal</span>
+        </div>
+
+        <div class="product-photos-grid">
+          <!-- Foto 1 (Principal) -->
+          <div class="photo-slot-card" id="photoSlotCard0">
+            <div class="photo-slot-badge principal">⭐ Foto 1 (Principal)</div>
+            <div class="photo-slot-preview-box">
+              <img id="productPhotoPreview0" src="images/placeholder.png" alt="Foto 1">
+              <button type="button" class="photo-slot-clear-btn" onclick="clearProductPhotoSlot(0)" title="Eliminar foto">&times;</button>
+            </div>
+            <label class="photo-slot-upload-btn">
+              📁 Subir Foto
+              <input type="file" id="productPhotoFile0" accept="image/*" style="display: none;" onchange="handleProductPhotoSlotUpload(0, this)">
+            </label>
+            <input type="text" id="productPhotoUrl0" class="form-control photo-slot-url-input" placeholder="URL o ruta (ej: images/CT-1.png)" oninput="handleProductPhotoSlotUrlChange(0, this.value)">
+          </div>
+
+          <!-- Foto 2 -->
+          <div class="photo-slot-card" id="photoSlotCard1">
+            <div class="photo-slot-badge">Foto 2</div>
+            <div class="photo-slot-preview-box">
+              <img id="productPhotoPreview1" src="images/placeholder.png" alt="Foto 2">
+              <button type="button" class="photo-slot-clear-btn" onclick="clearProductPhotoSlot(1)" title="Eliminar foto">&times;</button>
+            </div>
+            <label class="photo-slot-upload-btn">
+              📁 Subir Foto
+              <input type="file" id="productPhotoFile1" accept="image/*" style="display: none;" onchange="handleProductPhotoSlotUpload(1, this)">
+            </label>
+            <input type="text" id="productPhotoUrl1" class="form-control photo-slot-url-input" placeholder="URL o ruta..." oninput="handleProductPhotoSlotUrlChange(1, this.value)">
+          </div>
+
+          <!-- Foto 3 -->
+          <div class="photo-slot-card" id="photoSlotCard2">
+            <div class="photo-slot-badge">Foto 3</div>
+            <div class="photo-slot-preview-box">
+              <img id="productPhotoPreview2" src="images/placeholder.png" alt="Foto 3">
+              <button type="button" class="photo-slot-clear-btn" onclick="clearProductPhotoSlot(2)" title="Eliminar foto">&times;</button>
+            </div>
+            <label class="photo-slot-upload-btn">
+              📁 Subir Foto
+              <input type="file" id="productPhotoFile2" accept="image/*" style="display: none;" onchange="handleProductPhotoSlotUpload(2, this)">
+            </label>
+            <input type="text" id="productPhotoUrl2" class="form-control photo-slot-url-input" placeholder="URL o ruta..." oninput="handleProductPhotoSlotUrlChange(2, this.value)">
+          </div>
+
+          <!-- Foto 4 -->
+          <div class="photo-slot-card" id="photoSlotCard3">
+            <div class="photo-slot-badge">Foto 4</div>
+            <div class="photo-slot-preview-box">
+              <img id="productPhotoPreview3" src="images/placeholder.png" alt="Foto 4">
+              <button type="button" class="photo-slot-clear-btn" onclick="clearProductPhotoSlot(3)" title="Eliminar foto">&times;</button>
+            </div>
+            <label class="photo-slot-upload-btn">
+              📁 Subir Foto
+              <input type="file" id="productPhotoFile3" accept="image/*" style="display: none;" onchange="handleProductPhotoSlotUpload(3, this)">
+            </label>
+            <input type="text" id="productPhotoUrl3" class="form-control photo-slot-url-input" placeholder="URL o ruta..." oninput="handleProductPhotoSlotUrlChange(3, this.value)">
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="saveProductFromModal()">💾 Guardar Producto</button>
+        <button class="btn btn-outline" onclick="closeProductEditModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Registrar / Editar Vendedor -->
+  <div class="modal-overlay" id="sellerEditModal">
+    <div class="modal-box" style="max-width: 480px;">
+      <button class="modal-close-btn" onclick="closeSellerEditModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.25rem;">
+        <span style="font-size: 1.3rem;">👔</span>
+        <h3 style="font-size: 1.2rem; font-weight: 800; margin: 0;" id="sellerEditModalTitle">Registrar Nuevo Vendedor</h3>
+      </div>
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.25rem;">Registra los datos del asesor o vendedor para asociarlo a ventas y clientes.</p>
+
+      <input type="hidden" id="sellerEditId">
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="sellerEditName">Nombre Completo del Vendedor *</label>
+        <input type="text" id="sellerEditName" class="form-control" placeholder="Ej: Juan Pérez">
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="sellerEditPhone">Teléfono / WhatsApp</label>
+          <input type="tel" id="sellerEditPhone" class="form-control" placeholder="Ej: 0414-5551234">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="sellerEditStatus">Estado</label>
+          <select id="sellerEditStatus" class="form-control">
+            <option value="ACTIVO">🟢 ACTIVO</option>
+            <option value="INACTIVO">⚪ INACTIVO</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="sellerEditEmail">Correo Electrónico (Opcional)</label>
+        <input type="email" id="sellerEditEmail" class="form-control" placeholder="Ej: juan.perez@cubitt.com">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label class="form-label" for="sellerEditNotes">Notas / Ubicación / Tienda</label>
+        <input type="text" id="sellerEditNotes" class="form-control" placeholder="Ej: Asesor Tienda Sambil, Ventas Cashea...">
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="saveSellerFromModal()">💾 Guardar Vendedor</button>
+        <button class="btn btn-outline" onclick="closeSellerEditModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Directorio y Gestión de Vendedores -->
+  <div class="modal-overlay" id="sellerManageModal">
+    <div class="modal-box" style="max-width: 780px; max-height: 90vh; overflow-y: auto;">
+      <button class="modal-close-btn" onclick="closeManageSellersModal()">&times;</button>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #e2e8f0; flex-wrap: wrap; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.4rem;">👔</span>
+          <div>
+            <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0; color: #0f172a;">Equipo de Vendedores</h3>
+            <div style="font-size: 0.8rem; color: #64748b;">Control de asesores, comisiones y ventas asignadas</div>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openCreateSellerModal()">
+          <span>+ Registrar Vendedor</span>
+        </button>
+      </div>
+
+      <div class="table-responsive">
+        <table class="data-table" style="font-size: 0.84rem;">
+          <thead>
+            <tr>
+              <th>Vendedor</th>
+              <th>Contacto</th>
+              <th>Estado</th>
+              <th>Ventas Realizadas</th>
+              <th>Total Facturado ($)</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="sellersTableBody">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; margin-top: 1.25rem;">
+        <button class="btn btn-outline" onclick="closeManageSellersModal()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Crear Nuevo Usuario -->
+  <div class="modal-overlay" id="createUserModal">
+    <div class="modal-box" style="max-width: 580px;">
+      <button class="modal-close-btn" onclick="closeCreateUserModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 0.5rem;">
+        <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(37,99,235,0.1); color: #2563eb; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
+          🔐
+        </div>
+        <div>
+          <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0; color: #0f172a;">Crear Nuevo Usuario</h3>
+          <div style="font-size: 0.8rem; color: #64748b;">Acceso al sistema, credenciales y rol de usuario</div>
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-top: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="createUsernameInput">Nombre de Usuario (Login) <span style="color:#ef4444;">*</span></label>
+          <input type="text" id="createUsernameInput" class="form-control" placeholder="Ej: juan.perez o gerencia" autocomplete="off">
+          <small style="color: #64748b; font-size: 0.72rem;">Identificador único para iniciar sesión</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="createPasswordInput">Contraseña / Clave <span style="color:#ef4444;">*</span></label>
+          <div class="password-input-wrapper">
+            <input type="password" id="createPasswordInput" class="form-control" placeholder="Mínimo 4 caracteres" autocomplete="new-password">
+            <button type="button" class="toggle-eye-btn" onclick="togglePasswordVisibility('createPasswordInput', 'createPasswordIcon')" title="Ver/Ocultar clave">
+              <span id="createPasswordIcon">👁️</span>
+            </button>
+          </div>
+          <small style="color: #64748b; font-size: 0.72rem;">Clave confidencial de acceso</small>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="createFullNameInput">Nombre Completo del Usuario <span style="color:#ef4444;">*</span></label>
+          <input type="text" id="createFullNameInput" class="form-control" placeholder="Ej: Juan Carlos Pérez">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="createUserRoleSelect">Tipo / Rol de Usuario <span style="color:#ef4444;">*</span></label>
+          <select id="createUserRoleSelect" class="form-control" onchange="handleUserRoleChange('create')">
+            <option value="vendedor" selected>👔 Vendedor (Ventas & Tienda)</option>
+            <option value="gerencia">👑 Gerencia (Administración Total)</option>
+            <option value="inversor">💼 Inversor (Reportes & Finanzas)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" id="createUserSellerGroup">
+          <label class="form-label" for="createUserSellerSelect">Vendedor Asociado (Comisiones / POS)</label>
+          <select id="createUserSellerSelect" class="form-control">
+            <option value="">-- Ninguno / Acceso Libre --</option>
+            <!-- Dynamically populated from state.sellers -->
+          </select>
+          <small style="color: #64748b; font-size: 0.72rem;">Vincula con el asesor para asignación de ventas</small>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="createUserStatusSelect">Estado de la Cuenta</label>
+          <select id="createUserStatusSelect" class="form-control">
+            <option value="ACTIVO" selected>🟢 ACTIVO</option>
+            <option value="INACTIVO">🔴 INACTIVO (Bloqueado)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.25rem;">
+        <label class="form-label" for="createUserNotesInput">Notas / Teléfono / Ubicación (Opcional)</label>
+        <input type="text" id="createUserNotesInput" class="form-control" placeholder="Ej: Turno mañana, tienda principal...">
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="handleSaveNewUser()">💾 Guardar Usuario</button>
+        <button class="btn btn-outline" onclick="closeCreateUserModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Editar Usuario -->
+  <div class="modal-overlay" id="editUserModal">
+    <div class="modal-box" style="max-width: 580px;">
+      <button class="modal-close-btn" onclick="closeEditUserModal()">&times;</button>
+      <input type="hidden" id="editUserIdInput">
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 0.5rem;">
+        <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(16,185,129,0.1); color: #10b981; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
+          ✏️
+        </div>
+        <div>
+          <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0; color: #0f172a;">Modificar Usuario <span id="editUserUsernameLabel" style="color: #2563eb;"></span></h3>
+          <div style="font-size: 0.8rem; color: #64748b;">Actualizar datos, rol asignado o vendedor vinculado</div>
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-top: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="editUsernameInput">Nombre de Usuario (Login) <span style="color:#ef4444;">*</span></label>
+          <input type="text" id="editUsernameInput" class="form-control" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="editFullNameInput">Nombre Completo <span style="color:#ef4444;">*</span></label>
+          <input type="text" id="editFullNameInput" class="form-control">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="editUserRoleSelect">Tipo / Rol de Usuario <span style="color:#ef4444;">*</span></label>
+          <select id="editUserRoleSelect" class="form-control" onchange="handleUserRoleChange('edit')">
+            <option value="vendedor">👔 Vendedor (Ventas & Tienda)</option>
+            <option value="gerencia">👑 Gerencia (Administración Total)</option>
+            <option value="inversor">💼 Inversor (Reportes & Finanzas)</option>
+          </select>
+        </div>
+        <div class="form-group" id="editUserSellerGroup">
+          <label class="form-label" for="editUserSellerSelect">Vendedor Asociado</label>
+          <select id="editUserSellerSelect" class="form-control">
+            <option value="">-- Ninguno / Acceso Libre --</option>
+            <!-- Dynamically populated from state.sellers -->
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="editUserStatusSelect">Estado de la Cuenta</label>
+          <select id="editUserStatusSelect" class="form-control">
+            <option value="ACTIVO">🟢 ACTIVO</option>
+            <option value="INACTIVO">🔴 INACTIVO (Bloqueado)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="editUserNotesInput">Notas / Teléfono</label>
+          <input type="text" id="editUserNotesInput" class="form-control" placeholder="Notas adicionales">
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.25rem; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 10px 14px;">
+        <label class="form-label" for="editUserNewPasswordInput" style="margin-bottom: 4px;">Cambiar Contraseña (Opcional)</label>
+        <div class="password-input-wrapper">
+          <input type="password" id="editUserNewPasswordInput" class="form-control" placeholder="Dejar en blanco para mantener la clave actual" autocomplete="new-password">
+          <button type="button" class="toggle-eye-btn" onclick="togglePasswordVisibility('editUserNewPasswordInput', 'editPasswordIcon')" title="Ver/Ocultar clave">
+            <span id="editPasswordIcon">👁️</span>
+          </button>
+        </div>
+        <small style="color: #64748b; font-size: 0.72rem;">Escribe una nueva clave solo si deseas cambiarla</small>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="handleSaveEditedUser()">💾 Guardar Cambios</button>
+        <button class="btn btn-outline" onclick="closeEditUserModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Cambio Rápido de Contraseña -->
+  <div class="modal-overlay" id="changePasswordModal">
+    <div class="modal-box" style="max-width: 440px;">
+      <button class="modal-close-btn" onclick="closeChangePasswordModal()">&times;</button>
+      <input type="hidden" id="changePasswordUserIdInput">
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 0.5rem;">
+        <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(245,158,11,0.1); color: #d97706; display: flex; align-items: center; justify-content: center; font-size: 1.3rem;">
+          🔑
+        </div>
+        <div>
+          <h3 style="font-size: 1.15rem; font-weight: 800; margin: 0; color: #0f172a;">Cambiar Contraseña</h3>
+          <div style="font-size: 0.8rem; color: #64748b;">Usuario: <strong id="changePasswordUserLabel" style="color: #2563eb;"></strong></div>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin: 1.25rem 0;">
+        <label class="form-label" for="changePasswordNewInput">Nueva Contraseña <span style="color:#ef4444;">*</span></label>
+        <div class="password-input-wrapper">
+          <input type="password" id="changePasswordNewInput" class="form-control" placeholder="Ingresa la nueva clave" autocomplete="new-password">
+          <button type="button" class="toggle-eye-btn" onclick="togglePasswordVisibility('changePasswordNewInput', 'quickChangePasswordIcon')" title="Ver/Ocultar clave">
+            <span id="quickChangePasswordIcon">👁️</span>
+          </button>
+        </div>
+        <small style="color: #64748b; font-size: 0.72rem;">Mínimo 4 caracteres</small>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="handleConfirmChangePassword()">🔑 Actualizar Clave</button>
+        <button class="btn btn-outline" onclick="closeChangePasswordModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Cargar Factura de Compra (Modo Manual o con Asistente IA) -->
+  <div class="modal-overlay" id="invoiceUploadModal" style="z-index: 99999;">
+    <div class="modal-box" style="max-width: 880px; max-height: 92vh; overflow-y: auto;">
+      <button class="modal-close-btn" onclick="closeInvoiceUploadModal()">&times;</button>
+      
+      <!-- Modal Top Bar: Título y Selector de Modo -->
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 0.85rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div id="invoiceModalIcon" style="width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #10b981, #059669); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 1.4rem;">
+            ✏️
+          </div>
+          <div>
+            <h3 id="invoiceModalTitle" style="font-size: 1.25rem; font-weight: 800; margin: 0; color: #0f172a;">Carga Manual de Factura de Compra</h3>
+            <div id="invoiceModalSubtitle" style="font-size: 0.8rem; color: #64748b;">Ingresa los datos del proveedor, número de factura y productos para alimentar inventario y generar CXP.</div>
+          </div>
+        </div>
+
+        <!-- Selector de Modo con Pestañas -->
+        <div style="display: flex; gap: 6px; background: #f1f5f9; padding: 4px; border-radius: 10px; border: 1px solid #cbd5e1;">
+          <button type="button" id="btnModalModeManual" onclick="switchInvoiceModalMode('manual')" style="font-size: 0.82rem; font-weight: 800; padding: 7px 16px; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s; background: #059669; color: #ffffff; box-shadow: 0 2px 8px rgba(5,150,105,0.3);">
+            ✏️ Carga Manual Directa
+          </button>
+          <button type="button" id="btnModalModeAI" onclick="switchInvoiceModalMode('ai')" style="font-size: 0.82rem; font-weight: 700; padding: 7px 16px; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s; background: transparent; color: #475569;">
+            🤖 Asistente IA (Gemini)
+          </button>
+        </div>
+      </div>
+
+      <!-- Zona de Comprobante / Foto en Modo Manual (Opcional) -->
+      <div id="manualAttachReceiptBox" style="background: #f8fafc; border: 1.5px dashed #94a3b8; border-radius: 10px; padding: 12px 16px; margin-bottom: 1.2rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="width: 38px; height: 38px; border-radius: 8px; background: #e0f2fe; color: #0284c7; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">
+            📎
+          </div>
+          <div>
+            <div style="font-weight: 800; font-size: 0.88rem; color: #0f172a;">Foto o Soporte de la Factura (Opcional)</div>
+            <div id="manualReceiptFileName" style="font-size: 0.76rem; color: #64748b;">Puedes adjuntar una foto del comprobante para mantener el registro visual archivado en la app.</div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="file" id="manualReceiptFileInput" accept="image/*" style="display: none;" onchange="handleManualReceiptFileSelected(event)">
+          <button type="button" class="btn btn-outline btn-xs" onclick="document.getElementById('manualReceiptFileInput').click()" style="font-size: 0.78rem; padding: 6px 14px; font-weight: 700; border-color: #0284c7; color: #0284c7;">
+            📷 Seleccionar Foto
+          </button>
+          <button type="button" id="btnRemoveManualReceipt" onclick="removeManualReceiptFile()" class="btn btn-outline btn-xs" style="display: none; font-size: 0.74rem; color: #ef4444; border-color: #fca5a5;">
+            Quitar
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 1: Asistente Gemini Flash Vision & Adjuntar Foto (Visible solo en Modo IA) -->
+      <div id="aiScanBannerSection" class="ai-scan-banner" style="display: none; background: linear-gradient(135deg, #1e1b4b, #312e81, #0f172a); border: 1px solid #6366f1; border-radius: 12px; padding: 16px; margin-bottom: 1.2rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span class="ai-badge" style="background: linear-gradient(135deg, #ec4899, #8b5cf6); font-weight: 800; font-size: 0.84rem; padding: 4px 12px; border-radius: 20px;">
+              ⚡ Gemini Flash Vision
+            </span>
+            <div>
+              <span style="font-size: 1rem; font-weight: 800; color: #ffffff;">Asistente Inteligente de Facturas</span>
+              <div style="font-size: 0.76rem; color: #cbd5e1;">Lectura neuronal de tablas, columnas y partidas de comprobantes de compra</div>
+            </div>
+          </div>
+          <!-- Botones de Acción Asistente IA -->
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button type="button" class="btn btn-outline btn-xs" onclick="switchInvoiceModalMode('manual')" style="color: #cbd5e1; border-color: rgba(255,255,255,0.3); font-size: 0.76rem;">
+              ✏️ Cambiar a Carga Manual
+            </button>
+            <button type="button" class="ai-scan-btn" id="btnRunAiAssistant" onclick="runAIAssistantOnInvoice()" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); box-shadow: 0 4px 16px rgba(124, 58, 237, 0.6); font-size: 0.95rem; font-weight: 800; padding: 10px 20px; border-radius: 8px;">
+              <span>🤖 Escanear con Gemini Flash</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Zona para Adjuntar Foto -->
+        <div class="invoice-upload-dropzone" id="invoiceDropzone" onclick="document.getElementById('invoiceFileInput').click()" style="background: rgba(15, 23, 42, 0.65); border: 2px dashed #6366f1;">
+          <input type="file" id="invoiceFileInput" accept="image/*" style="display: none;" onchange="handleInvoiceFileSelected(event)">
+          <div id="dropzoneEmptyView">
+            <div style="font-size: 2.2rem; margin-bottom: 6px;">📷</div>
+            <div style="font-weight: 800; color: #ffffff; font-size: 0.98rem;">Haz clic para adjuntar foto de tu factura</div>
+            <div style="font-size: 0.78rem; color: #cbd5e1; margin-top: 4px;">Soporta fotos tomadas con celular o documentos escaneados (JPG, PNG, WEBP)</div>
+          </div>
+          <div id="dropzonePreviewView" style="display: none; align-items: center; justify-content: center; gap: 16px;">
+            <img id="invoicePhotoPreviewImg" src="" alt="Foto Factura" style="max-height: 90px; max-width: 150px; border-radius: 8px; border: 2px solid #8b5cf6; object-fit: contain; background: #000;">
+            <div style="text-align: left;">
+              <div style="font-weight: 800; color: #a7f3d0; font-size: 0.95rem;">✅ Foto de Factura Adjuntada</div>
+              <div id="invoicePhotoFileName" style="font-size: 0.78rem; color: #e2e8f0;">comprobante_factura.jpg</div>
+              <button type="button" class="btn btn-outline btn-xs" onclick="event.stopPropagation(); document.getElementById('invoiceFileInput').click();" style="margin-top: 5px; color: #fff; border-color: rgba(255,255,255,0.4);">Cambiar Foto</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel Directo de Conexión de Gemini Flash -->
+        <div style="margin-top: 12px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(99, 102, 241, 0.45); border-radius: 8px; padding: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 0.95rem;">🔑</span>
+              <strong style="color: #ffffff; font-size: 0.85rem;">Conexión Google Gemini Flash Vision:</strong>
+              <span class="badge" id="aiEngineStatusBadge" style="font-size: 0.74rem; padding: 2px 8px;">Verificando...</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <label for="invoiceGeminiModelSelect" style="font-size: 0.74rem; color: #94a3b8; margin: 0;">Modelo:</label>
+              <select id="invoiceGeminiModelSelect" class="form-control" style="font-size: 0.74rem; padding: 3px 6px; width: auto; background: #020617; color: #fff; border-color: #475569;" onchange="saveGeminiModelChoice()">
+                <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Oficial / Máxima Potencia)</option>
+                <option value="gemini-3.7-flash">Gemini 3.7 Flash (Ultra Rápido & Recomendado)</option>
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            <div style="position: relative; flex: 1; min-width: 250px;">
+              <input type="password" id="invoiceGeminiApiKeyInput" class="form-control" placeholder="Pega tu API Key de Google Gemini (ej: AIzaSy...)" style="font-size: 0.82rem; background: #020617; color: #ffffff; border-color: #6366f1; padding-right: 32px;">
+              <span onclick="toggleApiKeyVisibility()" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 0.85rem; color: #94a3b8;" title="Ver/Ocultar clave">👁️</span>
+            </div>
+            <button type="button" class="btn btn-success btn-xs" onclick="saveGeminiApiKey()" style="padding: 7px 14px; font-weight: 800; background: #10b981; border: none;">💾 Guardar Clave</button>
+            <button type="button" class="btn btn-outline btn-xs" onclick="removeGeminiApiKey()" style="color: #f87171; border-color: #7f1d1d; padding: 6px 10px;">Borrar</button>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 0.73rem;">
+            <div style="color: #cbd5e1;">
+              👉 <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #38bdf8; text-decoration: underline; font-weight: 700;">Haz clic aquí para obtener tu API Key gratuita en Google AI Studio</a> (solo necesitas tu cuenta Google).
+            </div>
+            <div style="color: #94a3b8;">
+              🔒 Tu clave queda guardada de forma segura en tu navegador.
+            </div>
+          </div>
+        </div>
+
+        <!-- Plantillas Demo para Pruebas Rápidas -->
+        <div style="margin-top: 10px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+          <span style="font-size: 0.74rem; color: #cbd5e1; font-weight: 600;">O prueba con una factura demo:</span>
+          <button type="button" class="login-demo-chip" onclick="loadSampleInvoicePreset('rower')" style="font-size: 0.74rem; padding: 4px 10px; background: #fef08a; color: #854d0e; border: 1px solid #facc15; font-weight: 800;">
+            🇻🇪 Factura Real Distribuidora Rower (Bs. 287.349,97 • REF $345,16)
+          </button>
+          <button type="button" class="login-demo-chip" onclick="loadSampleInvoicePreset('termos')" style="font-size: 0.72rem; padding: 3px 8px;">
+            🧾 Factura Termos ($546.50)
+          </button>
+          <button type="button" class="login-demo-chip" onclick="loadSampleInvoicePreset('watches')" style="font-size: 0.72rem; padding: 3px 8px;">
+            🧾 Factura Relojes ($820.00)
+          </button>
+          <button type="button" class="login-demo-chip" onclick="loadSampleInvoicePreset('variada')" style="font-size: 0.72rem; padding: 3px 8px;">
+            🧾 Factura Surtida ($1,280.00)
+          </button>
+        </div>
+
+        <!-- Estado / Animación de Escaneo IA -->
+        <div id="aiScanStatusBox" class="ai-status-box" style="display: none;">
+          <div class="ai-spinner"></div>
+          <div id="aiScanStatusText" style="color: #ddd6fe; font-weight: 600;">Iniciando Asistente IA...</div>
+        </div>
+
+        <!-- Contenedor para ver el texto detectado / OCR -->
+        <div id="invoiceOcrResultBox" style="display: none; margin-top: 10px; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <span style="font-size: 0.76rem; font-weight: 700; color: #38bdf8;">📄 Texto y Partidas Detectadas en la Foto:</span>
+            <button type="button" onclick="document.getElementById('invoiceOcrResultBox').style.display='none'" style="background: none; border: none; color: #64748b; cursor: pointer; font-size: 0.8rem;">&times; Ocultar</button>
+          </div>
+          <pre id="invoiceOcrRawText" style="margin: 0; font-size: 0.74rem; color: #a7f3d0; max-height: 110px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; line-height: 1.35;"></pre>
+        </div>
+      </div>
+
+      <!-- Step 2: Encabezado de Factura y Proveedor -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+          <div style="font-weight: 800; font-size: 0.88rem; color: #1e293b;">📋 Datos de la Factura y Proveedor</div>
+          <div style="font-size: 0.75rem; background: #eff6ff; color: #1d4ed8; padding: 2px 8px; border-radius: 6px; border: 1px solid #bfdbfe; font-weight: 700;">
+            🇻🇪 Compatible con Facturas SENIAT en Bolívares (Bs.) y Conversión BCV
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="invoiceNumberInput">N° de Factura / Control *</label>
+            <input type="text" id="invoiceNumberInput" class="form-control" placeholder="Ej: 00004105 o FV/2026/04164">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="invoiceSupplierInput">Proveedor / Distribuidor *</label>
+            <input type="text" id="invoiceSupplierInput" class="form-control" placeholder="Ej: DISTRIBUIDORA ROWER, C.A.">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="invoiceSupplierRifInput">RIF Proveedor</label>
+            <input type="text" id="invoiceSupplierRifInput" class="form-control" placeholder="Ej: J-00011548-6">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="invoiceDateInput">Fecha de Emisión *</label>
+            <input type="date" id="invoiceDateInput" class="form-control">
+          </div>
+        </div>
+
+        <!-- Datos de la Razón Social de la Compra -->
+        <div class="form-row" style="margin-top: 8px; background: #ffffff; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0;">
+          <div class="form-group" style="flex: 2; min-width: 220px;">
+            <label class="form-label" for="invoiceBuyerNameInput" style="color: #0f172a; font-weight: 700;">
+              🏢 Razón Social de la Compra / Cliente Receptor *
+            </label>
+            <input type="text" id="invoiceBuyerNameInput" class="form-control" placeholder="Ej: JESUS DAVID PALMA GOLLO o Inversiones Cubitt C.A.">
+          </div>
+          <div class="form-group" style="flex: 1; min-width: 140px;">
+            <label class="form-label" for="invoiceBuyerRifInput">RIF / C.I. Comprador</label>
+            <input type="text" id="invoiceBuyerRifInput" class="form-control" placeholder="Ej: V-212044993">
+          </div>
+          <div class="form-group" style="flex: 2; min-width: 200px;">
+            <label class="form-label" for="invoiceBuyerAddressInput">Dirección Fiscal Comprador</label>
+            <input type="text" id="invoiceBuyerAddressInput" class="form-control" placeholder="Ej: Calle 3, Sector La Providencia">
+          </div>
+        </div>
+
+        <!-- Fila de Moneda y Tasa BCV -->
+        <div class="form-row" style="margin-top: 8px; background: #f1f5f9; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">
+          <div class="form-group" style="min-width: 170px;">
+            <label class="form-label" for="invoiceCurrencySelect" style="color: #0f172a; font-weight: 700;">Moneda Factura</label>
+            <select id="invoiceCurrencySelect" class="form-control" onchange="handleInvoiceCurrencyChange()">
+              <option value="VES" selected>🇻🇪 Bolívares (Bs.)</option>
+              <option value="USD">💵 Dólares (USD $)</option>
+            </select>
+          </div>
+          <div class="form-group" id="invoiceBcvGroup" style="min-width: 190px;">
+            <label class="form-label" for="invoiceBcvRateInput" style="color: #0f172a; font-weight: 700;">
+              📈 Tasa BCV del Día (Bs/$) *
+            </label>
+            <div style="display: flex; gap: 6px;">
+              <input type="number" id="invoiceBcvRateInput" class="form-control" step="0.01" min="0.01" value="717.68" oninput="handleInvoiceBcvRateChange()" style="font-weight: 800; color: #1e293b;">
+              <button type="button" class="btn btn-outline btn-xs" onclick="handleRecalculateBcv()" title="Recalcular precios en $ con esta tasa" style="padding: 4px 8px; white-space: nowrap;">🔄 Aplicar</button>
+            </div>
+            <div style="font-size: 0.7rem; color: #64748b; margin-top: 2px;">Costo $ = Precio Bs. / Tasa BCV</div>
+          </div>
+          <div class="form-group" id="invoiceTotalBsGroup" style="min-width: 180px;">
+            <label class="form-label" for="invoiceTotalBsInput">Total Factura en Bs. (Con IVA)</label>
+            <input type="text" id="invoiceTotalBsInput" class="form-control" placeholder="Ej: 287.349,97" oninput="handleInvoiceTotalBsInput()">
+            <div style="font-size: 0.7rem; color: #64748b; margin-top: 2px;">Base Bs: <span id="headerSubtotalBsLabel">0,00</span></div>
+          </div>
+        </div>
+
+        <div class="form-row" style="margin-top: 8px;">
+          <div class="form-group">
+            <label class="form-label" for="invoicePaymentConditionSelect">Condición de Pago *</label>
+            <select id="invoicePaymentConditionSelect" class="form-control" onchange="handleInvoiceConditionChange()">
+              <option value="credito">📋 A Crédito con Proveedor (Genera CXP automáticamente)</option>
+              <option value="contado">💵 De Contado (Factura ya pagada al proveedor)</option>
+            </select>
+          </div>
+          <div class="form-group" id="invoiceDueDateGroup">
+            <label class="form-label" for="invoiceDueDateInput">Fecha de Vencimiento del Crédito *</label>
+            <input type="date" id="invoiceDueDateInput" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="invoiceNotesInput">Observaciones / Guía de Despacho</label>
+            <input type="text" id="invoiceNotesInput" class="form-control" placeholder="Ej: Recepción Almacén - Factura Rower">
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Líneas de Productos / Items de la Factura -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-bottom: 1.25rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+          <div style="font-weight: 800; font-size: 0.88rem; color: #1e293b;">📦 Mercancía Recibida (Alimentación de Stock)</div>
+          <button type="button" class="btn btn-outline btn-xs" onclick="addInvoiceItemRow()">+ Agregar Otra Fila</button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table" style="font-size: 0.82rem;">
+            <thead>
+              <tr>
+                <th style="width: 28%;">Producto Cubitt</th>
+                <th style="width: 14%;">Código</th>
+                <th style="width: 10%;">Cantidad</th>
+                <th style="width: 14%;" id="thInvoicePrecioBs">Precio Unit. (Bs.)</th>
+                <th style="width: 14%;" id="thInvoiceCostoUsd">Costo Unit. ($)</th>
+                <th style="width: 14%;" id="thInvoiceSubtotalBs">Subtotal (Bs.)</th>
+                <th style="width: 14%;" id="thInvoiceSubtotalUsd">Subtotal ($)</th>
+                <th style="width: 30px;"></th>
+              </tr>
+            </thead>
+            <tbody id="invoiceItemsTableBody">
+              <!-- Dynamically populated rows -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Sección de Descuento en Factura (SENIAT / Distribuidor) -->
+        <div style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 12px 16px; margin-top: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 1.2rem;">🏷️</span>
+              <div>
+                <strong style="font-size: 0.92rem; color: #0f172a; display: block;">Descuento en Factura:</strong>
+                <span style="font-size: 0.74rem; color: #64748b;">(Ej: 20% en Distribuidora Rower)</span>
+              </div>
+            </div>
+            
+            <!-- Selector de Tipo de Descuento -->
+            <div style="display: flex; gap: 4px; background: #e2e8f0; padding: 3px; border-radius: 8px;">
+              <button type="button" id="btnDiscountTypePercent" onclick="setInvoiceDiscountType('percent')" style="padding: 5px 12px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; border: none; cursor: pointer; background: #2563eb; color: #ffffff; box-shadow: 0 1px 3px rgba(37,99,235,0.3);">
+                Porcentaje (%)
+              </button>
+              <button type="button" id="btnDiscountTypeAmount" onclick="setInvoiceDiscountType('amount')" style="padding: 5px 12px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; border: none; cursor: pointer; background: transparent; color: #475569;">
+                Monto Fijo
+              </button>
+            </div>
+
+            <!-- Entrada de Descuento -->
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <input type="number" id="invoiceDiscountValueInput" class="form-control" min="0" step="0.01" value="0" placeholder="0" style="width: 130px; font-weight: 800; font-size: 1rem; text-align: right; color: #dc2626; border-color: #fca5a5;" oninput="handleInvoiceDiscountChange()">
+              <span id="invoiceDiscountUnitSuffix" style="font-weight: 800; color: #dc2626; font-size: 1rem;">%</span>
+            </div>
+
+            <!-- Botones Rápidos de Descuento -->
+            <div style="display: flex; gap: 5px; align-items: center; flex-wrap: wrap;">
+              <button type="button" class="btn btn-outline btn-xs" onclick="applyQuickDiscount(0)" style="font-size: 0.75rem; padding: 4px 8px;">0%</button>
+              <button type="button" class="btn btn-outline btn-xs" onclick="applyQuickDiscount(10)" style="font-size: 0.75rem; padding: 4px 8px;">10%</button>
+              <button type="button" class="btn btn-outline btn-xs" onclick="applyQuickDiscount(15)" style="font-size: 0.75rem; padding: 4px 8px;">15%</button>
+              <button type="button" class="btn btn-outline btn-xs" onclick="applyQuickDiscount(20)" style="font-size: 0.78rem; font-weight: 800; color: #b91c1c; border-color: #fca5a5; background: #fef2f2; padding: 4px 10px;" title="Descuento habitual Rower (20%)">
+                ⭐ 20% (Rower)
+              </button>
+            </div>
+          </div>
+
+          <!-- Casilla: Aplicar Descuento a Costos Unitarios de Inventario -->
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #1e293b; font-weight: 600; cursor: pointer; user-select: none; margin: 0; background: #ffffff; padding: 6px 12px; border-radius: 8px; border: 1px solid #cbd5e1;">
+            <input type="checkbox" id="invoiceApplyDiscountToCostCheckbox" checked onchange="updateInvoiceCalculations()" style="width: 16px; height: 16px; accent-color: #059669; cursor: pointer;">
+            <span>Afectar costo de inventario con este descuento</span>
+          </label>
+        </div>
+
+        <!-- Total Factura Box -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-top: 1rem; padding-top: 1rem; border-top: 2px solid #e2e8f0; flex-wrap: wrap; gap: 20px;">
+          <div style="font-size: 0.85rem; color: #475569;">
+            <div style="margin-bottom: 4px;">Total Unidades Físicas: <strong id="invoiceTotalUnitsLabel" style="color: #0f172a; font-size: 1.15rem;">0</strong> unidades</div>
+            <div id="invoiceBcvNoteLabel" style="font-size: 0.78rem; color: #64748b;">
+              Conversión oficial: <strong id="invoiceAppliedBcvText" style="color: #2563eb;">Tasa BCV 717.68 Bs/$</strong>
+            </div>
+            <div id="invoiceCostEffectNote" style="font-size: 0.74rem; color: #059669; margin-top: 4px; font-weight: 600;">
+              ✨ El costo unitario de cada producto se registrará al valor neto descontado.
+            </div>
+          </div>
+
+          <div style="text-align: right; min-width: 320px;">
+            <!-- Desglose en Bolívares -->
+            <div id="invoiceBsSummaryBlock" style="font-size: 0.84rem; color: #475569; margin-bottom: 6px; line-height: 1.6;">
+              <div style="display: flex; justify-content: space-between; gap: 20px;">
+                <span>Subtotal Bruto:</span>
+                <strong id="invoiceSummarySubtotalBsLabel">Bs. 0,00</strong>
+              </div>
+              <div id="invoiceDiscountSummaryRow" style="display: none; justify-content: space-between; gap: 20px; color: #dc2626;">
+                <span>Descuento Factura (<span id="invoiceSummaryDiscountPercentLabel">0%</span>):</span>
+                <strong id="invoiceSummaryDiscountBsLabel">-Bs. 0,00</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; gap: 20px; color: #0f172a; font-weight: 700;">
+                <span>Base Imponible (Neto):</span>
+                <strong id="invoiceSummaryBaseImponibleBsLabel">Bs. 0,00</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; gap: 20px;">
+                <span>IVA (16%):</span>
+                <strong id="invoiceSummaryIvaBsLabel">Bs. 0,00</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; gap: 20px; border-top: 1.5px dashed #cbd5e1; padding-top: 5px; margin-top: 4px; font-size: 0.98rem;">
+                <span style="font-weight: 800; color: #0f172a;">TOTAL FACTURA:</span>
+                <strong id="invoiceSummaryTotalBsLabel" style="color: #1e40af; font-size: 1.2rem;">Bs. 0,00</strong>
+              </div>
+            </div>
+
+            <!-- Desglose en Dólares ($) -->
+            <div style="border-top: 2px solid #e2e8f0; padding-top: 8px; margin-top: 6px;">
+              <div style="font-size: 0.95rem; font-weight: 800; color: #0f172a;">
+                VALORIZACIÓN EN USD ($): <span id="invoiceTotalAmountLabel" style="color: #059669; font-size: 1.35rem;">$0.00</span>
+              </div>
+              <div id="invoiceTotalWithIvaUsdBlock" style="font-size: 0.86rem; color: #1e293b; margin-top: 3px;">
+                Total Factura con IVA en $: <strong id="invoiceTotalWithIvaUsdLabel" style="color: #2563eb; font-size: 1.15rem;">$0.00</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button type="button" class="btn btn-primary btn-block" onclick="handleSaveInvoiceAndStock()" style="background: linear-gradient(135deg, #10b981, #059669); font-weight: 800; font-size: 1rem; padding: 12px;">
+          💾 Confirmar e Ingresar a Inventario y CXP
+        </button>
+        <button type="button" class="btn btn-outline" onclick="closeInvoiceUploadModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Ver Detalle de Factura Registrada -->
+  <div class="modal-overlay" id="invoiceDetailModal">
+    <div class="modal-box" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+      <button class="modal-close-btn" onclick="closeInvoiceDetailModal()">&times;</button>
+      <div id="invoiceDetailContent">
+        <!-- Dynamically rendered -->
+      </div>
+      <div style="display: flex; justify-content: flex-end; margin-top: 1.25rem;">
+        <button class="btn btn-outline" onclick="closeInvoiceDetailModal()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Ajuste Rápido de Stock Físico -->
+  <div class="modal-overlay" id="quickStockAdjustModal">
+    <div class="modal-box" style="max-width: 440px;">
+      <button class="modal-close-btn" onclick="closeQuickStockAdjustModal()">&times;</button>
+      <input type="hidden" id="adjustProductCodeInput">
+      <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 0.25rem;">Ajuste de Stock Físico</h3>
+      <div id="adjustProductTitle" style="font-size: 0.85rem; color: #64748b; margin-bottom: 1rem;">Producto</div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="adjustStockQuantityInput">Nuevo Stock Físico (Unidades)</label>
+        <input type="number" id="adjustStockQuantityInput" class="form-control" min="0" step="1">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.25rem;">
+        <label class="form-label" for="adjustStockReasonInput">Motivo del Ajuste</label>
+        <select id="adjustStockReasonInput" class="form-control">
+          <option value="Conteo Físico / Inventario">📋 Conteo Físico / Auditoría</option>
+          <option value="Reposición Directa">📦 Reposición Directa de Mercancía</option>
+          <option value="Corrección de Registro">✏️ Corrección de Registro</option>
+          <option value="Merma o Garantía">⚠️ Merma / Daño / Garantía</option>
+        </select>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="handleConfirmStockAdjustment()">💾 Guardar Ajuste</button>
+        <button class="btn btn-outline" onclick="closeQuickStockAdjustModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Lightbox para ver Imagen en Grande con Galería de Fotos -->
+  <div class="modal-overlay" id="lightboxModal" onclick="closeLightbox()">
+    <div class="modal-box lightbox-box" onclick="event.stopPropagation()">
+      <button class="modal-close-btn" onclick="closeLightbox()">&times;</button>
+      
+      <div class="lightbox-header">
+        <div style="text-align: left;">
+          <div id="lightboxTitle" class="lightbox-title">Título del Producto</div>
+          <div id="lightboxSubtitle" class="lightbox-subtitle">Código • Categoría</div>
+        </div>
+        <div id="lightboxCounter" class="lightbox-counter">1 / 1</div>
+      </div>
+
+      <div class="lightbox-main-container">
+        <button type="button" class="lightbox-nav-btn lightbox-prev-btn" id="lightboxPrevBtn" onclick="navigateLightbox(-1)" title="Foto anterior (←)">❮</button>
+        <div class="lightbox-img-wrap">
+          <img id="lightboxImg" src="" alt="Foto Cubitt">
+        </div>
+        <button type="button" class="lightbox-nav-btn lightbox-next-btn" id="lightboxNextBtn" onclick="navigateLightbox(1)" title="Foto siguiente (→)">❯</button>
+      </div>
+
+      <!-- Miniaturas de la galería en el Lightbox -->
+      <div id="lightboxThumbStrip" class="lightbox-thumb-strip"></div>
+    </div>
+  </div>
+
+  <!-- LOGIN SCREEN PORTAL OVERLAY -->
+  <div class="login-overlay" id="loginOverlay">
+    <div class="login-card">
+      <div class="login-brand-badge">Cubitt Retail POS</div>
+      <h1 class="login-title">Acceso al Sistema</h1>
+      <p class="login-subtitle">Ingresa con tus credenciales de usuario para habilitar tu espacio de trabajo y registrar ventas.</p>
+
+      <div id="loginErrorMsg" class="login-error-alert"></div>
+
+      <form id="loginForm" onsubmit="event.preventDefault(); handleLoginSubmit();">
+        <div class="login-input-group">
+          <label class="login-input-label" for="loginUsernameInput">Nombre de Usuario</label>
+          <input type="text" id="loginUsernameInput" class="login-input" placeholder="Ej: juan.perez o admin" autocomplete="username" required>
+        </div>
+
+        <div class="login-input-group">
+          <label class="login-input-label" for="loginPasswordInput">Contraseña</label>
+          <div class="password-input-wrapper">
+            <input type="password" id="loginPasswordInput" class="login-input" placeholder="Tu contraseña..." autocomplete="current-password" required>
+            <button type="button" class="toggle-eye-btn" onclick="togglePasswordVisibility('loginPasswordInput', 'loginPasswordEyeIcon')" title="Ver/Ocultar clave" style="color: #94a3b8;">
+              <span id="loginPasswordEyeIcon">👁️</span>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="login-submit-btn" id="loginSubmitBtn">
+          <span>🚀 Iniciar Sesión</span>
+        </button>
+      </form>
+
+      <!-- Quick Demo Access for Fast Testing -->
+      <div class="login-demo-section">
+        <div class="login-demo-title">⚡ Acceso Rápido de Prueba (1 Clic):</div>
+        <div class="login-demo-chips">
+          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('admin')" title="Acceso total directivo">
+            👑 Gerencia (admin)
+          </button>
+          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('inversor')" title="Supervisión financiera">
+            💼 Inversor (inversor)
+          </button>
+          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('juan.perez')" title="Ventas individuales">
+            👔 Vendedor Juan
+          </button>
+          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('ana.silva')" title="Ventas individuales">
+            👔 Vendedora Ana
+          </button>
+          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('pedro.gomez')" title="Ventas individuales">
+            👔 Vendedor Pedro
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Helper for quick category filter in POS view -->
+  <script>
+    function quickFilterCatalog(cat) {
+      switchTab('catalog');
+      const select = document.getElementById('catalogCategorySelect');
+      if (select) {
+        select.value = cat;
+        state.catalogCategoryFilter = cat;
+        renderCatalog();
+      }
+    }
+  </script>
+
+  <!-- Application Configuration (Gemini API Key, Defaults) -->
+  <script src="config.js"></script>
+  <!-- Load Products Dataset -->
+  <script src="products.js"></script>
+  <!-- Main Application Logic -->
+  <script src="app.js"></script>
+</body>
+</html>
