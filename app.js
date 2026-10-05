@@ -13530,31 +13530,28 @@ function showSheetsDiagnosticHelper(url, errorMsg) {
   diagBox.innerHTML = `
     <div style="background: #fff1f2; border: 1.5px solid #fecdd3; border-radius: 10px; padding: 14px; font-size: 0.82rem; color: #9f1239; margin-top: 6px;">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 6px;">
-        <strong style="font-size: 0.88rem; color: #be123c;">⚠️ ¿Cómo solucionar este error en 1 minuto?</strong>
+        <strong style="font-size: 0.88rem; color: #be123c;">⚠️ Causa Detectada y Solución en 3 Clics:</strong>
         <a href="${testPingUrl}" target="_blank" class="btn btn-xs btn-outline" style="background: #ffffff; border-color: #be123c; color: #be123c; font-weight: 700; text-decoration: none;">
           🌐 Abrir URL en nueva pestaña ↗
         </a>
       </div>
       <p style="margin: 0 0 8px 0; color: #4c0519; line-height: 1.45;">
-        Google no permitió la conexión directa. Esto ocurre por una de las siguientes razones en Google Apps Script:
+        Google Apps Script responde: <em>«No se encontró la función de la secuencia de comandos: doGet»</em>.
+        <br>Esto sucede porque guardaste o pegaste el código, pero <strong>la implementación web sigue ejecutando la versión anterior</strong> (vacía).
       </p>
-      <ul style="margin: 0 0 10px 0; padding-left: 20px; line-height: 1.55; color: #881337;">
-        <li>
-          <strong>1. «Ejecutar como» (Execute as):</strong> En Apps Script, al implementar, debe estar en <strong>«Yo (tu cuenta de Google)»</strong>. Si elegiste <em>«El usuario que accede»</em>, Google bloquea la app pidiendo inicio de sesión.
-        </li>
-        <li>
-          <strong>2. Permisos no autorizados:</strong> Haz clic en el botón de arriba <strong>«Abrir URL en nueva pestaña»</strong>. Si Google te muestra la pantalla <em>«Google no ha verificado esta aplicación»</em>, haz clic en <u>Configuración avanzada</u> ➔ <u>Ir a Cubitt POS (no seguro)</u> ➔ <u>Permitir</u>.
-        </li>
-        <li>
-          <strong>3. «Quién tiene acceso» (Who has access):</strong> Debe decir <strong>«Cualquier persona»</strong> (Anyone).
-        </li>
-        <li>
-          <strong>4. Actualizar versión:</strong> Si cambiaste el código, ve a <em>Implementar ➔ Administrar implementaciones ➔ Editar (✏️) ➔ Versión: Nueva versión ➔ Implementar</em>.
-        </li>
-      </ul>
+      <div style="background: #ffffff; border: 1px solid #fda4af; border-radius: 8px; padding: 10px; margin-bottom: 10px; color: #881337;">
+        <strong>Sigue estos 3 sencillos pasos en tu Google Sheet:</strong>
+        <ol style="margin: 6px 0 0 0; padding-left: 20px; line-height: 1.6;">
+          <li>En el editor de Apps Script, asegúrate de guardar el código (presiona <strong>Ctrl + S</strong> o clic en el ícono de disquete 💾).</li>
+          <li>En el menú superior, haz clic en <strong>«Implementar» ➔ «Administrar implementaciones»</strong>.</li>
+          <li>Arriba a la derecha, haz clic en el <strong>ícono de lápiz ✏️ (Editar)</strong>.</li>
+          <li>En el menú desplegable <strong>Versión</strong>, selecciona <strong>«Nueva versión»</strong>.</li>
+          <li>Haz clic en el botón azul <strong>«Implementar»</strong>. ¡Listo!</li>
+        </ol>
+      </div>
       <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
         <button type="button" class="btn btn-sm btn-primary" onclick="testSheetsConnection()" style="background: #be123c; border-color: #be123c; font-size: 0.78rem;">
-          🔄 Volver a Probar Conexión
+          🔄 Probar Conexión Nuevamente
         </button>
         <button type="button" class="btn btn-sm btn-outline" onclick="copyGoogleAppsScriptCode()" style="font-size: 0.78rem;">
           📋 Copiar Código Actualizado
