@@ -64,7 +64,13 @@ const state = {
   loanDraftItems: [], // Multi-product items in loan creation draft: [{ code, name, category, image, qty, unitPrice, totalValue, pendingQty, reconciledQty }]
   selectedLoanProduct: null,
   reconcileMode: 'total', // 'total' | 'parcial'
-  currentReconcilingLoan: null
+  currentReconcilingLoan: null,
+  // AI Agent & Automated Task Management State
+  aiTasks: [],
+  aiDismissedTaskIds: [],
+  aiChatHistory: [],
+  aiTaskFilter: 'all', // 'all', 'urgent', 'loans', 'stock', 'finances', 'goals'
+  aiCasheaSim: { amount: 69, percent: 0.4 }
 };
 window.state = state;
 
@@ -196,6 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderInventoryTab();
   renderLoansTab();
   updateInventoryBadges();
+  initAiAgent();
   setupAutocomplete();
   setupClientAutocomplete();
   setupLoanProductAutocomplete();
@@ -650,6 +657,10 @@ function switchTab(tabName) {
   document.querySelectorAll('.tab-pane').forEach(pane => {
     pane.classList.toggle('active', pane.id === `tab-${tabName}`);
   });
+
+  if (tabName === 'ai-agent') {
+    renderAiAgentCommandCenter();
+  }
 
   // Highlight active dropdowns
   const financesBtn = document.getElementById('navBtnFinances');
@@ -10737,6 +10748,983 @@ function exportInventoryToCSV() {
   showToast('Inventario de existencias descargado en CSV', 'success');
 }
 
+// ==========================================================================
+// AI AGENT (CUBITT INTELLIGENCE) - OPERATIONAL PROCESS & TASK MANAGEMENT
+// ==========================================================================
 
+const AI_BUSINESS_RULES = `
+Eres el Agente Oficial de Inteligencia Artificial de CUBITT Venezuela (Sedes Barquisimeto Trinitarias, Barquisimeto T-Mania y Maracay La Morita).
+Tu misión es gestionar tareas prioritarias, optimizar procesos operativos, evitar rupturas de stock, conciliar préstamos y maximizar el rendimiento comercial del equipo.
 
+REGLAS OPERATIVAS FUNDAMENTALES DEL NEGOCIO:
+1. ALMACENES Y LOGÍSTICA:
+   - Barquisimeto Trinitarias: Almacén sede central y tienda principal de Cubitt. Maneja inventario propio ingresado por facturas fiscales de compra.
+   - Barquisimeto T-Mania: Alianza estratégica en consignación externa. T-Mania suministra la mercancía; cuando se vende en Barquisimeto T-Mania, se genera la comisión pactada para T-Mania en Cuentas por Pagar (CXP).
+     * Regla Fiscal Crucial: Para no alterar el inventario de las cargas de facturas fiscales, al registrarse una venta por Barquisimeto T-Mania, el sistema genera automáticamente un INGRESO y un EGRESO simultáneo en el inventario/Kardex bajo el concepto "Mercancía T-Mania".
+   - Maracay La Morita: Sucursal comercial en el CC La Morita (Maracay).
 
+2. MERCANCÍA EN PRÉSTAMO (INTER-WAREHOUSE LOANS):
+   - Se registran préstamos continuos entre Barquisimeto Trinitarias y Barquisimeto T-Mania (en ambas direcciones).
+   - Soporte multi-producto con códigos, descripciones oficiales y fotos referenciales.
+   - Modalidad de Conciliación: Total (100%) o Parcial con selección de unidades por producto.
+   - Formas de Resolución:
+     * DEVUELTO: Mercancía retorna físicamente al almacén de origen (reingresa al inventario).
+     * VENDIDO_LIQUIDADO: El almacén receptor vendió el artículo y liquida el pago.
+     * COMPENSADO: Se compensa con otro artículo o crédito a favor.
+     * AJUSTE_OTRO: Ajuste por auditoría interna.
+   - El Agente audita préstamos con estado PENDIENTE o PARCIAL, en especial aquellos con más de 24-48 horas abiertos.
+
+3. CANALES Y PLATAFORMAS DE VENTA:
+   - Tienda Directa (ninguna): Venta física presencial (0% comisión de pasarela).
+   - MercadoLibre: Canal de comercio electrónico (genera comisión de pasarela).
+   - Facebook Marketplace: 0% comisión de pasarela; se registra para medir el retorno del tráfico orgánico en redes sociales.
+
+4. FINANCIAMIENTO CASHEA:
+   - Esquema: Pago inicial (40% para clientes nivel estándar, 50% intermedio, 60% inicial) + 3 cuotas quincenales iguales (cada 14 días: Día 14, Día 28, Día 42).
+   - Cuentas por Pagar (CXP): Las ventas por Cashea Bull, Cashea T-Mania y Cashea JP generan comisiones de plataforma en CXP que deben conciliarse periódicamente.
+
+5. METAS Y BONOS DEL EQUIPO COMERCIAL:
+   - Regla de Bonificación: Los vendedores ganan un BONO EXTRAORDINARIO DE $50 POR CADA $1,000 acumulados en ventas en el mes.
+   - El Agente identifica asesores cercanos a un múltiplo de $1,000 para impulsar cierres inmediatos.
+
+6. FACTURACIÓN FISCAL, TASA BCV Y KARDEX:
+   - Facturas de compra con IVA (16%), IGTF (3%), tasa oficial BCV y cálculo de costo unitario ponderado.
+   - Escaneo inteligente con Google Gemini Vision.
+`;
+
+function getActiveBcvRate() {
+  const bcvInput = document.getElementById('invoiceBcvRateInput');
+  return parseFloat(bcvInput ? bcvInput.value : 717.68) || 717.68;
+}
+
+// Initialize AI Agent on app startup
+function initAiAgent() {
+  try {
+    const savedDismissed = localStorage.getItem('cubitt_ai_dismissed_tasks_v1');
+    if (savedDismissed) {
+      state.aiDismissedTaskIds = JSON.parse(savedDismissed);
+    }
+  } catch (e) {
+    state.aiDismissedTaskIds = [];
+  }
+
+  try {
+    const savedChat = localStorage.getItem('cubitt_ai_chat_history_v1');
+    if (savedChat) {
+      state.aiChatHistory = JSON.parse(savedChat);
+    }
+  } catch (e) {
+    state.aiChatHistory = [];
+  }
+
+  // Pre-seed initial greeting if chat is fresh
+  if (!state.aiChatHistory || state.aiChatHistory.length === 0) {
+    state.aiChatHistory = [
+      {
+        sender: 'agent',
+        timestamp: new Date().toISOString(),
+        text: `¡Hola! 👋 Soy tu **Agente Inteligente de Cubitt** para las sedes de Barquisimeto Trinitarias, Barquisimeto T-Mania y Maracay La Morita.
+
+Estoy monitoreando en tiempo real las operaciones del negocio:
+* 🤝 **Auditoría de Préstamos:** Detección de artículos pendientes entre Trinitarias y T-Mania.
+* 📦 **Riesgos de Stock:** Alertas de existencias agotadas y sugerencias de reabastecimiento o préstamos.
+* 💳 **Simulador Cashea:** Desglose exacto de pago inicial y 3 cuotas quincenales cada 14 días.
+* 🏆 **Metas Comerciales:** Seguimiento de vendedores a punto de ganar su bono de $50 por cada $1,000.
+* 🏢 **Consignación Barquisimeto T-Mania:** Registro de comisiones y doble movimiento ("Mercancía T-Mania").
+
+¿Qué consulta o proceso deseas revisar hoy?`
+      }
+    ];
+  }
+
+  auditAndGenerateAiTasks(false);
+  calculateAiCasheaSimulation();
+  calculateAiModalCashea();
+  renderAiChatMessagesStream();
+  updateAiEngineStatusLabel();
+}
+
+function updateAiEngineStatusLabel() {
+  const apiKey = (window.CUBITT_CONFIG && window.CUBITT_CONFIG.GEMINI_API_KEY) || localStorage.getItem('cubitt_gemini_api_key') || '';
+  const statusEl = document.getElementById('aiEngineStatusText');
+  const chatTag = document.getElementById('aiChatEngineTag');
+  
+  if (apiKey) {
+    if (statusEl) statusEl.textContent = 'Google Gemini 3.7 Flash & Base de Datos Conectados';
+    if (chatTag) chatTag.textContent = 'Gemini Flash Activo';
+  } else {
+    if (statusEl) statusEl.textContent = 'Motor Cognitivo Local Cubitt & Base de Datos Activos';
+    if (chatTag) chatTag.textContent = 'Motor Local';
+  }
+}
+
+// Proactive Task Generator Engine: Audits state and generates prioritized action items
+function auditAndGenerateAiTasks(showToastFeedback = false) {
+  const generatedTasks = [];
+  const now = Date.now();
+
+  // 1. Audit Loans (Inter-warehouse transfers between Trinitarias and T-Mania)
+  const pendingLoans = (state.loans || []).filter(l => l.status === 'PENDIENTE' || l.status === 'PARCIAL');
+  pendingLoans.forEach(loan => {
+    const loanTime = new Date(loan.timestamp || loan.date).getTime() || now;
+    const hoursElapsed = (now - loanTime) / 3600000;
+    const pendingUnits = (loan.items || []).reduce((acc, it) => acc + (Number(it.pendingQty) || Number(it.qty) || 0), 0);
+    const routeLabel = loan.route === 'trinitarias_to_tmania' 
+      ? 'Trinitarias ➔ T-Mania' 
+      : (loan.route === 'tmania_to_trinitarias' ? 'T-Mania ➔ Trinitarias' : `${loan.originWarehouse} ➔ ${loan.destWarehouse}`);
+
+    const isUrgent = hoursElapsed > 36 || loan.status === 'PARCIAL';
+    const topItemNames = (loan.items || []).map(i => i.name || i.code).slice(0, 2).join(', ');
+    const moreItems = loan.items && loan.items.length > 2 ? ` (+${loan.items.length - 2} más)` : '';
+
+    generatedTasks.push({
+      id: `task-loan-${loan.id}`,
+      category: 'loans',
+      priority: isUrgent ? 'urgent' : 'high',
+      tagText: isUrgent ? '🔴 URGENTE' : '🟠 ATENCIÓN',
+      title: `Conciliar Préstamo ${loan.id} (${routeLabel})`,
+      description: `${pendingUnits} unidades pendientes de liquidar o devolver [${topItemNames}${moreItems}]. Registrado hace ${Math.max(1, Math.round(hoursElapsed))}h por ${loan.responsible || 'Tienda'}.`,
+      recommendation: `Verificar con el encargado del almacén destino si las unidades fueron vendidas (liquidar) o si retornan físicamente a vitrina para ejecutar la conciliación total o parcial.`,
+      actionLabel: `⚡ Conciliar Préstamo ${loan.id}`,
+      actionType: 'reconcile_loan',
+      actionTarget: loan.id
+    });
+  });
+
+  // 2. Audit Inventory & Out of Stock Risks
+  const products = state.products || [];
+  const outOfStock = products.filter(p => (Number(p.stock) || 0) <= 0);
+  const lowStock = products.filter(p => (Number(p.stock) || 0) > 0 && (Number(p.stock) || 0) <= 2);
+
+  // Top 3 out of stock products
+  outOfStock.slice(0, 3).forEach(p => {
+    generatedTasks.push({
+      id: `task-stock-zero-${p.code}`,
+      category: 'stock',
+      priority: 'urgent',
+      tagText: '🔴 STOCK AGOTADO',
+      title: `Ruptura de Stock: ${p.name || p.description} (${p.code})`,
+      description: `Existencia en 0 unidades físicas. Producto de alta demanda sin disponibilidad para venta inmediata en vitrina.`,
+      recommendation: `Solicitar un préstamo de mercancía a Barquisimeto T-Mania si disponen de stock en vitrina, o ingresar factura de reposición.`,
+      actionLabel: `📦 Gestionar en Inventario`,
+      actionType: 'view_inventory_product',
+      actionTarget: p.code
+    });
+  });
+
+  // Low stock warning if count > 0
+  if (lowStock.length > 0) {
+    const sampleLow = lowStock.slice(0, 2).map(p => `${p.description || p.code} (${p.stock} un.)`).join(', ');
+    generatedTasks.push({
+      id: `task-stock-low-general`,
+      category: 'stock',
+      priority: 'high',
+      tagText: '⚠️ STOCK CRÍTICO',
+      title: `${lowStock.length} Productos con Stock Crítico (≤ 2 unidades)`,
+      description: `Productos cerca de agotarse: ${sampleLow}${lowStock.length > 2 ? ' entre otros' : ''}.`,
+      recommendation: `Programar reposición de inventario o revisar existencias entre sucursales para transferencias preventivas.`,
+      actionLabel: `📦 Ver Stock Crítico`,
+      actionType: 'view_inventory_low',
+      actionTarget: ''
+    });
+  }
+
+  // 3. Audit CXP (Cuentas por Pagar) - Cashea & Platform Commissions
+  const pendingPayables = (state.payables || []).filter(p => p.status === 'PENDIENTE');
+  const casheaPayables = pendingPayables.filter(p => (p.concept || '').toUpperCase().includes('CASHEA') || (p.beneficiary || '').toUpperCase().includes('CASHEA'));
+  const totalCasheaDebt = casheaPayables.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+
+  if (totalCasheaDebt > 30) {
+    generatedTasks.push({
+      id: `task-cxp-cashea`,
+      category: 'finances',
+      priority: 'medium',
+      tagText: '💰 FINANZAS / CASHEA',
+      title: `Comisiones Cashea Pendientes por Liquidar ($${totalCasheaDebt.toFixed(2)})`,
+      description: `Existen ${casheaPayables.length} comisiones generadas por financiamiento Cashea pendientes de pago o conciliación.`,
+      recommendation: `Liquidar comprobantes con los aliados comerciales (Cashea Bull, Cashea T-Mania o Cashea JP) y conciliar en el módulo CXP.`,
+      actionLabel: `💸 Ir a Cuentas por Pagar`,
+      actionType: 'view_payables',
+      actionTarget: ''
+    });
+  }
+
+  // 4. Audit Sales Team Goals ($50 bonus for every $1,000 sold in the month)
+  const currentMonth = new Date().getMonth();
+  const currentYear = new Date().getFullYear();
+  const activeSellers = (state.sellers || []).filter(s => s.status === 'ACTIVO');
+  
+  let topSellerCloseToBonus = 0;
+  activeSellers.forEach(seller => {
+    const monthSales = (state.sales || []).filter(s => {
+      const sDate = new Date(s.timestamp || s.date);
+      return s.seller === seller.name && sDate.getMonth() === currentMonth && sDate.getFullYear() === currentYear;
+    });
+
+    const totalSoldMonth = monthSales.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
+    const tier = Math.floor(totalSoldMonth / 1000);
+    const nextTarget = (tier + 1) * 1000;
+    const diff = nextTarget - totalSoldMonth;
+
+    if (diff > 0 && diff <= 300) {
+      topSellerCloseToBonus++;
+      generatedTasks.push({
+        id: `task-goal-${seller.id}-${tier}`,
+        category: 'goals',
+        priority: 'opportunity',
+        tagText: '🎯 META A LA VISTA ($50)',
+        title: `¡${seller.name} está a solo $${diff.toFixed(2)} de su próximo bono de $50!`,
+        description: `Acumula $${totalSoldMonth.toFixed(2)} vendidos este mes. Con $${diff.toFixed(2)} adicionales alcanza la meta de $${nextTarget.toFixed(2)} y desbloquea su bono de $50.`,
+        recommendation: `Incentivar al asesor ofreciéndole prospectos interesados en Smartwatches Viva Pro / Aura o accesorios de alta rotación para cerrar la venta hoy.`,
+        actionLabel: `🎯 Ver Tabla de Metas`,
+        actionType: 'view_goals',
+        actionTarget: ''
+      });
+    }
+  });
+
+  // 5. Audit Special Orders (Bajo Pedido)
+  const pendingOrders = (state.orders || []).filter(o => o.status === 'LISTO_ENTREGA' || o.status === 'PENDIENTE_COMPRA');
+  pendingOrders.slice(0, 2).forEach(order => {
+    generatedTasks.push({
+      id: `task-order-${order.id}`,
+      category: 'stock',
+      priority: order.status === 'LISTO_ENTREGA' ? 'high' : 'medium',
+      tagText: order.status === 'LISTO_ENTREGA' ? '🚚 LISTO PARA ENTREGA' : '📦 BAJO PEDIDO',
+      title: `Pedido ${order.id}: ${order.clientName || 'Cliente'} (${order.status})`,
+      description: `Orden bajo pedido con saldo total de $${(Number(order.totalAmount) || 0).toFixed(2)}. ${order.status === 'LISTO_ENTREGA' ? 'El producto ya está en tienda listo para ser entregado.' : 'Pendiente por confirmar compra o despacho.'}`,
+      recommendation: `Contactar al cliente para coordinar la entrega en tienda o entrega por delivery y cobrar saldo pendiente.`,
+      actionLabel: `🚚 Ver Bajo Pedido`,
+      actionType: 'view_orders',
+      actionTarget: order.id
+    });
+  });
+
+  // Filter out tasks that were dismissed by user, unless explicitly re-auditing
+  if (showToastFeedback) {
+    state.aiDismissedTaskIds = [];
+    localStorage.removeItem('cubitt_ai_dismissed_tasks_v1');
+  }
+
+  const activeDismissed = state.aiDismissedTaskIds || [];
+  state.aiTasks = generatedTasks.filter(t => !activeDismissed.includes(t.id));
+
+  // Update UI KPI counters
+  const urgentCount = state.aiTasks.filter(t => t.priority === 'urgent').length;
+  const kpiActive = document.getElementById('aiKpiActiveTasks');
+  if (kpiActive) kpiActive.textContent = state.aiTasks.length;
+
+  const kpiLoans = document.getElementById('aiKpiPendingLoans');
+  if (kpiLoans) kpiLoans.textContent = pendingLoans.length;
+
+  const kpiStock = document.getElementById('aiKpiStockRisks');
+  if (kpiStock) kpiStock.textContent = outOfStock.length + lowStock.length;
+
+  const kpiBonuses = document.getElementById('aiKpiUpcomingBonuses');
+  if (kpiBonuses) kpiBonuses.textContent = topSellerCloseToBonus;
+
+  // Badges in Header Nav, FAB, and Modal
+  const navBadge = document.getElementById('badgeAiTasksCount');
+  if (navBadge) {
+    navBadge.textContent = state.aiTasks.length;
+    navBadge.style.display = state.aiTasks.length > 0 ? 'inline-block' : 'none';
+  }
+
+  const fabBadge = document.getElementById('aiFabBadge');
+  if (fabBadge) {
+    fabBadge.textContent = state.aiTasks.length;
+    fabBadge.style.display = state.aiTasks.length > 0 ? 'inline-flex' : 'none';
+    fabBadge.classList.toggle('has-urgent', urgentCount > 0);
+  }
+
+  const modalBadge = document.getElementById('aiModalTasksCount');
+  if (modalBadge) modalBadge.textContent = state.aiTasks.length;
+
+  const fabSub = document.getElementById('aiFabSubtitle');
+  if (fabSub) {
+    fabSub.textContent = state.aiTasks.length > 0 ? `${state.aiTasks.length} tareas` : 'Al día ✨';
+  }
+
+  const lastAudit = document.getElementById('aiLastAuditText');
+  if (lastAudit) {
+    const timeStr = new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+    lastAudit.textContent = `Última auditoría: Hoy a las ${timeStr}`;
+  }
+
+  renderAiTasksList();
+
+  if (showToastFeedback) {
+    showToast(`⚡ Diagnóstico de IA actualizado: ${state.aiTasks.length} tareas identificadas (${urgentCount} urgentes)`, 'success');
+  }
+}
+
+// Render dynamic AI Task Cards in both the Full Command Center and the Quick Modal
+function renderAiTasksList() {
+  const mainContainer = document.getElementById('aiTasksListContainer');
+  const modalContainer = document.getElementById('aiModalTasksContainer');
+
+  const currentFilter = state.aiTaskFilter || 'all';
+  let filtered = (state.aiTasks || []).filter(task => {
+    if (currentFilter === 'all') return true;
+    if (currentFilter === 'urgent') return task.priority === 'urgent';
+    if (currentFilter === 'loans') return task.category === 'loans';
+    if (currentFilter === 'stock') return task.category === 'stock';
+    if (currentFilter === 'finances') return task.category === 'finances';
+    if (currentFilter === 'goals') return task.category === 'goals';
+    return true;
+  });
+
+  const generateTaskCardsHtml = (tasks) => {
+    if (tasks.length === 0) {
+      return `
+        <div style="text-align: center; padding: 2.5rem 1rem; color: #64748b; background: #f8fafc; border-radius: 12px; border: 1px dashed #cbd5e1;">
+          <div style="font-size: 2.5rem; margin-bottom: 8px;">✨</div>
+          <div style="font-weight: 700; font-size: 1rem; color: #0f172a; margin-bottom: 4px;">¡Todo al día en las operaciones!</div>
+          <div style="font-size: 0.82rem; max-width: 420px; margin: 0 auto; color: #64748b;">
+            No hay cuellos de botella ni tareas críticas pendientes para este filtro. El Agente continúa monitoreando inventario, préstamos y ventas en segundo plano.
+          </div>
+        </div>
+      `;
+    }
+
+    return tasks.map(t => {
+      let badgeClass = 'badge-medium';
+      if (t.priority === 'urgent') badgeClass = 'badge-urgent';
+      else if (t.priority === 'high') badgeClass = 'badge-high';
+      else if (t.priority === 'opportunity') badgeClass = 'badge-opportunity';
+
+      return `
+        <div class="ai-task-card ai-task-${t.priority}">
+          <div class="ai-task-header">
+            <div>
+              <span class="ai-task-badge ${badgeClass}">${t.tagText}</span>
+              <div class="ai-task-title" style="margin-top: 5px;">${t.title}</div>
+            </div>
+            <button type="button" class="ai-task-btn-dismiss" onclick="dismissAiTask('${t.id}')" title="Marcar tarea como atendida">
+              ✕ Atendida
+            </button>
+          </div>
+          <div class="ai-task-desc">${t.description}</div>
+          <div class="ai-task-recommendation">
+            <span style="font-size: 1rem; flex-shrink: 0;">💡</span>
+            <div><strong>Recomendación IA:</strong> ${t.recommendation}</div>
+          </div>
+          <div class="ai-task-actions">
+            <button type="button" class="ai-task-btn-main" onclick="executeAiTaskAction('${t.actionType}', '${t.actionTarget || ''}')">
+              ${t.actionLabel}
+            </button>
+            <span style="font-size: 0.72rem; color: #94a3b8;">Impacto en flujo operativo: Alto</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  };
+
+  const html = generateTaskCardsHtml(filtered);
+  if (mainContainer) mainContainer.innerHTML = html;
+  if (modalContainer) modalContainer.innerHTML = html;
+}
+
+// Filter selector handler
+function setAiTaskFilter(filter) {
+  state.aiTaskFilter = filter;
+  document.querySelectorAll('.ai-pill-btn[data-ai-filter]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.aiFilter === filter);
+  });
+  renderAiTasksList();
+}
+
+// Mark a task as addressed / dismissed
+function dismissAiTask(taskId) {
+  if (!state.aiDismissedTaskIds) state.aiDismissedTaskIds = [];
+  if (!state.aiDismissedTaskIds.includes(taskId)) {
+    state.aiDismissedTaskIds.push(taskId);
+    safeStorageSet('cubitt_ai_dismissed_tasks_v1', JSON.stringify(state.aiDismissedTaskIds));
+  }
+  state.aiTasks = (state.aiTasks || []).filter(t => t.id !== taskId);
+  auditAndGenerateAiTasks(false);
+  showToast('Tarea marcada como atendida por el equipo', 'info');
+}
+
+// 1-Click Action Dispatcher for AI Tasks
+function executeAiTaskAction(actionType, actionTarget) {
+  closeAiQuickModal();
+
+  switch (actionType) {
+    case 'reconcile_loan':
+      openReconcileLoanModal(actionTarget);
+      break;
+
+    case 'view_inventory_product':
+      switchTab('inventory');
+      switchInventorySubTab('stock');
+      const searchInput = document.getElementById('inventorySearchInput');
+      if (searchInput) {
+        searchInput.value = actionTarget;
+        state.inventorySearchQuery = actionTarget;
+        renderInventoryTab();
+      }
+      break;
+
+    case 'view_inventory_low':
+      switchTab('inventory');
+      switchInventorySubTab('stock');
+      const filterSelect = document.getElementById('inventoryStockFilter');
+      if (filterSelect) {
+        filterSelect.value = 'bajo';
+        state.inventoryFilterStockStatus = 'bajo';
+        renderInventoryTab();
+      }
+      break;
+
+    case 'view_payables':
+      switchTab('payables');
+      break;
+
+    case 'view_goals':
+      switchTab('goals');
+      break;
+
+    case 'view_orders':
+      switchTab('orders');
+      break;
+
+    default:
+      console.warn('Unknown AI task action:', actionType);
+      break;
+  }
+}
+
+// Cashea Fast Simulator Tool
+function calculateAiCasheaSimulation() {
+  const amtInput = document.getElementById('aiCasheaAmountInput');
+  const pctSelect = document.getElementById('aiCasheaPercentSelect');
+  const resultsGrid = document.getElementById('aiCasheaSimulationResults');
+  if (!amtInput || !resultsGrid) return;
+
+  const totalUsd = parseFloat(amtInput.value) || 0;
+  const initPercent = parseFloat(pctSelect ? pctSelect.value : 0.40) || 0.40;
+  const bcvRate = getActiveBcvRate();
+
+  const initialUsd = totalUsd * initPercent;
+  const remainingUsd = totalUsd - initialUsd;
+  const installmentUsd = remainingUsd / 3;
+
+  const now = new Date();
+  const formatShortDate = (d) => {
+    return d.toLocaleDateString('es-VE', { day: '2-digit', month: 'short' });
+  };
+
+  const d1 = new Date(now.getTime() + 14 * 86400000);
+  const d2 = new Date(now.getTime() + 28 * 86400000);
+  const d3 = new Date(now.getTime() + 42 * 86400000);
+
+  resultsGrid.innerHTML = `
+    <div class="ai-cashea-pill" style="border-color: #a7f3d0; background: #ecfdf5;">
+      <div class="ai-cashea-pill-val">$${initialUsd.toFixed(2)}</div>
+      <div class="ai-cashea-pill-lbl">Pago Inicial (${Math.round(initPercent * 100)}%)</div>
+      <div style="font-size: 0.68rem; color: #047857; margin-top: 2px;">Bs. ${(initialUsd * bcvRate).toFixed(2)} (Hoy)</div>
+    </div>
+    <div class="ai-cashea-pill">
+      <div class="ai-cashea-pill-val" style="color: #2563eb;">$${installmentUsd.toFixed(2)}</div>
+      <div class="ai-cashea-pill-lbl">Cuota 1 (Día 14)</div>
+      <div style="font-size: 0.68rem; color: #64748b; margin-top: 2px;">${formatShortDate(d1)}</div>
+    </div>
+    <div class="ai-cashea-pill">
+      <div class="ai-cashea-pill-val" style="color: #2563eb;">$${installmentUsd.toFixed(2)}</div>
+      <div class="ai-cashea-pill-lbl">Cuota 2 (Día 28)</div>
+      <div style="font-size: 0.68rem; color: #64748b; margin-top: 2px;">${formatShortDate(d2)}</div>
+    </div>
+    <div class="ai-cashea-pill">
+      <div class="ai-cashea-pill-val" style="color: #2563eb;">$${installmentUsd.toFixed(2)}</div>
+      <div class="ai-cashea-pill-lbl">Cuota 3 (Día 42)</div>
+      <div style="font-size: 0.68rem; color: #64748b; margin-top: 2px;">${formatShortDate(d3)}</div>
+    </div>
+  `;
+}
+
+function setAiCasheaQuickAmount(amt) {
+  const amtInput = document.getElementById('aiCasheaAmountInput');
+  if (amtInput) {
+    amtInput.value = amt.toFixed(2);
+    calculateAiCasheaSimulation();
+  }
+}
+
+function calculateAiModalCashea() {
+  const amtInput = document.getElementById('aiModalCasheaAmountInput');
+  const pctSelect = document.getElementById('aiModalCasheaPercentSelect');
+  const resultsGrid = document.getElementById('aiModalCasheaResults');
+  if (!amtInput || !resultsGrid) return;
+
+  const totalUsd = parseFloat(amtInput.value) || 0;
+  const initPercent = parseFloat(pctSelect ? pctSelect.value : 0.40) || 0.40;
+  const bcvRate = getActiveBcvRate();
+
+  const initialUsd = totalUsd * initPercent;
+  const remainingUsd = totalUsd - initialUsd;
+  const installmentUsd = remainingUsd / 3;
+
+  resultsGrid.innerHTML = `
+    <div class="ai-cashea-pill" style="background: #ecfdf5; border-color: #a7f3d0;">
+      <div class="ai-cashea-pill-val">$${initialUsd.toFixed(2)}</div>
+      <div class="ai-cashea-pill-lbl">Inicial (${Math.round(initPercent * 100)}%)</div>
+      <div style="font-size: 0.68rem; color: #047857;">Bs. ${(initialUsd * bcvRate).toFixed(2)}</div>
+    </div>
+    <div class="ai-cashea-pill">
+      <div class="ai-cashea-pill-val" style="color: #2563eb;">$${installmentUsd.toFixed(2)}</div>
+      <div class="ai-cashea-pill-lbl">3 Cuotas c/u</div>
+      <div style="font-size: 0.68rem; color: #64748b;">Cada 14 días</div>
+    </div>
+  `;
+}
+
+// Quick Modal Drawer Controls
+function openAiQuickModal() {
+  const modal = document.getElementById('aiAgentQuickModal');
+  if (modal) {
+    modal.classList.add('active');
+    auditAndGenerateAiTasks(false);
+    renderAiChatMessagesStream();
+    calculateAiModalCashea();
+    const chatInput = document.getElementById('aiModalChatInput');
+    if (chatInput) setTimeout(() => chatInput.focus(), 150);
+  }
+}
+
+function closeAiQuickModal() {
+  const modal = document.getElementById('aiAgentQuickModal');
+  if (modal) modal.classList.remove('active');
+}
+
+function openAiFullScreen() {
+  closeAiQuickModal();
+  switchTab('ai-agent');
+}
+
+function switchAiModalTab(tab) {
+  ['chat', 'tasks', 'cashea'].forEach(t => {
+    const btn = document.getElementById(`aiModalTab${t.charAt(0).toUpperCase() + t.slice(1)}Btn`);
+    const body = document.getElementById(`aiModalTab${t.charAt(0).toUpperCase() + t.slice(1)}`);
+    if (btn) btn.classList.toggle('active', t === tab);
+    if (body) body.style.display = (t === tab) ? 'flex' : 'none';
+  });
+  if (tab === 'tasks') renderAiTasksList();
+  if (tab === 'cashea') calculateAiModalCashea();
+}
+
+function renderAiAgentCommandCenter() {
+  auditAndGenerateAiTasks(false);
+  renderAiChatMessagesStream();
+  calculateAiCasheaSimulation();
+}
+
+// Chat UI Stream Rendering
+function renderAiChatMessagesStream() {
+  const mainStream = document.getElementById('aiChatMessages');
+  const modalStream = document.getElementById('aiModalChatMessages');
+  if (!state.aiChatHistory) state.aiChatHistory = [];
+
+  const html = state.aiChatHistory.map(m => {
+    const isUser = m.sender === 'user';
+    const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }) : '';
+    
+    // Format simple Markdown: **bold**, *italic*, bullet points, code tags
+    let formattedText = (m.text || '')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/`(.*?)`/g, '<code style="background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; font-size: 0.82rem;">$1</code>')
+      .replace(/\n\n/g, '<br><br>')
+      .replace(/\n\* /g, '<br>• ')
+      .replace(/\n- /g, '<br>• ');
+
+    return `
+      <div class="ai-msg ${isUser ? 'ai-msg-user' : 'ai-msg-agent'}">
+        <div class="ai-msg-avatar">${isUser ? '👤' : '🤖'}</div>
+        <div>
+          <div class="ai-msg-bubble">${formattedText}</div>
+          <div class="ai-msg-time">${timeStr}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  if (mainStream) {
+    mainStream.innerHTML = html;
+    mainStream.scrollTop = mainStream.scrollHeight;
+  }
+  if (modalStream) {
+    modalStream.innerHTML = html;
+    modalStream.scrollTop = modalStream.scrollHeight;
+  }
+}
+
+// Append message and persist
+function appendAiChatMessage(sender, text) {
+  if (!state.aiChatHistory) state.aiChatHistory = [];
+  state.aiChatHistory.push({
+    sender,
+    text,
+    timestamp: new Date().toISOString()
+  });
+
+  // Limit history length to 30 items
+  if (state.aiChatHistory.length > 30) {
+    state.aiChatHistory = state.aiChatHistory.slice(-30);
+  }
+
+  safeStorageSet('cubitt_ai_chat_history_v1', JSON.stringify(state.aiChatHistory));
+  renderAiChatMessagesStream();
+}
+
+function clearAiChatHistory() {
+  if (!confirm('¿Deseas reiniciar el historial de conversación con el Agente de IA?')) return;
+  state.aiChatHistory = [];
+  localStorage.removeItem('cubitt_ai_chat_history_v1');
+  initAiAgent();
+  showToast('Historial del chat reiniciado', 'info');
+}
+
+function handleAiChipClick(promptText) {
+  const mainInput = document.getElementById('aiChatInput');
+  const modalInput = document.getElementById('aiModalChatInput');
+  if (mainInput) mainInput.value = promptText;
+  if (modalInput) modalInput.value = promptText;
+  submitAiUserQuery(promptText);
+}
+
+function handleAiChatSubmit(e) {
+  if (e) e.preventDefault();
+  const input = document.getElementById('aiChatInput');
+  const query = (input ? input.value : '').trim();
+  if (!query) return;
+  input.value = '';
+  submitAiUserQuery(query);
+}
+
+function handleAiModalChatSubmit(e) {
+  if (e) e.preventDefault();
+  const input = document.getElementById('aiModalChatInput');
+  const query = (input ? input.value : '').trim();
+  if (!query) return;
+  input.value = '';
+  submitAiUserQuery(query);
+}
+
+// Send user query to AI Agent (Gemini Flash or Offline Reasoning Engine)
+async function submitAiUserQuery(userText) {
+  appendAiChatMessage('user', userText);
+
+  // Set typing indicator / loading state
+  const sendBtn = document.getElementById('aiChatSendBtn');
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<span>Pensando...</span>';
+  }
+
+  try {
+    const aiResponse = await queryAiBrain(userText);
+    appendAiChatMessage('agent', aiResponse);
+  } catch (err) {
+    console.error('Error in AI Agent Query:', err);
+    // Reliable fallback in case of catastrophic network failure
+    const fallbackAnswer = generateOfflineAiResponse(userText);
+    appendAiChatMessage('agent', fallbackAnswer);
+  } finally {
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.innerHTML = '<span>Enviar</span> <span>➤</span>';
+    }
+  }
+}
+
+// Build live database context snapshot to feed Gemini
+function buildLiveStoreContextJson() {
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+
+  const salesToday = (state.sales || []).filter(s => (s.timestamp || s.date || '').slice(0, 10) === todayStr);
+  const moneyToday = salesToday.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
+
+  const pendingLoans = (state.loans || []).filter(l => l.status === 'PENDIENTE' || l.status === 'PARCIAL');
+  const outOfStockProds = (state.products || []).filter(p => (Number(p.stock) || 0) <= 0);
+  const pendingPayables = (state.payables || []).filter(p => p.status === 'PENDIENTE');
+  const totalPendingCxp = pendingPayables.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+
+  // Seller metrics
+  const sellersRanking = (state.sellers || []).map(seller => {
+    const sellerSales = (state.sales || []).filter(s => {
+      const sDate = new Date(s.timestamp || s.date);
+      return s.seller === seller.name && sDate.getMonth() === currentMonth && sDate.getFullYear() === currentYear;
+    });
+    const totalSold = sellerSales.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
+    const tier = Math.floor(totalSold / 1000);
+    const bonusEarned = tier * 50;
+    const diffNextBonus = ((tier + 1) * 1000) - totalSold;
+
+    return {
+      name: seller.name,
+      totalSoldMonth: totalSold.toFixed(2),
+      bonusEarnedUsd: bonusEarned,
+      diffNextBonus: diffNextBonus.toFixed(2)
+    };
+  });
+
+  return {
+    fechaHoraActual: now.toLocaleString('es-VE'),
+    tasaBcvOficial: getActiveBcvRate(),
+    ventasHoy: {
+      cantidad: salesToday.length,
+      totalUsd: moneyToday.toFixed(2)
+    },
+    prestamosPendientes: pendingLoans.map(l => ({
+      id: l.id,
+      origen: l.originWarehouse,
+      destino: l.destWarehouse,
+      fecha: l.displayDate || l.date,
+      estado: l.status,
+      unidadesPendientes: (l.items || []).reduce((acc, i) => acc + (Number(i.pendingQty) || Number(i.qty) || 0), 0),
+      items: (l.items || []).map(i => `${i.name || i.code} (${i.pendingQty || i.qty} un.)`)
+    })),
+    productosAgotados: outOfStockProds.slice(0, 8).map(p => ({
+      codigo: p.code,
+      descripcion: p.name || p.description,
+      categoria: p.category,
+      precio: p.pvp
+    })),
+    cuentasPorPagarCxp: {
+      totalPendienteUsd: totalPendingCxp.toFixed(2),
+      conteoFacturasPendientes: pendingPayables.length
+    },
+    rendimientoVendedoresYMetas: sellersRanking,
+    pedidosBajoPedidoPendientes: (state.orders || []).filter(o => o.status !== 'ENTREGADO').length
+  };
+}
+
+// Query AI Brain: Attempts Google Gemini 3.7 Flash first; gracefully falls back to offline engine
+async function queryAiBrain(userQuery) {
+  let geminiKey = (window.CUBITT_CONFIG && window.CUBITT_CONFIG.GEMINI_API_KEY) || localStorage.getItem('cubitt_gemini_api_key') || '';
+  geminiKey = (geminiKey || '').trim();
+
+  // If no Gemini key is available, use our high-accuracy local business engine
+  if (!geminiKey) {
+    return generateOfflineAiResponse(userQuery);
+  }
+
+  const liveContext = buildLiveStoreContextJson();
+  const systemInstruction = `${AI_BUSINESS_RULES}
+
+DATOS EN VIVO DEL SISTEMA CUBITT (TIEMPO REAL):
+${JSON.stringify(liveContext, null, 2)}
+
+INSTRUCCIONES DE RESPUESTA:
+- Responde siempre en español, de forma ejecutiva, cordial, precisa y directa.
+- Usa formato markdown claro con viñetas, negritas para cifras y nombres clave.
+- Cuando menciones préstamos, cita los IDs exactos (ej. PRE-1001), almacén origen y destino.
+- Cuando menciones Cashea, desglosa el pago inicial y las 3 cuotas cada 14 días.
+- Si te consultan por Barquisimeto T-Mania, recuerda la regla de mercancía en consignación, la comisión y el ingreso/egreso automático de "Mercancía T-Mania".
+- Brinda siempre una recomendación o acción inmediata que el usuario deba tomar.`;
+
+  const requestBody = {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: systemInstruction },
+          { text: `Pregunta o solicitud del usuario: "${userQuery}"` }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 1000
+    }
+  };
+
+  const models = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.5-flash'];
+  let lastError = null;
+
+  for (const model of models) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const json = await res.json();
+      const candidateText = json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts && json.candidates[0].content.parts[0].text;
+      
+      if (candidateText && candidateText.trim()) {
+        return candidateText.trim();
+      }
+    } catch (e) {
+      console.warn(`Gemini API attempt with ${model} failed:`, e);
+      lastError = e;
+    }
+  }
+
+  // If network or Gemini service fails, fallback immediately to local brain
+  console.log('Falling back to local intelligent engine due to Gemini response error.');
+  return generateOfflineAiResponse(userQuery);
+}
+
+// Built-in Local Spanish NLP & Business Logic Engine (Offline-capable)
+function generateOfflineAiResponse(userQuery) {
+  const q = (userQuery || '').toLowerCase();
+  const context = buildLiveStoreContextJson();
+  const bcv = getActiveBcvRate();
+
+  // 1. Diagnostic / General Store Status
+  if (q.includes('diagnostico') || q.includes('diagnóstico') || q.includes('resumen') || q.includes('hoy') || q.includes('estado general')) {
+    const loansCount = context.prestamosPendientes.length;
+    const outCount = context.productosAgotados.length;
+    const cxpVal = context.cuentasPorPagarCxp.totalPendienteUsd;
+    const salesVal = context.ventasHoy.totalUsd;
+
+    return `📊 **Diagnóstico Operativo en Tiempo Real - CUBITT**:
+
+* **Ventas Registradas Hoy:** ${context.ventasHoy.cantidad} operaciones ($${salesVal} USD).
+* **Préstamos entre Almacenes:** ${loansCount > 0 ? `⚠️ **${loansCount} préstamos pendientes** por conciliar entre Trinitarias y T-Mania.` : '✅ Todos los préstamos conciliados.'}
+* **Inventario & Stock:** ${outCount > 0 ? `🔴 **${outCount} productos con stock en 0** en catálogo.` : '✅ Stock saludable en catálogo.'}
+* **Cuentas por Pagar (CXP):** $${cxpVal} USD acumulados en comisiones y proveedores pendientes.
+* **Tasa Oficial BCV:** ${bcv.toFixed(2)} Bs/$ aplicable para conversiones fiscales.
+
+💡 **Recomendación Inmediata:** Revisa el **Centro de Tareas** para conciliar préstamos antiguos y reabastecer los artículos agotados en vitrina.`;
+  }
+
+  // 2. Loans / Préstamos Audit
+  if (q.includes('prestamo') || q.includes('préstamo') || q.includes('prestar') || q.includes('trinitarias') && q.includes('tmania')) {
+    if (context.prestamosPendientes.length === 0) {
+      return `🤝 **Auditoría de Mercancía en Préstamo:**
+Actualmente **no hay préstamos pendientes** entre Barquisimeto Trinitarias y Barquisimeto T-Mania. Todos los movimientos están conciliados al 100%.`;
+    }
+
+    let report = `🤝 **Auditoría de Préstamos entre Almacenes (${context.prestamosPendientes.length} pendientes):**\n\n`;
+    context.prestamosPendientes.forEach(p => {
+      const orig = p.origen === 'barquisimeto_trinitarias' ? 'Trinitarias' : 'T-Mania';
+      const dest = p.destino === 'barquisimeto_tmania' ? 'T-Mania' : 'Trinitarias';
+      report += `* **Préstamo ${p.id}** (${orig} ➔ ${dest}) - Estado: **${p.estado}**\n  • Unidades pendientes: **${p.unidadesPendientes}** un. (${p.items.join(', ')})\n  • Registrado: ${p.fecha}\n`;
+    });
+    report += `\n💡 **Acción recomendada:** Puedes conciliar estos préstamos de forma **Total (100%)** o **Parcial** usando el botón directo en la lista de Tareas o en la sub-pestaña de *Mercancía en Préstamo* del Inventario.`;
+    return report;
+  }
+
+  // 3. Cashea & Installment Simulations
+  if (q.includes('cashea') || q.includes('cuota') || q.includes('financiam') || q.includes('inicial')) {
+    // Check if user specified an amount (e.g. "$69", "80", "120")
+    const matchAmt = userQuery.match(/\$?\s*(\d+(?:[.,]\d+)?)/);
+    const amount = matchAmt ? parseFloat(matchAmt[1].replace(',', '.')) : 69;
+
+    const init40 = amount * 0.40;
+    const inst40 = (amount - init40) / 3;
+
+    return `💳 **Cálculo de Financiamiento Cashea para $${amount.toFixed(2)} USD**:
+
+* **Pago Inicial (40% Estándar):** **$${init40.toFixed(2)} USD** (Bs. ${(init40 * bcv).toFixed(2)}) al momento de la compra.
+* **3 Cuotas Quincenales (cada 14 días):** **$${inst40.toFixed(2)} USD** cada una (Bs. ${(inst40 * bcv).toFixed(2)}).
+  • Cuota 1: En 14 días.
+  • Cuota 2: En 28 días.
+  • Cuota 3: En 42 días.
+
+*(Si el cliente está en Nivel 1 Cashea paga 60% inicial = $${(amount * 0.6).toFixed(2)}; si es Nivel 2 paga 50% = $${(amount * 0.5).toFixed(2)}).*
+Recuerda que la venta por Cashea registra la comisión de plataforma automáticamente en Cuentas por Pagar (CXP).`;
+  }
+
+  // 4. Barquisimeto T-Mania Rules & Consignment Procedure
+  if (q.includes('tmania') || q.includes('t-mania') || q.includes('consignacion') || q.includes('consignación')) {
+    return `🏢 **Protocolo Operativo: Barquisimeto T-Mania (Consignación Externa)**:
+
+1. **Naturaleza de la Alianza:** T-Mania es un punto de venta aliado que nos suministra mercancía externa en consignación. Nosotros vendemos y ambos ganamos.
+2. **Protección Fiscal del Inventario:** Para no alterar el inventario de las cargas de facturas de compra oficiales, en el momento en que se procesa una venta seleccionando el almacén *Barquisimeto T-Mania*, el sistema genera **automáticamente un INGRESO y un EGRESO simultáneo** en el inventario/Kardex bajo el concepto:
+   👉 **«Mercancía T-Mania»**.
+3. **Comisión:** Cada venta genera la comisión pactada a favor de T-Mania en *Cuentas por Pagar (CXP)* para su posterior conciliación.
+4. **Préstamos:** Si Trinitarias requiere productos de T-Mania o viceversa, se crea un *Préstamo de Mercancía* que no altera costos hasta que se concilia (Total o Parcial).`;
+  }
+
+  // 5. Stock / Agotados / Traslados
+  if (q.includes('stock') || q.includes('agotado') || q.includes('inventario') || q.includes('traslado') || q.includes('rotacion')) {
+    if (context.productosAgotados.length === 0) {
+      return `📦 **Estado de Inventario:**
+Actualmente no hay artículos con existencia 0 en el catálogo. Las existencias cubren la demanda en vitrina.`;
+    }
+
+    let outList = context.productosAgotados.map(p => `• **${p.descripcion}** (${p.codigo}) - PVP: $${p.precio}`).join('\n');
+    return `📦 **Reporte de Productos Agotados (${context.productosAgotados.length} artículos en cero)**:
+
+${outList}
+
+💡 **Sugerencia de Optimización:**
+1. Revisa si Barquisimeto T-Mania dispone de unidades en vitrina para coordinar un **Préstamo de Mercancía** a Trinitarias.
+2. Si es mercancía comprada a proveedor, ingresa en el módulo de Inventario y haz clic en **«Cargar Factura de Compra»** con el escáner inteligente.`;
+  }
+
+  // 6. Goals & Sellers ($50 bonus for every $1,000)
+  if (q.includes('meta') || q.includes('bono') || q.includes('vendedor') || q.includes('comision') || q.includes('asesor')) {
+    let sellersText = context.rendimientoVendedoresYMetas.map(s => {
+      return `* **${s.name}:** Acumula **$${s.totalSoldMonth}** en ventas | Bonos ganados: **$${s.bonusEarnedUsd}** | Le faltan **$${s.diffNextBonus}** para el próximo bono de $50.`;
+    }).join('\n');
+
+    return `🏆 **Seguimiento de Metas Comerciales (Bono de $50 por cada $1,000)**:
+
+${sellersText}
+
+💡 **Estrategia Comercial:** Los asesores que estén a menos de $250 de su próximo múltiplo de $1,000 deben priorizar el cierre de productos de ticket medio-alto (Smartwatches Aura, Viva Pro o combos de Belt Bag + Botella Térmica) para asegurar su bono este mes.`;
+  }
+
+  // 7. CXP & Payables
+  if (q.includes('cxp') || q.includes('pagar') || q.includes('deuda') || q.includes('proveedor')) {
+    return `💰 **Resumen de Cuentas por Pagar (CXP)**:
+
+* Total acumulado pendiente: **$${context.cuentasPorPagarCxp.totalPendienteUsd} USD**.
+* Total de comprobantes por conciliar: **${context.cuentasPorPagarCxp.conteoFacturasPendientes}**.
+* Incluye comisiones de Cashea Bull, Cashea T-Mania, Cashea JP y liquidaciones de asesores.
+
+💡 Puedes revisar el detalle y liquidar comprobantes en la pestaña **Finanzas ➔ Cuentas por Pagar (CXP)**.`;
+  }
+
+  // 8. General Inquiry Fallback
+  return `🤖 **Agente Inteligente Cubitt**:
+He recibido tu consulta sobre *"${userQuery}"*.
+
+Puedo ayudarte con:
+* 🤝 **Auditar préstamos:** Detección de artículos pendientes entre Trinitarias y T-Mania.
+* 📦 **Ruptura de stock:** Revisión de inventario en 0 y sugerencias de traspaso.
+* 💳 **Simulación Cashea:** Cálculo de inicial y cuotas de cualquier monto en USD y Bs.
+* 🏢 **Procedimiento T-Mania:** Asistencia en consignación, comisiones y doble movimiento de inventario.
+* 🏆 **Metas comerciales:** Seguimiento del bono de $50 por cada $1,000 para el equipo.
+
+¿Deseas que profundice en alguno de estos puntos operativos?`;
+}
+
+// Hook AI audit into relevant state changes
+const _originalSaveLoansToStorage = window.saveLoansToStorage;
+if (typeof saveLoansToStorage === 'function') {
+  window.saveLoansToStorage = function() {
+    _originalSaveLoansToStorage.apply(this, arguments);
+    auditAndGenerateAiTasks(false);
+  };
+}
+
+const _originalSaveSalesToStorage = window.saveSalesToStorage;
+if (typeof saveSalesToStorage === 'function') {
+  window.saveSalesToStorage = function() {
+    _originalSaveSalesToStorage.apply(this, arguments);
+    auditAndGenerateAiTasks(false);
+  };
+}
+
+const _originalSavePayablesToStorage = window.savePayablesToStorage;
+if (typeof savePayablesToStorage === 'function') {
+  window.savePayablesToStorage = function() {
+    _originalSavePayablesToStorage.apply(this, arguments);
+    auditAndGenerateAiTasks(false);
+  };
+}

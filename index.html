@@ -75,6 +75,12 @@
         <span class="badge-count" id="badgeClientsCount">0</span>
       </button>
 
+      <!-- Botón Principal Agente de IA Cubitt -->
+      <button class="nav-tab-btn nav-tab-ai" data-tab="ai-agent" id="navBtnAiAgent" onclick="switchTab('ai-agent')">
+        <span>🤖 Agente IA</span>
+        <span class="badge-count badge-ai-pulse" id="badgeAiTasksCount">0</span>
+      </button>
+
       <!-- Dropdown 1: Finanzas & Cuentas (Cobrar y Pagar) -->
       <div class="nav-dropdown" id="navDropdownFinances">
         <button type="button" class="nav-tab-btn nav-dropdown-btn" id="navBtnFinances" onclick="toggleNavDropdown('navDropdownFinances', event)">
@@ -1889,6 +1895,198 @@
       </div>
     </section>
 
+    <!-- TAB: AGENTE DE INTELIGENCIA ARTIFICIAL CUBITT -->
+    <section class="tab-pane" id="tab-ai-agent">
+      <!-- Hero Banner -->
+      <div class="ai-agent-hero">
+        <div class="ai-hero-content">
+          <div class="ai-hero-avatar">🤖</div>
+          <div>
+            <div class="ai-hero-title">CUBITT INTELLIGENCE • AGENTE DE IA</div>
+            <div class="ai-hero-subtitle">
+              Miembro autónomo del equipo para auditar operaciones, conciliar préstamos entre almacenes, gestionar tareas prioritarias y optimizar procesos de venta y financiamiento.
+            </div>
+            <div class="ai-hero-status-row">
+              <span class="ai-status-pill">
+                <span class="ai-pulse-dot"></span>
+                <span id="aiEngineStatusText">Motor Gemini Flash & Base de Datos Conectados</span>
+              </span>
+              <span style="font-size: 0.72rem; color: #94a3b8;" id="aiLastAuditText">Última auditoría: Hace un momento</span>
+            </div>
+          </div>
+        </div>
+        <div class="ai-hero-actions">
+          <button type="button" class="btn btn-outline btn-sm" onclick="auditAndGenerateAiTasks(true)" style="background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.25); color: #ffffff;">
+            ⚡ Auditar Ahora
+          </button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="clearAiChatHistory()" style="background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.25); color: #ffffff;">
+            🧹 Limpiar Chat
+          </button>
+        </div>
+      </div>
+
+      <!-- Real-Time Metrics & Operational Health -->
+      <div class="ai-metrics-grid">
+        <div class="ai-metric-card">
+          <div class="ai-metric-icon" style="background: #eff6ff; color: #2563eb;">📌</div>
+          <div>
+            <div class="ai-metric-val" id="aiKpiActiveTasks">0</div>
+            <div class="ai-metric-label">Tareas Activas</div>
+            <div class="ai-metric-sub">Requieren acción del equipo</div>
+          </div>
+        </div>
+        <div class="ai-metric-card">
+          <div class="ai-metric-icon" style="background: #fef3c7; color: #d97706;">🤝</div>
+          <div>
+            <div class="ai-metric-val" id="aiKpiPendingLoans">0</div>
+            <div class="ai-metric-label">Préstamos Pendientes</div>
+            <div class="ai-metric-sub">Trinitarias ↔ T-Mania</div>
+          </div>
+        </div>
+        <div class="ai-metric-card">
+          <div class="ai-metric-icon" style="background: #fee2e2; color: #dc2626;">⚠️</div>
+          <div>
+            <div class="ai-metric-val" id="aiKpiStockRisks">0</div>
+            <div class="ai-metric-label">Alertas de Stock</div>
+            <div class="ai-metric-sub">Agotados o en nivel crítico</div>
+          </div>
+        </div>
+        <div class="ai-metric-card">
+          <div class="ai-metric-icon" style="background: #d1fae5; color: #059669;">🎯</div>
+          <div>
+            <div class="ai-metric-val" id="aiKpiUpcomingBonuses">0</div>
+            <div class="ai-metric-label">Bonos Próximos</div>
+            <div class="ai-metric-sub">Asesores cerca de los $1,000</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Command Grid (2 Columns) -->
+      <div class="ai-command-grid">
+        
+        <!-- Left Column: Proactive Tasks & Process Optimization -->
+        <div class="ai-tasks-col">
+          <div class="app-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 8px;">
+              <div>
+                <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin-bottom: 2px;">
+                  📋 Centro de Tareas y Optimización de Procesos
+                </h3>
+                <p style="font-size: 0.8rem; color: #64748b;">
+                  Detección automática de cuellos de botella, préstamos sin conciliar y oportunidades de venta.
+                </p>
+              </div>
+              <div class="ai-filter-pills">
+                <button type="button" class="ai-pill-btn active" data-ai-filter="all" onclick="setAiTaskFilter('all')">Todas</button>
+                <button type="button" class="ai-pill-btn" data-ai-filter="urgent" onclick="setAiTaskFilter('urgent')">🔴 Urgentes</button>
+                <button type="button" class="ai-pill-btn" data-ai-filter="loans" onclick="setAiTaskFilter('loans')">🤝 Préstamos</button>
+                <button type="button" class="ai-pill-btn" data-ai-filter="stock" onclick="setAiTaskFilter('stock')">📦 Stock</button>
+                <button type="button" class="ai-pill-btn" data-ai-filter="finances" onclick="setAiTaskFilter('finances')">💰 CXP/Cashea</button>
+                <button type="button" class="ai-pill-btn" data-ai-filter="goals" onclick="setAiTaskFilter('goals')">🎯 Metas</button>
+              </div>
+            </div>
+
+            <!-- Dynamic Tasks Container -->
+            <div id="aiTasksListContainer">
+              <!-- Rendered via JavaScript -->
+            </div>
+          </div>
+
+          <!-- Optimizer Tool: Cashea Fast Simulator -->
+          <div class="app-card" style="margin-top: 0.5rem;">
+            <div class="ai-cashea-calc-header">
+              <span style="font-size: 1.15rem;">🧮</span>
+              <span>Optimizador de Procesos: Simulador Rápido de Cuotas Cashea</span>
+            </div>
+            <p style="font-size: 0.8rem; color: #64748b; margin-bottom: 12px;">
+              Calcula al instante la cuota inicial (40%, 50%, 60%) y las 3 cuotas quincenales (cada 14 días) con conversión en Bs. oficial BCV.
+            </p>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <div style="flex: 1; min-width: 180px;">
+                <label class="form-label" style="font-size: 0.76rem;">Monto a Financiar (USD)</label>
+                <input type="number" id="aiCasheaAmountInput" class="form-control" value="69.00" step="1" min="1" oninput="calculateAiCasheaSimulation()">
+              </div>
+              <div style="flex: 1; min-width: 140px;">
+                <label class="form-label" style="font-size: 0.76rem;">Nivel Inicial Cashea</label>
+                <select id="aiCasheaPercentSelect" class="form-control" onchange="calculateAiCasheaSimulation()">
+                  <option value="0.40">Nivel Estándar (40% Inicial)</option>
+                  <option value="0.50">Nivel Intermedio (50% Inicial)</option>
+                  <option value="0.60">Nivel Básico (60% Inicial)</option>
+                </select>
+              </div>
+              <div style="display: flex; gap: 6px; align-items: flex-end; padding-top: 18px;">
+                <button type="button" class="btn btn-outline btn-xs" onclick="setAiCasheaQuickAmount(35)">$35</button>
+                <button type="button" class="btn btn-outline btn-xs" onclick="setAiCasheaQuickAmount(69)">$69</button>
+                <button type="button" class="btn btn-outline btn-xs" onclick="setAiCasheaQuickAmount(89)">$89</button>
+                <button type="button" class="btn btn-outline btn-xs" onclick="setAiCasheaQuickAmount(120)">$120</button>
+              </div>
+            </div>
+
+            <!-- Simulation Output -->
+            <div class="ai-cashea-calc-grid" id="aiCasheaSimulationResults">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Business Rules & Process Guide (T-Mania, Consignación, Almacenes) -->
+          <div class="app-card" style="margin-top: 0.5rem; background: #faf5ff; border-color: #e9d5ff;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <span style="font-size: 1.2rem;">🏢</span>
+              <h4 style="font-size: 0.95rem; font-weight: 800; color: #581c87; margin: 0;">
+                Protocolo Operativo de Almacenes y Barquisimeto T-Mania
+              </h4>
+            </div>
+            <ul style="font-size: 0.8rem; color: #6b21a8; line-height: 1.5; padding-left: 20px;">
+              <li><strong>Barquisimeto Trinitarias:</strong> Almacén sede central con inventario propio cargado por facturas fiscales.</li>
+              <li><strong>Barquisimeto T-Mania:</strong> Alianza en consignación externa. La venta genera comisión pactada para T-Mania y el sistema efectúa automáticamente un <em>ingreso</em> y un <em>egreso</em> simultáneo («Mercancía T-Mania») protegiendo el inventario fiscal.</li>
+              <li><strong>Mercancía en Préstamo:</strong> Los movimientos entre Trinitarias y T-Mania se auditan como préstamos con conciliación total o parcial (Devuelto, Vendido/Liquidado o Compensado).</li>
+              <li><strong>Maracay La Morita:</strong> Almacén sucursal Centro Comercial La Morita.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Right Column: Interactive AI Copilot & Chat -->
+        <div class="ai-chat-col">
+          <div class="ai-chat-card">
+            <div class="ai-chat-header">
+              <div class="ai-chat-header-title">
+                <span>🤖</span>
+                <span>Copiloto de Inteligencia Artificial</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span class="badge-count" style="background: #10b981; color: white;" id="aiChatEngineTag">Gemini Flash</span>
+              </div>
+            </div>
+
+            <!-- Chat Messages Stream -->
+            <div class="ai-chat-messages" id="aiChatMessages">
+              <!-- Dynamically populated -->
+            </div>
+
+            <!-- Quick Prompt Suggestion Chips -->
+            <div class="ai-quick-chips">
+              <button type="button" class="ai-chip" onclick="handleAiChipClick('¿Cuál es el diagnóstico general del negocio hoy?')">📊 Diagnóstico Hoy</button>
+              <button type="button" class="ai-chip" onclick="handleAiChipClick('Audita los préstamos pendientes entre Trinitarias y T-Mania')">🤝 Auditar Préstamos</button>
+              <button type="button" class="ai-chip" onclick="handleAiChipClick('¿Qué productos están agotados y qué traslados sugieres?')">📦 Sugerir Traslados</button>
+              <button type="button" class="ai-chip" onclick="handleAiChipClick('¿Cómo va el equipo con las metas y bonos de $50?')">🏆 Bonos y Metas</button>
+              <button type="button" class="ai-chip" onclick="handleAiChipClick('Explícame cómo funciona la venta por Barquisimeto T-Mania')">🏢 Venta T-Mania</button>
+              <button type="button" class="ai-chip" onclick="handleAiChipClick('¿Cuánto tenemos pendiente en CXP de Cashea y comisiones?')">💰 CXP Cashea</button>
+            </div>
+
+            <!-- Chat Input Bar -->
+            <form class="ai-chat-input-bar" id="aiChatForm" onsubmit="handleAiChatSubmit(event)">
+              <input type="text" id="aiChatInput" class="ai-chat-input" placeholder="Pregúntale al Agente sobre stock, préstamos, Cashea, ventas..." autocomplete="off">
+              <button type="submit" id="aiChatSendBtn" class="ai-chat-send-btn" title="Enviar consulta">
+                <span>Enviar</span>
+                <span>➤</span>
+              </button>
+            </form>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
   </main>
 
   <!-- MODAL: Ver / Imprimir Ticket de Venta -->
@@ -3642,6 +3840,115 @@
         </button>
       </div>
     </div>
+  </div>
+
+  <!-- MODAL: AGENTE DE INTELIGENCIA ARTIFICIAL CUBITT (VENTANA RÁPIDA / DRAWER) -->
+  <div class="modal-overlay" id="aiAgentQuickModal">
+    <div class="modal-box ai-quick-modal-box">
+      <!-- Modal Header -->
+      <div class="ai-modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, #4f46e5, #9333ea); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">
+            🤖
+          </div>
+          <div>
+            <div style="font-weight: 800; font-size: 0.95rem; color: #ffffff;">Agente Inteligente Cubitt</div>
+            <div style="font-size: 0.72rem; color: #cbd5e1;">Asistente de Procesos, Tareas & Inventario</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button type="button" class="btn btn-outline btn-xs" onclick="openAiFullScreen()" style="color: #ffffff; border-color: rgba(255,255,255,0.3); font-size: 0.75rem;">
+            🖥️ Pantalla Completa
+          </button>
+          <button type="button" class="modal-close-btn" onclick="closeAiQuickModal()" style="color: #ffffff; position: static; font-size: 1.5rem;">
+            &times;
+          </button>
+        </div>
+      </div>
+
+      <!-- Modal Sub-Navigation Tabs -->
+      <div class="ai-modal-tabs">
+        <button type="button" class="ai-modal-tab-btn active" id="aiModalTabChatBtn" onclick="switchAiModalTab('chat')">
+          💬 Chat & Consultas
+        </button>
+        <button type="button" class="ai-modal-tab-btn" id="aiModalTabTasksBtn" onclick="switchAiModalTab('tasks')">
+          📋 Tareas Activas (<span id="aiModalTasksCount">0</span>)
+        </button>
+        <button type="button" class="ai-modal-tab-btn" id="aiModalTabCasheaBtn" onclick="switchAiModalTab('cashea')">
+          🧮 Cashea Rápido
+        </button>
+      </div>
+
+      <!-- Modal Body Tab 1: Chat -->
+      <div class="ai-modal-body" id="aiModalTabChat" style="display: flex; flex-direction: column; padding: 0;">
+        <div class="ai-chat-messages" id="aiModalChatMessages" style="flex: 1; min-height: 280px; max-height: 480px; background: #fafafa;">
+          <!-- Cloned or synced chat stream -->
+        </div>
+        <div class="ai-quick-chips" style="padding: 6px 12px;">
+          <button type="button" class="ai-chip" onclick="handleAiChipClick('¿Cuál es el diagnóstico general del negocio hoy?')">📊 Diagnóstico</button>
+          <button type="button" class="ai-chip" onclick="handleAiChipClick('Audita los préstamos pendientes entre Trinitarias y T-Mania')">🤝 Préstamos</button>
+          <button type="button" class="ai-chip" onclick="handleAiChipClick('¿Qué productos están agotados?')">📦 Agotados</button>
+          <button type="button" class="ai-chip" onclick="handleAiChipClick('¿Cómo van los bonos de $50?')">🏆 Bonos</button>
+        </div>
+        <form class="ai-chat-input-bar" onsubmit="handleAiModalChatSubmit(event)">
+          <input type="text" id="aiModalChatInput" class="ai-chat-input" placeholder="Escribe tu consulta..." autocomplete="off">
+          <button type="submit" class="ai-chat-send-btn">
+            <span>Enviar</span>
+            <span>➤</span>
+          </button>
+        </form>
+      </div>
+
+      <!-- Modal Body Tab 2: Tasks -->
+      <div class="ai-modal-body" id="aiModalTabTasks" style="display: none; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div style="font-weight: 700; font-size: 0.9rem; color: #0f172a;">Tareas Operativas Pendientes</div>
+          <button type="button" class="btn btn-outline btn-xs" onclick="auditAndGenerateAiTasks(true)">⚡ Re-auditar</button>
+        </div>
+        <div id="aiModalTasksContainer">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <!-- Modal Body Tab 3: Cashea Calculator -->
+      <div class="ai-modal-body" id="aiModalTabCashea" style="display: none; overflow-y: auto;">
+        <div class="ai-cashea-calc-header">
+          <span style="font-size: 1.15rem;">🧮</span>
+          <span>Calculadora Rápida de Cuotas Cashea</span>
+        </div>
+        <div style="display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 140px;">
+            <label class="form-label" style="font-size: 0.76rem;">Monto en USD</label>
+            <input type="number" id="aiModalCasheaAmountInput" class="form-control" value="69.00" min="1" step="1" oninput="calculateAiModalCashea()">
+          </div>
+          <div style="flex: 1; min-width: 140px;">
+            <label class="form-label" style="font-size: 0.76rem;">Nivel Inicial</label>
+            <select id="aiModalCasheaPercentSelect" class="form-control" onchange="calculateAiModalCashea()">
+              <option value="0.40">40% Inicial (Nivel 3+)</option>
+              <option value="0.50">50% Inicial (Nivel 2)</option>
+              <option value="0.60">60% Inicial (Nivel 1)</option>
+            </select>
+          </div>
+        </div>
+        <div class="ai-cashea-calc-grid" id="aiModalCasheaResults">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FLOATING WIDGET (FAB) AGENTE IA -->
+  <div class="ai-fab-container" id="aiFabContainer">
+    <button type="button" class="ai-fab-button" id="aiFabButton" onclick="openAiQuickModal()" title="Abrir Agente de Inteligencia Artificial Cubitt">
+      <div class="ai-fab-icon-wrap">
+        <span class="ai-fab-icon">🤖</span>
+      </div>
+      <div class="ai-fab-text">
+        <span class="ai-fab-title">Agente IA</span>
+        <span class="ai-fab-subtitle" id="aiFabSubtitle">En línea</span>
+      </div>
+      <span class="ai-fab-badge" id="aiFabBadge">0</span>
+    </button>
   </div>
 
   <!-- Toast Notification Container -->
