@@ -8,6 +8,8 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⌚</text></svg>">
   <!-- Motor OCR en el navegador para escaneo de comprobantes y facturas -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- Biblioteca de Gráficos Interactivos Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -75,6 +77,11 @@
         <span class="badge-count" id="badgeClientsCount">0</span>
       </button>
 
+      <!-- Botón Principal Dashboard de Ventas & Métricas -->
+      <button class="nav-tab-btn nav-tab-analytics" data-tab="analytics" id="navBtnAnalytics" onclick="switchTab('analytics')">
+        <span>📈 Métricas & Dashboard</span>
+      </button>
+
       <!-- Botón Principal Agente de IA Cubitt -->
       <button class="nav-tab-btn nav-tab-ai" data-tab="ai-agent" id="navBtnAiAgent" onclick="switchTab('ai-agent')">
         <span>🤖 Agente IA</span>
@@ -104,6 +111,13 @@
               <div class="dropdown-item-subtitle">Proveedores, comisiones y conciliación</div>
             </div>
             <span class="badge-count" id="badgePayablesCount">0</span>
+          </button>
+          <button type="button" class="nav-dropdown-item" id="navItemAnalytics" onclick="switchTab('analytics'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #ecfdf5; color: #047857;">📈</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Dashboard & Métricas</div>
+              <div class="dropdown-item-subtitle">Ventas, Pareto 80/20 y análisis de gastos</div>
+            </div>
           </button>
         </div>
       </div>
@@ -2087,6 +2101,578 @@
       </div>
     </section>
 
+    <!-- TAB: ANALYTICS & DASHBOARD INTERACTIVO DE VENTAS Y GASTOS -->
+    <section class="tab-pane" id="tab-analytics">
+      <!-- Hero Banner -->
+      <div class="analytics-hero">
+        <div>
+          <div class="analytics-hero-title">
+            <span>📈</span>
+            <span>CUBITT ANALYTICS • DASHBOARD DE VENTAS & FINANZAS</span>
+          </div>
+          <div class="analytics-hero-subtitle">
+            Indicadores clave de rendimiento, análisis de Pareto (80/20), seguimiento de cobro por vendedor y control integral de ingresos vs egresos operativos.
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-sm" onclick="syncDriveHistoricalData(true)" style="background: rgba(255,255,255,0.18); color: #ffffff; border: 1px solid rgba(255,255,255,0.35);">
+            📥 Cargar Datos Drive ($18,330)
+          </button>
+          <button type="button" class="btn btn-sm btn-success" onclick="openExpenseModal()">
+            ➕ Registrar Gasto / Egreso
+          </button>
+          <button type="button" class="btn btn-sm btn-outline" onclick="window.print()" style="background: rgba(255,255,255,0.1); color: #ffffff; border-color: rgba(255,255,255,0.25);">
+            🖨️ Exportar
+          </button>
+        </div>
+      </div>
+
+      <!-- Controls & Filter Bar -->
+      <div class="analytics-controls-bar">
+        <div class="analytics-filter-group">
+          <div>
+            <label class="form-label" style="font-size: 0.72rem; margin-bottom: 2px;">Periodo / Rango:</label>
+            <select id="analyticsPeriodSelect" class="form-control" style="font-size: 0.82rem; padding: 6px 10px;" onchange="handleAnalyticsFilterChange()">
+              <option value="all" selected>Todo el Histórico</option>
+              <option value="2026">Año 2026 Completo</option>
+              <option value="2026-10">Octubre 2026 (Mes Actual)</option>
+              <option value="2026-09">Septiembre 2026 ($6,051)</option>
+              <option value="2026-08">Agosto 2026 ($5,323)</option>
+              <option value="2026-07">Julio 2026 ($3,857)</option>
+              <option value="2026-06">Junio 2026 ($610)</option>
+              <option value="2026-05">Mayo 2026 ($1,351)</option>
+              <option value="2026-04">Abril 2026 ($187)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label" style="font-size: 0.72rem; margin-bottom: 2px;">Almacén / Sede:</label>
+            <select id="analyticsWarehouseSelect" class="form-control" style="font-size: 0.82rem; padding: 6px 10px;" onchange="handleAnalyticsFilterChange()">
+              <option value="all" selected>Todos los Almacenes</option>
+              <option value="barquisimeto_trinitarias">Barquisimeto Trinitarias</option>
+              <option value="barquisimeto_tmania">Barquisimeto T-Mania (Consignación)</option>
+              <option value="maracay_la_morita">Maracay La Morita</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label" style="font-size: 0.72rem; margin-bottom: 2px;">Canal de Venta:</label>
+            <select id="analyticsChannelSelect" class="form-control" style="font-size: 0.82rem; padding: 6px 10px;" onchange="handleAnalyticsFilterChange()">
+              <option value="all" selected>Todos los Canales</option>
+              <option value="tienda">Tienda Directa (0% com.)</option>
+              <option value="cashea">Cashea (Financiamiento)</option>
+              <option value="mercadolibre">MercadoLibre (Pasarela)</option>
+              <option value="facebook_marketplace">Facebook Marketplace (Tráfico)</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <button type="button" class="btn btn-outline btn-xs" onclick="resetAnalyticsFilters()">
+            🔄 Restablecer Filtros
+          </button>
+        </div>
+      </div>
+
+      <!-- Executive KPI Cards Row -->
+      <div class="analytics-kpis-grid">
+        <div class="analytics-kpi-card">
+          <div class="analytics-kpi-icon" style="background: #ecfdf5; color: #047857;">💵</div>
+          <div>
+            <div class="analytics-kpi-val" id="anaKpiTotalSales">$0.00</div>
+            <div class="analytics-kpi-lbl">Ventas Totales</div>
+            <div class="analytics-kpi-sub" id="anaKpiTotalUnits">0 unidades vendidas</div>
+          </div>
+        </div>
+
+        <div class="analytics-kpi-card">
+          <div class="analytics-kpi-icon" style="background: #eff6ff; color: #2563eb;">✅</div>
+          <div>
+            <div class="analytics-kpi-val" id="anaKpiTotalCollected" style="color: #2563eb;">$0.00</div>
+            <div class="analytics-kpi-lbl">Total Cobrado</div>
+            <div class="analytics-kpi-sub">Dinero en caja y bancos</div>
+          </div>
+        </div>
+
+        <div class="analytics-kpi-card">
+          <div class="analytics-kpi-icon" style="background: #fffbeb; color: #d97706;">⏳</div>
+          <div>
+            <div class="analytics-kpi-val" id="anaKpiTotalPending" style="color: #d97706;">$0.00</div>
+            <div class="analytics-kpi-lbl">Total Pendiente</div>
+            <div class="analytics-kpi-sub">Créditos y cuotas activas</div>
+          </div>
+        </div>
+
+        <div class="analytics-kpi-card">
+          <div class="analytics-kpi-icon" style="background: #f0fdf4; color: #16a34a;">🎯</div>
+          <div>
+            <div class="analytics-kpi-val" id="anaKpiCollectionRate" style="color: #16a34a;">0.00%</div>
+            <div class="analytics-kpi-lbl">Tasa de Cobro</div>
+            <div class="analytics-kpi-sub">Efectividad de cobranza</div>
+          </div>
+        </div>
+
+        <div class="analytics-kpi-card">
+          <div class="analytics-kpi-icon" style="background: #f5f3ff; color: #7c3aed;">💎</div>
+          <div>
+            <div class="analytics-kpi-val" id="anaKpiNetProfit" style="color: #7c3aed;">$0.00</div>
+            <div class="analytics-kpi-lbl">Margen Neto (Utilidad)</div>
+            <div class="analytics-kpi-sub" id="anaKpiNetMarginPct">0.0% de margen</div>
+          </div>
+        </div>
+
+        <div class="analytics-kpi-card">
+          <div class="analytics-kpi-icon" style="background: #fef2f2; color: #dc2626;">📉</div>
+          <div>
+            <div class="analytics-kpi-val" id="anaKpiTotalExpenses" style="color: #dc2626;">$0.00</div>
+            <div class="analytics-kpi-lbl">Total Egresos</div>
+            <div class="analytics-kpi-sub" id="anaKpiExpensesPct">Costos, comisiones y gastos</div>
+          </div>
+        </div>
+
+        <div class="analytics-kpi-card">
+          <div class="analytics-kpi-icon" style="background: #f8fafc; color: #475569;">🏷️</div>
+          <div>
+            <div class="analytics-kpi-val" id="anaKpiAvgTicket">$0.00</div>
+            <div class="analytics-kpi-lbl">Ticket Promedio</div>
+            <div class="analytics-kpi-sub">Valor medio por pedido</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-Tab Navigation Bar -->
+      <div class="analytics-subnav-bar">
+        <button type="button" class="analytics-subnav-btn active" id="anaSubNavBtnGeneral" onclick="switchAnalyticsSubTab('general')">
+          <span>📊</span>
+          <span>Panel General de Ventas</span>
+        </button>
+        <button type="button" class="analytics-subnav-btn" id="anaSubNavBtnPareto" onclick="switchAnalyticsSubTab('pareto')">
+          <span>⚖️</span>
+          <span>Análisis de Pareto (80/20)</span>
+        </button>
+        <button type="button" class="analytics-subnav-btn" id="anaSubNavBtnProducts" onclick="switchAnalyticsSubTab('products')">
+          <span>📦</span>
+          <span>Ventas por Producto (Todos)</span>
+        </button>
+        <button type="button" class="analytics-subnav-btn" id="anaSubNavBtnMonthly" onclick="switchAnalyticsSubTab('monthly')">
+          <span>📅</span>
+          <span>Tendencias: Ventas vs Compras</span>
+        </button>
+        <button type="button" class="analytics-subnav-btn" id="anaSubNavBtnSellers" onclick="switchAnalyticsSubTab('sellers')">
+          <span>👔</span>
+          <span>Top Vendedores & Rendimiento</span>
+        </button>
+        <button type="button" class="analytics-subnav-btn" id="anaSubNavBtnFinancial" onclick="switchAnalyticsSubTab('financial')">
+          <span>💰</span>
+          <span>Ingresos vs Egresos (P&L y Gastos)</span>
+        </button>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SUB-TAB 1: PANEL GENERAL DE VENTAS (Matching Screenshot 1)     -->
+      <!-- ============================================================== -->
+      <div id="analyticsViewGeneral">
+        <div class="analytics-charts-grid-2">
+          <!-- Chart 1: Ventas vs Pendiente por Vendedor -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>👔</span>
+                <span>Ventas vs Pendiente por Vendedor</span>
+              </div>
+              <span class="badge-count" style="background: #e0f2fe; color: #0284c7;">Barras Agrupadas</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartSalesVsPendingBySeller"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart 2: Top 10 Productos -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>🏆</span>
+                <span>Top 10 Productos por Facturación ($)</span>
+              </div>
+              <span class="badge-count" style="background: #ecfdf5; color: #047857;">Ranking Oficial</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartTop10Products"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div class="analytics-charts-grid-2">
+          <!-- Chart 3: Distribución Financiera (Cobrado vs Pendiente) -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>🍩</span>
+                <span>Distribución Financiera (Cobrado vs Pendiente)</span>
+              </div>
+              <span class="badge-count" style="background: #f1f5f9; color: #475569;">Proporción</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartFinancialDistribution"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart 4: Tendencia de Ventas en el Tiempo -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>📈</span>
+                <span>Tendencia de Ventas en el Tiempo</span>
+              </div>
+              <span class="badge-count" style="background: #fef3c7; color: #b45309;">Cronología Diaria</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartSalesTrendLine"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SUB-TAB 2: ANÁLISIS DE PARETO 80/20 (Matching Screenshot 2)   -->
+      <!-- ============================================================== -->
+      <div id="analyticsViewPareto" style="display: none;">
+        <!-- Pareto Highlights Banner -->
+        <div class="pareto-kpi-banner">
+          <div>
+            <h4 style="font-weight: 800; font-size: 1.05rem; color: #064e3b; margin-bottom: 2px;">
+              Análisis de Pareto (Principio 80/20)
+            </h4>
+            <p style="font-size: 0.8rem; color: #047857; margin: 0;">
+              El 80% de los resultados suele provenir del 20% de los artículos. Identifica los productos vitales de tu vitrina.
+            </p>
+          </div>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <div class="pareto-stat-pill">
+              <div class="pareto-stat-val" id="anaParetoRevCount">10</div>
+              <div>
+                <div class="pareto-stat-lbl">Productos</div>
+                <div style="font-size: 0.68rem; color: #64748b;">80% de la Facturación</div>
+              </div>
+            </div>
+            <div class="pareto-stat-pill">
+              <div class="pareto-stat-val" id="anaParetoVolCount">9</div>
+              <div>
+                <div class="pareto-stat-lbl">Productos</div>
+                <div style="font-size: 0.68rem; color: #64748b;">80% del Volumen</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="analytics-charts-grid-2">
+          <!-- Chart: Pareto de Facturación -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>📊</span>
+                <span>Pareto de Facturación ($ y % Acumulado)</span>
+              </div>
+              <span class="badge-count" style="background: #ecfdf5; color: #047857;">Línea 80% Facturación</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartParetoRevenue"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart: Pareto de Cantidad -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>📦</span>
+                <span>Pareto de Cantidad (Unidades y % Acumulado)</span>
+              </div>
+              <span class="badge-count" style="background: #eff6ff; color: #2563eb;">Línea 80% Volumen</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartParetoVolume"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div class="app-card" style="margin-top: 0.5rem; background: #f0fdf4; border-color: #bbf7d0;">
+          <div style="font-weight: 800; font-size: 0.95rem; color: #065f46; margin-bottom: 4px;">
+            💡 Recomendación Estratégica del Agente sobre el Inventario 80/20:
+          </div>
+          <div style="font-size: 0.83rem; color: #047857; line-height: 1.5;" id="anaParetoInsightText">
+            Los productos <strong>Hydro, Backpack, Coffee Mug, Terra y Tumblr</strong> concentran más de las tres cuartas partes de los ingresos brutos. Nunca permitas rotura de stock en estos ítems y mantén pedidos de reposición constantes o préstamos entre Barquisimeto Trinitarias y T-Mania.
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SUB-TAB 3: VENTAS POR PRODUCTO - TODOS (Matching Screenshot 3) -->
+      <!-- ============================================================== -->
+      <div id="analyticsViewProducts" style="display: none;">
+        <div class="analytics-charts-grid-2">
+          <!-- Chart: Cantidad Vendida por Producto -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>📦</span>
+                <span>Cantidad Vendida por Producto (Todos)</span>
+              </div>
+              <span class="badge-count" style="background: #f1f5f9; color: #475569;">Unidades Físicas</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartAllProductsQuantity"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart: Facturación por Producto -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>💵</span>
+                <span>Facturación por Producto (Todos los Artículos)</span>
+              </div>
+              <span class="badge-count" style="background: #ecfdf5; color: #047857;">Monto en USD</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartAllProductsRevenue"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Searchable Product Sales Table -->
+        <div class="app-card" style="margin-top: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <h4 style="font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0;">Detalle Exhaustivo por Producto</h4>
+              <p style="font-size: 0.78rem; color: #64748b; margin: 0;">Ventas, ingresos brutos, costo estimado y margen de ganancia</p>
+            </div>
+            <input type="text" id="anaProductFilterInput" class="form-control" placeholder="Buscar producto en la tabla..." style="max-width: 260px; font-size: 0.82rem;" oninput="renderAnalyticsProductTable()">
+          </div>
+
+          <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+            <table class="inventory-table">
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Categoría</th>
+                  <th style="text-align: center;">Unidades</th>
+                  <th style="text-align: right;">Facturación ($)</th>
+                  <th style="text-align: right;">Costo Est. ($)</th>
+                  <th style="text-align: right;">Margen ($)</th>
+                  <th style="text-align: right;">% Margen</th>
+                  <th style="text-align: center;">Stock Actual</th>
+                </tr>
+              </thead>
+              <tbody id="anaProductsTableBody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SUB-TAB 4: VENTAS VS COMPRAS MENSUAL (Matching Screenshot 4 & 5) -->
+      <!-- ============================================================== -->
+      <div id="analyticsViewMonthly" style="display: none;">
+        <div class="analytics-charts-grid-2">
+          <!-- Chart: Tendencia de Ventas por Mes -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>📈</span>
+                <span>Tendencia de Ventas por Mes (Unidades + Facturación)</span>
+              </div>
+              <span class="badge-count" style="background: #ecfdf5; color: #047857;">Evolución Comercial</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartMonthlySalesTrend"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart: Tendencia de Compras e Inversión por Mes -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>🛒</span>
+                <span>Tendencia de Compras e Inversión por Mes</span>
+              </div>
+              <span class="badge-count" style="background: #fef2f2; color: #dc2626;">Inversión en Stock</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartMonthlyPurchasesTrend"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Monthly Balance Table -->
+        <div class="app-card" style="margin-top: 1rem;">
+          <h4 style="font-size: 1rem; font-weight: 800; color: #0f172a; margin-bottom: 0.75rem;">
+            Comparativa Mensual: Ventas vs Reposición de Inventario
+          </h4>
+          <div class="table-responsive">
+            <table class="inventory-table">
+              <thead>
+                <tr>
+                  <th>Mes</th>
+                  <th style="text-align: center;">Unidades Vendidas</th>
+                  <th style="text-align: right;">Facturación ($)</th>
+                  <th style="text-align: center;">Unidades Compradas</th>
+                  <th style="text-align: right;">Inversión Compras ($)</th>
+                  <th style="text-align: right;">Flujo Neto Operativo ($)</th>
+                </tr>
+              </thead>
+              <tbody id="anaMonthlyComparisonTableBody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SUB-TAB 5: TOP VENDEDORES & RENDIMIENTO (Matching Screenshot 5)-->
+      <!-- ============================================================== -->
+      <div id="analyticsViewSellers" style="display: none;">
+        <div class="analytics-charts-grid-2">
+          <!-- Table: Top Vendedores -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>👔</span>
+                <span>Tabla de Rendimiento de Vendedores</span>
+              </div>
+              <span class="badge-count" style="background: #f0fdf4; color: #16a34a;">Cobranza</span>
+            </div>
+            <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+              <table class="inventory-table" style="font-size: 0.82rem;">
+                <thead>
+                  <tr>
+                    <th>Vendedor</th>
+                    <th style="text-align: center;">Unidades</th>
+                    <th style="text-align: right;">Facturación</th>
+                    <th style="text-align: right;">Total Cobrado</th>
+                    <th style="text-align: right;">Pendiente</th>
+                    <th style="text-align: center;">% Cobro</th>
+                  </tr>
+                </thead>
+                <tbody id="anaSellersPerformanceTableBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Chart: Top Vendedores por Facturación -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>📊</span>
+                <span>Top Vendedores por Facturación ($)</span>
+              </div>
+              <span class="badge-count" style="background: #e0f2fe; color: #0284c7;">Barras Horizontales</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartTopSellersRevenue"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SUB-TAB 6: RESUMEN FINANCIERO: INGRESOS VS EGRESOS (P&L)       -->
+      <!-- ============================================================== -->
+      <div id="analyticsViewFinancial" style="display: none;">
+        <div class="analytics-charts-grid-2">
+          <!-- P&L Table (Matching Screenshot 5 Bottom-Left) -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>📋</span>
+                <span>Resumen Financiero: Ingresos vs Egresos (P&L)</span>
+              </div>
+              <span class="badge-count" style="background: #ecfdf5; color: #047857;">Rentabilidad Real</span>
+            </div>
+            <div class="table-responsive">
+              <table class="analytics-pnl-table">
+                <thead>
+                  <tr>
+                    <th>Concepto</th>
+                    <th style="text-align: center;">% Ventas</th>
+                    <th style="text-align: right;">Monto ($)</th>
+                  </tr>
+                </thead>
+                <tbody id="anaPnlTableBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Chart: Resumen Mensual Ingresos vs Egresos (Matching Screenshot 5 Bottom-Right) -->
+          <div class="analytics-chart-box">
+            <div class="analytics-chart-header">
+              <div class="analytics-chart-title">
+                <span>⚖️</span>
+                <span>Resumen Mensual: Ingresos vs Egresos</span>
+              </div>
+              <span class="badge-count" style="background: #f1f5f9; color: #475569;">Comparativo</span>
+            </div>
+            <div class="analytics-chart-canvas-wrap">
+              <canvas id="chartMonthlyIncomeVsExpenses"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Operational Expenses Tracker & Registry -->
+        <div class="app-card" style="margin-top: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <h4 style="font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0;">Registro de Egresos y Gastos Operativos</h4>
+              <p style="font-size: 0.78rem; color: #64748b; margin: 0;">Control de envíos y fletes, retiros internos, comisiones y diferencial cambiario</p>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <select id="anaExpenseCategoryFilter" class="form-control" style="font-size: 0.8rem; padding: 6px 10px;" onchange="renderExpensesTable()">
+                <option value="all">Todas las Categorías</option>
+                <option value="compras">Compras (Mercancía)</option>
+                <option value="comisiones">Comisiones</option>
+                <option value="retiros_internos">Retiros Internos</option>
+                <option value="envios_fletes">Envíos y Fletes</option>
+                <option value="diferencial_cambiario">Diferencial Cambiario</option>
+                <option value="publicidad_redes">Publicidad y Redes</option>
+                <option value="servicios_tienda">Servicios de Tienda</option>
+                <option value="otro">Otros Gastos</option>
+              </select>
+              <button type="button" class="btn btn-success btn-sm" onclick="openExpenseModal()">
+                ➕ Nuevo Gasto
+              </button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="inventory-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Categoría</th>
+                  <th>Concepto / Descripción</th>
+                  <th>Almacén</th>
+                  <th>Beneficiario</th>
+                  <th style="text-align: right;">Monto ($)</th>
+                  <th style="text-align: right;">Monto (Bs.)</th>
+                  <th style="text-align: center;">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="anaExpensesTableBody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
   </main>
 
   <!-- MODAL: Ver / Imprimir Ticket de Venta -->
@@ -3949,6 +4535,87 @@
       </div>
       <span class="ai-fab-badge" id="aiFabBadge">0</span>
     </button>
+  </div>
+
+  <!-- MODAL: REGISTRAR GASTO / EGRESO OPERATIVO -->
+  <div class="modal-overlay" id="expenseModal">
+    <div class="modal-box" style="max-width: 580px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+        <h3 class="modal-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+          <span>💸</span>
+          <span id="expenseModalTitle">Registrar Gasto / Egreso Operativo</span>
+        </h3>
+        <button type="button" class="modal-close-btn" onclick="closeExpenseModal()">&times;</button>
+      </div>
+
+      <input type="hidden" id="expenseEditId" value="">
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="expenseCategorySelect"><strong>Categoría del Egreso *</strong></label>
+        <select id="expenseCategorySelect" class="form-control" onchange="handleExpenseCategoryChange()">
+          <option value="envios_fletes">🚚 Envíos y Fletes (MRW, Zoom, Delivery)</option>
+          <option value="retiros_internos">👤 Retiros Internos / Socios</option>
+          <option value="diferencial_cambiario">⚖️ Diferencial Cambiario (Ajustes Tasa BCV)</option>
+          <option value="compras">📦 Compras / Costo de Mercancía Externa</option>
+          <option value="comisiones">🤝 Comisiones y Honorarios de Plataformas</option>
+          <option value="publicidad_redes">📣 Publicidad, Marketing y Redes Sociales</option>
+          <option value="servicios_tienda">💡 Servicios de Tienda, Alquiler y Mantenimiento</option>
+          <option value="empaques_bolsas">🛍️ Empaques, Bolsas y Materiales</option>
+          <option value="otro">⚙️ Otros Egresos Operativos</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="expenseDescriptionInput"><strong>Descripción / Concepto *</strong></label>
+        <input type="text" id="expenseDescriptionInput" class="form-control" placeholder="Ej: Envío MRW Guía #49281 a Maracay" required>
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="expenseAmountUsdInput"><strong>Monto en USD ($) *</strong></label>
+          <input type="number" id="expenseAmountUsdInput" class="form-control" step="0.01" min="0.01" placeholder="0.00" oninput="syncExpenseBsAmount()" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="expenseAmountBsInput">Monto en Bolívares (Bs.)</label>
+          <input type="text" id="expenseAmountBsInput" class="form-control" placeholder="0.00" readonly style="background: #f8fafc;">
+          <small style="font-size: 0.68rem; color: #64748b;" id="expenseBcvHelperText">Calculado a Tasa BCV</small>
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="expenseDateInput">Fecha del Gasto *</label>
+          <input type="date" id="expenseDateInput" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="expenseWarehouseSelect">Almacén / Sede Asignada *</label>
+          <select id="expenseWarehouseSelect" class="form-control">
+            <option value="general">Global / Administración General</option>
+            <option value="barquisimeto_trinitarias">Barquisimeto Trinitarias</option>
+            <option value="barquisimeto_tmania">Barquisimeto T-Mania</option>
+            <option value="maracay_la_morita">Maracay La Morita</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1.25rem;">
+        <div class="form-group">
+          <label class="form-label" for="expenseBeneficiaryInput">Beneficiario / Proveedor</label>
+          <input type="text" id="expenseBeneficiaryInput" class="form-control" placeholder="Ej: MRW Express / Juan Pérez">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="expenseRefInput">Nro. Comprobante / Factura</label>
+          <input type="text" id="expenseRefInput" class="form-control" placeholder="Ej: REF-92841 / FAC-102">
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button type="button" class="btn btn-outline" onclick="closeExpenseModal()">Cancelar</button>
+        <button type="button" class="btn btn-success" id="btnSaveExpense" onclick="handleSaveExpense()" style="padding: 10px 24px;">
+          💾 Guardar Egreso
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Toast Notification Container -->
