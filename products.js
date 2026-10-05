@@ -2,52 +2,102 @@ const CUBITT_PRODUCTS = [
     {
         "id":  5,
         "code":  "CTBLT-1",
+        "description": "Belt Bag Cubitt Obsidian Black",
         "category":  "BOLSOS CUBITT",
         "status":  "DISPONIBLE",
         "mayor":  14.9,
         "pvpTienda":  25,
         "pvpActual":  25,
-        "image":  "images/CTBLT-1.png"
+        "image":  "images/CTBLT-1.webp",
+        "images": [
+            "images/CTBLT-1.webp",
+            "images/CTBLT-1-1.webp",
+            "images/CTBLT-1-a.webp",
+            "images/CTBLT-1-b.webp",
+            "images/CTBLT-1-2.webp",
+            "images/CTBLT-1-3.webp",
+            "images/CTBLT-1-4.webp"
+        ]
     },
     {
         "id":  6,
         "code":  "CTBLT-2",
+        "description": "Belt Bag Cubitt Smoke Blue",
         "category":  "BOLSOS CUBITT",
         "status":  "DISPONIBLE",
         "mayor":  14.9,
         "pvpTienda":  25,
         "pvpActual":  25,
-        "image":  "images/CTBLT-2.png"
+        "image":  "images/CTBLT-2.webp",
+        "images": [
+            "images/CTBLT-2.webp",
+            "images/CTBLT-2-1.webp",
+            "images/CTBLT-2-a.webp",
+            "images/CTBLT-2-b.webp",
+            "images/CTBLT-2-2.webp",
+            "images/CTBLT-2-3.webp",
+            "images/CTBLT-2-4.webp"
+        ]
     },
     {
         "id":  7,
         "code":  "CTBLT-3",
+        "description": "Belt Bag Cubitt Olive Green",
         "category":  "BOLSOS CUBITT",
         "status":  "DISPONIBLE",
         "mayor":  14.9,
         "pvpTienda":  25,
         "pvpActual":  25,
-        "image":  "images/CTBLT-3.png"
+        "image":  "images/CTBLT-3a.webp",
+        "images": [
+            "images/CTBLT-3a.webp",
+            "images/CTBLT-3.webp",
+            "images/CTBLT-3-1.webp",
+            "images/CTBLT-3-2.webp",
+            "images/CTBLT-3-3.webp",
+            "images/CTBLT-3-4.webp",
+            "images/CTBLT-3-5.webp"
+        ]
     },
     {
         "id":  8,
         "code":  "CTBLT-4",
+        "description": "Belt Bag Cubitt Dusty Mauve",
         "category":  "BOLSOS CUBITT",
         "status":  "DISPONIBLE",
         "mayor":  14.9,
         "pvpTienda":  25,
         "pvpActual":  25,
-        "image":  "images/CTBLT-4.png"
+        "image":  "images/CTBLT-4a.webp",
+        "images": [
+            "images/CTBLT-4a.webp",
+            "images/CTBLT-4.webp",
+            "images/CTBLT-4-1.webp",
+            "images/CTBLT-4-2.webp",
+            "images/CTBLT-4-3.webp",
+            "images/CTBLT-4-4.webp",
+            "images/CTBLT-4-5.webp"
+        ]
     },
     {
         "id":  9,
         "code":  "CTBLT-9",
+        "description": "Belt Bag Cubitt Warm Beige",
         "category":  "BOLSOS CUBITT",
         "status":  "DISPONIBLE",
         "mayor":  14.9,
         "pvpTienda":  25,
         "pvpActual":  25,
-        "image":  "images/CTBLT-9.png"
+        "image":  "images/CTBLT-9.webp",
+        "images": [
+            "images/CTBLT-9.webp",
+            "images/CTBLT-9-1.webp",
+            "images/CTBLT-9-a.webp",
+            "images/CTBLT-9-b.webp",
+            "images/CTBLT-9-2.webp",
+            "images/CTBLT-9-3.webp",
+            "images/CTBLT-9-4.webp"
+        ]
     },
     {
         "id":  10,
