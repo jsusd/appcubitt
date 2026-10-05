@@ -13018,7 +13018,26 @@ const SHEET_NAME_GASTOS = 'gastos';
 
 function doGet(e) {
   try {
-    const ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+    const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
+    if (action === 'ping') {
+      return jsonResponse({
+        status: 'success',
+        message: 'Conexión activa con Google Apps Script y hoja de cálculo Cubitt',
+        timestamp: new Date().toISOString()
+      }, e);
+    }
+
+    let ss = null;
+    try {
+      ss = SpreadsheetApp.getActiveSpreadsheet();
+    } catch (err) {}
+    if (!ss && SPREADSHEET_ID) {
+      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    }
+    if (!ss) {
+      ss = SpreadsheetApp.getActiveSpreadsheet();
+    }
+
     let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
     if (!sheet) {
       const sheets = ss.getSheets();
@@ -13029,7 +13048,7 @@ function doGet(e) {
     const lastCol = sheet.getLastColumn();
 
     if (lastRow <= 1) {
-      return jsonResponse({ status: 'success', data: [], sales: [], message: 'La hoja no tiene registros de datos.' });
+      return jsonResponse({ status: 'success', data: [], sales: [], message: 'La hoja no tiene registros de datos.' }, e);
     }
 
     const headerRange = sheet.getRange(1, 1, 1, lastCol);
@@ -13275,7 +13294,11 @@ function parsePaymentDatesFromComment(commentText) {
   return installments;
 }
 
-function jsonResponse(data) {
+function jsonResponse(data, e) {
+  var callback = (e && e.parameter && e.parameter.callback) ? e.parameter.callback : null;
+  if (callback) {
+    return ContentService.createTextOutput(callback + '(' + JSON.stringify(data) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }`;
 
@@ -13403,41 +13426,207 @@ function switchSheetsModalTab(tabId) {
   if (btnGuide) btnGuide.classList.toggle('active', tabId === 'guide');
 }
 
+// Normalize and sanitize Google Apps Script URL
+function normalizeSheetsUrl(rawUrl) {
+  if (!rawUrl) return '';
+  let url = rawUrl.trim().replace(/^["']|["']$/g, '');
+  url = url.replace(/[\r\n\t]/g, '').trim();
+
+  // If user pasted /dev URL from test deployments, convert to /exec
+  if (url.includes('/dev')) {
+    url = url.replace(/\/dev(\b|\?)/, '/exec$1');
+  }
+
+  // If user copied URL without /exec at the end
+  if (url.includes('script.google.com/macros/s/') && !url.includes('/exec')) {
+    const qIndex = url.indexOf('?');
+    if (qIndex >= 0) {
+      const base = url.slice(0, qIndex).replace(/\/+$/, '');
+      const query = url.slice(qIndex);
+      url = base + '/exec' + query;
+    } else {
+      url = url.replace(/\/+$/, '') + '/exec';
+    }
+  }
+
+  return url;
+}
+
+// JSONP Ping Test to bypass browser CORS restrictions
+function testViaJsonp(url) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'cubitt_ping_cb_' + Date.now();
+    const script = document.createElement('script');
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Tiempo de espera agotado (timeout)'));
+    }, 9000);
+
+    function cleanup() {
+      clearTimeout(timer);
+      delete window[callbackName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+
+    window[callbackName] = function(data) {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = function() {
+      cleanup();
+      reject(new Error('Google bloqueó la solicitud (revisa permisos en Apps Script)'));
+    };
+
+    const cleanUrl = normalizeSheetsUrl(url);
+    const sep = cleanUrl.includes('?') ? '&' : '?';
+    script.src = `${cleanUrl}${sep}action=ping&callback=${callbackName}&t=${Date.now()}`;
+    document.head.appendChild(script);
+  });
+}
+
+// JSONP Full Sync fetch to bypass browser CORS restrictions
+function fetchViaJsonp(url) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'cubitt_sync_cb_' + Date.now();
+    const script = document.createElement('script');
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Tiempo de espera agotado al descargar de Google Sheets'));
+    }, 15000);
+
+    function cleanup() {
+      clearTimeout(timer);
+      delete window[callbackName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+
+    window[callbackName] = function(data) {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = function() {
+      cleanup();
+      reject(new Error('Google bloqueó la descarga'));
+    };
+
+    const cleanUrl = normalizeSheetsUrl(url);
+    const sep = cleanUrl.includes('?') ? '&' : '?';
+    script.src = `${cleanUrl}${sep}callback=${callbackName}&t=${Date.now()}`;
+    document.head.appendChild(script);
+  });
+}
+
+// Show Diagnostic Helper Box inside Modal
+function showSheetsDiagnosticHelper(url, errorMsg) {
+  const diagBox = document.getElementById('sheetsDiagnosticHelper');
+  if (!diagBox) return;
+
+  const cleanUrl = normalizeSheetsUrl(url);
+  const testPingUrl = cleanUrl + (cleanUrl.includes('?') ? '&' : '?') + 'action=ping';
+
+  diagBox.style.display = 'block';
+  diagBox.innerHTML = `
+    <div style="background: #fff1f2; border: 1.5px solid #fecdd3; border-radius: 10px; padding: 14px; font-size: 0.82rem; color: #9f1239; margin-top: 6px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 6px;">
+        <strong style="font-size: 0.88rem; color: #be123c;">⚠️ ¿Cómo solucionar este error en 1 minuto?</strong>
+        <a href="${testPingUrl}" target="_blank" class="btn btn-xs btn-outline" style="background: #ffffff; border-color: #be123c; color: #be123c; font-weight: 700; text-decoration: none;">
+          🌐 Abrir URL en nueva pestaña ↗
+        </a>
+      </div>
+      <p style="margin: 0 0 8px 0; color: #4c0519; line-height: 1.45;">
+        Google no permitió la conexión directa. Esto ocurre por una de las siguientes razones en Google Apps Script:
+      </p>
+      <ul style="margin: 0 0 10px 0; padding-left: 20px; line-height: 1.55; color: #881337;">
+        <li>
+          <strong>1. «Ejecutar como» (Execute as):</strong> En Apps Script, al implementar, debe estar en <strong>«Yo (tu cuenta de Google)»</strong>. Si elegiste <em>«El usuario que accede»</em>, Google bloquea la app pidiendo inicio de sesión.
+        </li>
+        <li>
+          <strong>2. Permisos no autorizados:</strong> Haz clic en el botón de arriba <strong>«Abrir URL en nueva pestaña»</strong>. Si Google te muestra la pantalla <em>«Google no ha verificado esta aplicación»</em>, haz clic en <u>Configuración avanzada</u> ➔ <u>Ir a Cubitt POS (no seguro)</u> ➔ <u>Permitir</u>.
+        </li>
+        <li>
+          <strong>3. «Quién tiene acceso» (Who has access):</strong> Debe decir <strong>«Cualquier persona»</strong> (Anyone).
+        </li>
+        <li>
+          <strong>4. Actualizar versión:</strong> Si cambiaste el código, ve a <em>Implementar ➔ Administrar implementaciones ➔ Editar (✏️) ➔ Versión: Nueva versión ➔ Implementar</em>.
+        </li>
+      </ul>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <button type="button" class="btn btn-sm btn-primary" onclick="testSheetsConnection()" style="background: #be123c; border-color: #be123c; font-size: 0.78rem;">
+          🔄 Volver a Probar Conexión
+        </button>
+        <button type="button" class="btn btn-sm btn-outline" onclick="copyGoogleAppsScriptCode()" style="font-size: 0.78rem;">
+          📋 Copiar Código Actualizado
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 // Save Web App URL
 function saveSheetsWebAppUrl() {
   const input = document.getElementById('sheetsWebAppUrlInput');
-  const rawUrl = (input ? input.value : '').trim();
+  let rawUrl = (input ? input.value : '').trim();
 
   if (!rawUrl) {
     localStorage.removeItem(SHEETS_CONFIG.storageKeyUrl);
     updateSheetsUIStatus();
     appendSheetsSyncLog('[Config] URL eliminada. La app operará en modo local.');
     showToast('URL de Apps Script desvinculada', 'info');
+    const diagBox = document.getElementById('sheetsDiagnosticHelper');
+    if (diagBox) diagBox.style.display = 'none';
     return;
   }
 
-  if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+  // Normalize URL
+  const cleanUrl = normalizeSheetsUrl(rawUrl);
+  if (cleanUrl !== rawUrl && input) {
+    input.value = cleanUrl;
+  }
+
+  if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
     showToast('⚠️ Ingresa una URL válida que empiece por https://script.google.com/...', 'warning');
     return;
   }
 
-  localStorage.setItem(SHEETS_CONFIG.storageKeyUrl, rawUrl);
+  localStorage.setItem(SHEETS_CONFIG.storageKeyUrl, cleanUrl);
   updateSheetsUIStatus();
-  appendSheetsSyncLog('[Config] URL guardada: ' + rawUrl.slice(0, 45) + '...');
+  appendSheetsSyncLog('[Config] URL guardada: ' + cleanUrl.slice(0, 45) + '...');
   showToast('✅ URL de Google Apps Script guardada', 'success');
+
+  const diagBox = document.getElementById('sheetsDiagnosticHelper');
+  if (diagBox) diagBox.style.display = 'none';
 
   testSheetsConnection();
 }
 
 // Test Connection with Google Apps Script Web App
 async function testSheetsConnection() {
-  const url = getSheetsWebAppUrl();
+  let url = getSheetsWebAppUrl();
+  const input = document.getElementById('sheetsWebAppUrlInput');
   const badge = document.getElementById('sheetsLiveStatusBadge');
+  const diagBox = document.getElementById('sheetsDiagnosticHelper');
+
+  if (diagBox) diagBox.style.display = 'none';
 
   if (!url) {
-    showToast('⚠️ Por favor ingresa primero la URL de tu Google Apps Script', 'warning');
-    switchSheetsModalTab('guide');
-    return;
+    if (input && input.value.trim()) {
+      url = normalizeSheetsUrl(input.value.trim());
+      localStorage.setItem(SHEETS_CONFIG.storageKeyUrl, url);
+      input.value = url;
+    } else {
+      showToast('⚠️ Por favor ingresa primero la URL de tu Google Apps Script', 'warning');
+      switchSheetsModalTab('guide');
+      return;
+    }
+  } else {
+    const normalized = normalizeSheetsUrl(url);
+    if (normalized !== url) {
+      url = normalized;
+      localStorage.setItem(SHEETS_CONFIG.storageKeyUrl, url);
+      if (input) input.value = url;
+    }
   }
 
   if (badge) {
@@ -13449,27 +13638,50 @@ async function testSheetsConnection() {
   }
   appendSheetsSyncLog('[Prueba] Verificando comunicación con Google Apps Script...');
 
+  let testSuccess = false;
+  let responseData = null;
+  let testError = null;
+
+  // 1. Try standard CORS fetch
   try {
     const testUrl = url + (url.includes('?') ? '&' : '?') + 'action=ping&t=' + Date.now();
     const res = await fetch(testUrl, { method: 'GET' });
-    const data = await res.json();
-
-    if (data && data.status === 'success') {
-      if (badge) {
-        badge.innerHTML = `
-          <span class="badge" style="background: #10b981; color: #ffffff; padding: 6px 12px; border-radius: 20px;">
-            🟢 Conectado con Google Sheets
-          </span>
-        `;
-      }
-      appendSheetsSyncLog('[Prueba] ✅ Conexión exitosa. Base de datos: ' + (data.sheetName || 'ventas') + ' (' + (data.totalRecords || 0) + ' registros detectados).');
-      showToast('✅ ¡Conexión con Google Sheets verificada con éxito!', 'success');
-      updateSheetsUIStatus();
+    responseData = await res.json();
+    if (responseData && (responseData.status === 'success' || responseData.sales)) {
+      testSuccess = true;
     } else {
-      throw new Error(data.message || 'Respuesta inesperada');
+      throw new Error((responseData && responseData.message) ? responseData.message : 'Respuesta sin éxito');
     }
-  } catch (err) {
-    console.error('Error probando conexión Sheets:', err);
+  } catch (corsErr) {
+    testError = corsErr;
+    console.warn('Fetch directo con Apps Script falló, probando vía JSONP...', corsErr);
+
+    // 2. Try JSONP fallback to bypass any browser CORS restrictions
+    try {
+      responseData = await testViaJsonp(url);
+      if (responseData && (responseData.status === 'success' || responseData.sales)) {
+        testSuccess = true;
+        testError = null;
+      }
+    } catch (jsonpErr) {
+      testError = jsonpErr;
+      console.error('Prueba JSONP también falló:', jsonpErr);
+    }
+  }
+
+  if (testSuccess) {
+    if (badge) {
+      badge.innerHTML = `
+        <span class="badge" style="background: #10b981; color: #ffffff; padding: 6px 12px; border-radius: 20px; font-weight: 700;">
+          🟢 Conectado con Google Sheets
+        </span>
+      `;
+    }
+    if (diagBox) diagBox.style.display = 'none';
+    appendSheetsSyncLog('[Prueba] ✅ Conexión exitosa. Base de datos: ' + (responseData.sheetName || 'ventas') + ' lista.');
+    showToast('✅ ¡Conexión con Google Sheets verificada con éxito!', 'success');
+    updateSheetsUIStatus();
+  } else {
     if (badge) {
       badge.innerHTML = `
         <span class="badge" style="background: #ef4444; color: #ffffff; padding: 6px 12px; border-radius: 20px;">
@@ -13477,9 +13689,9 @@ async function testSheetsConnection() {
         </span>
       `;
     }
-    appendSheetsSyncLog('[Prueba] ❌ Error al conectar: ' + err.message);
-    appendSheetsSyncLog('[Ayuda] Asegúrate de que la Web App en Google Apps Script tenga acceso: "Cualquier persona" (Anyone).');
-    showToast('⚠️ No se pudo conectar. Verifica que el script esté implementado como "Cualquier persona" (Anyone)', 'danger');
+    appendSheetsSyncLog('[Prueba] ❌ Error de conexión: ' + (testError ? testError.message : 'Sin respuesta'));
+    showSheetsDiagnosticHelper(url, testError ? testError.message : '');
+    showToast('⚠️ No se pudo conectar. Revisa la guía de permisos abajo.', 'danger');
   }
 }
 
@@ -13596,7 +13808,7 @@ function formatSaleInstallmentsNote(sale) {
 
 // Sincronizar desde Google Sheets (PULL)
 async function syncFromGoogleSheets(showToastNotification = true) {
-  const url = getSheetsWebAppUrl();
+  let url = getSheetsWebAppUrl();
   const btn = document.getElementById('btnSyncFromSheets');
 
   if (!url) {
@@ -13608,6 +13820,8 @@ async function syncFromGoogleSheets(showToastNotification = true) {
     return;
   }
 
+  url = normalizeSheetsUrl(url);
+
   if (btn) {
     btn.disabled = true;
     btn.innerHTML = '<span>⏳ Sincronizando...</span>';
@@ -13616,9 +13830,18 @@ async function syncFromGoogleSheets(showToastNotification = true) {
   appendSheetsSyncLog('[Descarga] Conectando con Google Sheets...');
 
   try {
-    const fetchUrl = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
-    const res = await fetch(fetchUrl, { method: 'GET' });
-    const data = await res.json();
+    let data = null;
+
+    // 1. Try standard CORS fetch
+    try {
+      const fetchUrl = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+      const res = await fetch(fetchUrl, { method: 'GET' });
+      data = await res.json();
+    } catch (corsErr) {
+      console.warn('Fetch directo falló, intentando descarga vía JSONP...', corsErr);
+      // 2. Fallback to JSONP
+      data = await fetchViaJsonp(url);
+    }
 
     if (!data || data.status !== 'success' || !Array.isArray(data.sales)) {
       throw new Error((data && data.message) ? data.message : 'Estructura de respuesta inválida');
@@ -13789,7 +14012,8 @@ async function syncFromGoogleSheets(showToastNotification = true) {
 
 // Subir Ventas a Google Sheets (PUSH)
 async function pushToGoogleSheets(customSale = null) {
-  const url = getSheetsWebAppUrl();
+  const rawUrl = getSheetsWebAppUrl();
+  const url = normalizeSheetsUrl(rawUrl);
   const btn = document.getElementById('btnPushToSheets');
 
   if (!url) {
@@ -13838,7 +14062,7 @@ async function pushToGoogleSheets(customSale = null) {
 
 // Push a single sale to Google Sheets automatically
 async function autoSyncSaleToSheets(saleRecord, logActivity = true) {
-  const url = getSheetsWebAppUrl();
+  const url = normalizeSheetsUrl(getSheetsWebAppUrl());
   if (!url || !isSheetsAutoSyncEnabled()) return;
 
   const item = (saleRecord.items && saleRecord.items[0]) ? saleRecord.items[0] : {};
@@ -13889,7 +14113,7 @@ async function autoSyncSaleToSheets(saleRecord, logActivity = true) {
 
 // Push an abono/payment to Google Sheets automatically
 async function autoSyncAbonoToSheets(sale, amount, method, note) {
-  const url = getSheetsWebAppUrl();
+  const url = normalizeSheetsUrl(getSheetsWebAppUrl());
   if (!url || !isSheetsAutoSyncEnabled()) return;
 
   const payload = {

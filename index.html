@@ -4714,6 +4714,8 @@
           <small style="font-size: 0.72rem; color: #64748b; display: block; margin-top: 4px;">
             ¿No tienes esta URL aún? Ve a la pestaña <strong>«Guía de Conexión en 30 Segundos»</strong> arriba para generarla con 1 clic en tu hoja.
           </small>
+          <!-- Smart Diagnostic Box (shown when connection fails) -->
+          <div id="sheetsDiagnosticHelper" style="display: none; margin-top: 10px;"></div>
         </div>
 
         <!-- Sync Actions Row -->
@@ -4815,14 +4817,19 @@
               Arriba a la derecha, haz clic en el botón azul <strong>«Implementar» ➔ «Nueva implementación»</strong>.
             </li>
             <li style="margin-bottom: 8px;">
-              En el ícono de engranaje ⚙️ selecciona <strong>«Aplicación web»</strong>:
-              <br>• En <em>Quién tiene acceso</em>, selecciona: <strong>«Cualquier persona»</strong> (Anyone).
+              En el ícono de engranaje ⚙️ selecciona <strong>«Aplicación web»</strong> y configura exactamente así:
+              <br>• <strong>Ejecutar como:</strong> selecciona <strong>«Yo (tu correo de Google)»</strong> <span style="color: #dc2626; font-weight: 700;">(⚠️ ¡IMPORTANTE: NO elijas "El usuario que accede"!)</span>
+              <br>• <strong>Quién tiene acceso:</strong> selecciona <strong>«Cualquier persona»</strong> (Anyone).
             </li>
             <li style="margin-bottom: 8px;">
-              Haz clic en <strong>Implementar</strong>, autoriza los permisos y <strong>copia la URL generada</strong> (termina en <code>/exec</code>).
+              Haz clic en <strong>Implementar</strong> y autoriza los permisos de Google:
+              <br>• Si aparece una pantalla de Google que dice <em>«Google no ha verificado esta aplicación»</em>:
+              <br>&nbsp;&nbsp;1. Haz clic en el enlace gris <strong>«Configuración avanzada»</strong> (abajo a la izquierda).
+              <br>&nbsp;&nbsp;2. Haz clic en <strong>«Ir a Cubitt POS (no seguro)»</strong>.
+              <br>&nbsp;&nbsp;3. Haz clic en el botón azul <strong>«Permitir»</strong>.
             </li>
             <li style="margin-bottom: 8px;">
-              Pega esa URL en la pestaña <strong>«Sincronización en Vivo»</strong> de esta ventana y ¡listo!
+              <strong>Copia la URL generada</strong> (debe terminar en <code>/exec</code>), pégala en la pestaña <strong>«Sincronización en Vivo»</strong> y haz clic en <strong>«Guardar URL»</strong>.
             </li>
           </ol>
         </div>

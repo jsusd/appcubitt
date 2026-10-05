@@ -27,7 +27,26 @@ const SHEET_NAME_GASTOS = 'gastos';
 // ==============================================================
 function doGet(e) {
   try {
-    const ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+    const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
+    if (action === 'ping') {
+      return jsonResponse({
+        status: 'success',
+        message: 'Conexión activa con Google Apps Script y hoja de cálculo Cubitt',
+        timestamp: new Date().toISOString()
+      }, e);
+    }
+
+    let ss = null;
+    try {
+      ss = SpreadsheetApp.getActiveSpreadsheet();
+    } catch (err) {}
+    if (!ss && SPREADSHEET_ID) {
+      ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    }
+    if (!ss) {
+      ss = SpreadsheetApp.getActiveSpreadsheet();
+    }
+
     let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
     
     // Si no encuentra por nombre exacto, busca por el gid o la primera hoja
@@ -40,7 +59,7 @@ function doGet(e) {
     const lastCol = sheet.getLastColumn();
 
     if (lastRow <= 1) {
-      return jsonResponse({ status: 'success', data: [], message: 'La hoja no tiene registros de datos.' });
+      return jsonResponse({ status: 'success', data: [], sales: [], message: 'La hoja no tiene registros de datos.' }, e);
     }
 
     // Leemos encabezados, valores y NOTAS (comentarios donde están las fechas de pago)
@@ -120,14 +139,14 @@ function doGet(e) {
       totalRecords: salesList.length,
       lastSync: new Date().toISOString(),
       sales: salesList
-    });
+    }, e);
 
   } catch (error) {
     return jsonResponse({
       status: 'error',
       message: error.toString(),
       stack: error.stack
-    });
+    }, e);
   }
 }
 
@@ -324,7 +343,12 @@ function parsePaymentDatesFromComment(commentText) {
   return installments;
 }
 
-function jsonResponse(data) {
+function jsonResponse(data, e) {
+  var callback = (e && e.parameter && e.parameter.callback) ? e.parameter.callback : null;
+  if (callback) {
+    return ContentService.createTextOutput(callback + '(' + JSON.stringify(data) + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
   return ContentService.createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }
