@@ -22,6 +22,14 @@ const SPREADSHEET_ID = '18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw';
 const SHEET_NAME_VENTAS = 'ventas';
 const SHEET_NAME_GASTOS = 'gastos';
 
+// Función de prueba directa para ejecutar en el editor de Apps Script
+function testConn() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet() || (SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : null);
+  const sheet = ss.getSheetByName(SHEET_NAME_VENTAS) || ss.getSheets()[0];
+  Logger.log("✅ Conexión Exitosa con Hoja: " + sheet.getName() + " (Filas: " + sheet.getLastRow() + ")");
+  return "OK: " + sheet.getName();
+}
+
 // ==============================================================
 // GET: LECTURA EN TIEMPO REAL DESDE GOOGLE SHEETS
 // ==============================================================
