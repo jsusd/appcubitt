@@ -157,6 +157,14 @@
             </div>
             <span class="badge-count" id="badgeBajoPedidoCount">0</span>
           </button>
+          <button type="button" class="nav-dropdown-item" id="navItemLoans" onclick="switchTab('inventory'); switchInventorySubTab('loans'); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #e0f2fe; color: #0284c7;">🤝</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Mercancía en Préstamo</div>
+              <div class="dropdown-item-subtitle">Préstamos entre Trinitarias y T-Mania</div>
+            </div>
+            <span class="badge-count" id="badgeNavLoansCount">0</span>
+          </button>
           <button type="button" class="nav-dropdown-item" id="navItemUsers" onclick="switchTab('users'); closeAllNavDropdowns();">
             <div class="dropdown-item-icon" style="background: #f5f3ff; color: #7c3aed;">🔐</div>
             <div class="dropdown-item-content">
@@ -329,6 +337,55 @@
                 <div style="font-size: 0.76rem; color: #78350f; line-height: 1.4;">
                   • Podrás hacer seguimiento en la pestaña <strong>"📦 Bajo Pedido"</strong> y marcarlo como <strong>"Entregado"</strong> en cuanto llegue y se entregue al cliente.
                 </div>
+              </div>
+            </div>
+
+            <!-- Almacén de Despacho / Ubicación de Stock -->
+            <div class="form-group" style="margin-bottom: 1.25rem;">
+              <label class="form-label">
+                <span>🏬 Almacén / Ubicación de Despacho *</span>
+                <span class="label-hint">¿De cuál almacén sale la mercancía?</span>
+              </label>
+              <div class="warehouse-selector-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                <!-- Almacén 1: Barquisimeto Trinitarias (Default) -->
+                <div class="warehouse-card selected" id="warehouseTrinitarias" onclick="setSalesWarehouse('barquisimeto_trinitarias')">
+                  <div style="font-size: 1.35rem;">🏪</div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.86rem; color: #047857;">Bqto Trinitarias</div>
+                    <div style="font-size: 0.72rem; color: #059669;">Sede Principal</div>
+                  </div>
+                </div>
+
+                <!-- Almacén 2: Barquisimeto T-Mania (Externo) -->
+                <div class="warehouse-card" id="warehouseTmania" onclick="setSalesWarehouse('barquisimeto_tmania')">
+                  <div style="font-size: 1.35rem;">🛍️</div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.86rem; color: #7e22ce;">Bqto T-Mania</div>
+                    <div style="font-size: 0.72rem; color: #9333ea;">Stock Externo • 10% Comis.</div>
+                  </div>
+                </div>
+
+                <!-- Almacén 3: Maracay La Morita -->
+                <div class="warehouse-card" id="warehouseMorita" onclick="setSalesWarehouse('maracay_la_morita')">
+                  <div style="font-size: 1.35rem;">🏬</div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.86rem; color: #0f172a;">Maracay</div>
+                    <div style="font-size: 0.72rem; color: #64748b;">La Morita</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Barquisimeto T-Mania Info Banner -->
+              <div id="warehouseTmaniaNotice" style="display: none; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <span style="font-weight: 700; color: #7e22ce; font-size: 0.88rem;">🛍️ Almacén Externo: Barquisimeto T-Mania</span>
+                  <span style="font-size: 0.72rem; background: #f3e8ff; color: #7e22ce; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid #d8b4fe;">Comisión T-Mania 10%</span>
+                </div>
+                <div style="font-size: 0.78rem; color: #581c87; line-height: 1.4;">
+                  • <strong>Inventario Externo Protegido:</strong> Se genera automáticamente un <em>ingreso</em> ("Mercancía T-Mania") y un <em>egreso</em> de venta para no alterar las existencias de tus facturas de compra.<br>
+                  • <strong>Comisión T-Mania (10%):</strong> Se genera la Cuenta por Pagar (CXP) correspondiente a favor de T-Mania.
+                </div>
+                <div id="tmaniaWarehouseLiveBreakdown" style="margin-top: 6px; font-size: 0.82rem; font-weight: 700; color: #7e22ce;"></div>
               </div>
             </div>
 
@@ -647,6 +704,10 @@
                 <span>Subtotal Artículos:</span>
                 <strong id="calcSubtotal">$0.00</strong>
               </div>
+              <div class="calc-row" id="calcWarehouseTmaniaCommRow" style="display: none; color: #7e22ce;">
+                <span>- Comisión T-Mania (10%):</span>
+                <strong id="calcWarehouseTmaniaCommTotal">-$0.00</strong>
+              </div>
               <div class="calc-row" id="calcPlatformCommRow" style="display: none; color: #b45309;">
                 <span>- Comisión MercadoLibre (12%):</span>
                 <strong id="calcPlatformCommTotal">-$0.00</strong>
@@ -807,6 +868,14 @@
           </div>
 
           <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Almacén:</span>
+            <div class="filter-chip active" data-hist-warehouse="all">Todos</div>
+            <div class="filter-chip" data-hist-warehouse="barquisimeto_trinitarias">🏪 Trinitarias</div>
+            <div class="filter-chip" data-hist-warehouse="barquisimeto_tmania">🛍️ T-Mania</div>
+            <div class="filter-chip" data-hist-warehouse="maracay_la_morita">🏬 La Morita</div>
+          </div>
+
+          <div class="filter-group">
             <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Período:</span>
             <div class="filter-chip active" data-hist-date="all">Todo</div>
             <div class="filter-chip" data-hist-date="today">Hoy</div>
@@ -831,6 +900,7 @@
             <thead>
               <tr>
                 <th>Venta / Fecha</th>
+                <th>Almacén</th>
                 <th>Artículos</th>
                 <th>Cliente</th>
                 <th>Plataforma</th>
@@ -1586,6 +1656,10 @@
         <button type="button" class="inventory-subnav-btn" id="subtabInvMovementsBtn" onclick="switchInventorySubTab('movements')">
           <span>🔄 Movimientos de Inventario</span>
         </button>
+        <button type="button" class="inventory-subnav-btn" id="subtabInvLoansBtn" onclick="switchInventorySubTab('loans')">
+          <span>🤝 Mercancía en Préstamo</span>
+          <span class="badge-count" id="badgePendingLoansCount" style="display: none; margin-left: 6px; background: #0284c7; color: #fff;">0</span>
+        </button>
       </div>
 
       <!-- SECTION 1: EXISTENCIAS DE STOCK -->
@@ -1705,6 +1779,110 @@
           <div id="invMovementsEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
             <div style="font-size: 2.2rem; margin-bottom: 6px;">🔄</div>
             <div>Aún no se han registrado movimientos de inventario.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 4: MERCANCÍA EN PRÉSTAMO (INTER-ALMACENES) -->
+      <div id="invLoansSection" class="app-card" style="display: none;">
+        <!-- Loan Metric Summary Cards -->
+        <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
+          <div class="metric-card">
+            <div class="metric-icon-box blue">🤝</div>
+            <div>
+              <div class="metric-title">Préstamos Pendientes</div>
+              <div class="metric-value" id="loanMetricActiveCount" style="color: #0284c7;">0</div>
+              <div style="font-size: 0.72rem; color: #64748b;">Por conciliar</div>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon-box amber">📦</div>
+            <div>
+              <div class="metric-title">Unidades Prestadas</div>
+              <div class="metric-value" id="loanMetricUnitsPending" style="color: #d97706;">0 unds</div>
+              <div style="font-size: 0.72rem; color: #64748b;" id="loanMetricValuePending">Valor: $0.00</div>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon-box green">➡️</div>
+            <div>
+              <div class="metric-title">Trinitarias ➔ T-Mania</div>
+              <div class="metric-value" id="loanMetricTrinitariasToTmania" style="color: #059669;">0 unds</div>
+              <div style="font-size: 0.72rem; color: #64748b;">Mercancía entregada</div>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon-box purple">⬅️</div>
+            <div>
+              <div class="metric-title">T-Mania ➔ Trinitarias</div>
+              <div class="metric-value" id="loanMetricTmaniaToTrinitarias" style="color: #7e22ce;">0 unds</div>
+              <div style="font-size: 0.72rem; color: #64748b;">Mercancía recibida</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Loans Actions & Filters Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <h3 style="font-size: 1.1rem; font-weight: 800; color: #1e293b; margin: 0;">🤝 Registro de Préstamos entre Almacenes</h3>
+            <p style="font-size: 0.82rem; color: var(--text-muted); margin: 2px 0 0 0;">
+              Control de mercancía prestada entre <strong>Barquisimeto Trinitarias</strong> y <strong>Barquisimeto T-Mania</strong> con conciliación.
+            </p>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-outline btn-sm" onclick="exportLoansToCSV()" title="Exportar Préstamos a CSV / Excel">
+              📥 Excel
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="openCreateLoanModal()" style="background: linear-gradient(135deg, #0284c7, #0369a1); border: none;">
+              ➕ Registrar Préstamo
+            </button>
+          </div>
+        </div>
+
+        <!-- Loans Filter Bar -->
+        <div class="filters-bar" style="margin-bottom: 1.25rem;">
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estado:</span>
+            <div class="filter-chip active" data-loan-status="all">Todos</div>
+            <div class="filter-chip" data-loan-status="PENDIENTE">🟡 Pendientes</div>
+            <div class="filter-chip" data-loan-status="CONCILIADO">✅ Conciliados</div>
+          </div>
+
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Ruta:</span>
+            <div class="filter-chip active" data-loan-route="all">Todas</div>
+            <div class="filter-chip" data-loan-route="trinitarias_to_tmania">Trinitarias ➔ T-Mania</div>
+            <div class="filter-chip" data-loan-route="tmania_to_trinitarias">T-Mania ➔ Trinitarias</div>
+            <div class="filter-chip" data-loan-route="otro">Otras Rutas</div>
+          </div>
+
+          <div style="flex: 1; min-width: 200px;">
+            <input type="text" id="loansSearchInput" class="form-control" placeholder="Buscar por producto, ID, responsable..." oninput="handleLoansSearch(this.value)">
+          </div>
+        </div>
+
+        <!-- Loans Table -->
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Préstamo / Fecha</th>
+                <th>Ruta (Origen ➔ Destino)</th>
+                <th>Producto Prestado</th>
+                <th>Cant.</th>
+                <th>Valor ($)</th>
+                <th>Responsable</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="loansTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="loansEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8; display: none;">
+            <div style="font-size: 2.2rem; margin-bottom: 6px;">🤝</div>
+            <div>No hay préstamos registrados que coincidan con los filtros.</div>
           </div>
         </div>
       </div>
@@ -1907,8 +2085,16 @@
 
       <!-- Section 2: Modalidad y Pago -->
       <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 1rem;">
-        <div style="font-weight: 700; font-size: 0.88rem; color: #1e293b; margin-bottom: 10px;">💳 Plataforma, Modalidad y Método de Pago</div>
+        <div style="font-weight: 700; font-size: 0.88rem; color: #1e293b; margin-bottom: 10px;">🏬 Almacén, Plataforma y Modalidad de Pago</div>
         <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="editSaleWarehouseSelect">🏬 Almacén / Ubicación</label>
+            <select id="editSaleWarehouseSelect" class="form-control" onchange="updateEditModalCalculations()">
+              <option value="barquisimeto_trinitarias">🏪 Barquisimeto Trinitarias</option>
+              <option value="barquisimeto_tmania">🛍️ Barquisimeto T-Mania (Stock Externo • 10% Comis.)</option>
+              <option value="maracay_la_morita">🏬 Maracay La Morita</option>
+            </select>
+          </div>
           <div class="form-group">
             <label class="form-label" for="editSalePlatformSelect">🌐 Plataforma de Venta</label>
             <select id="editSalePlatformSelect" class="form-control" onchange="updateEditModalCalculations()">
@@ -1917,6 +2103,8 @@
               <option value="facebook_marketplace">🔵 Facebook Marketplace (0% comisión)</option>
             </select>
           </div>
+        </div>
+        <div class="form-row" style="margin-top: 8px;">
           <div class="form-group">
             <label class="form-label" for="editPaymentTypeSelect">Modalidad de Pago</label>
             <select id="editPaymentTypeSelect" class="form-control" onchange="handleEditPaymentTypeChange()">
@@ -3150,6 +3338,188 @@
             👔 Vendedor Pedro
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Registrar Mercancía en Préstamo -->
+  <div class="modal-overlay" id="createLoanModal">
+    <div class="modal-box" style="max-width: 640px; max-height: 90vh; overflow-y: auto;">
+      <button class="modal-close-btn" onclick="closeCreateLoanModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.25rem;">
+        <span style="font-size: 1.3rem;">🤝</span>
+        <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0;">Registrar Mercancía en Préstamo</h3>
+      </div>
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.15rem;">
+        Registra el traslado de inventario en calidad de préstamo entre almacenes (ej. Trinitarias y T-Mania).
+      </p>
+
+      <!-- Selector de Ruta de Préstamo Rápida -->
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label">
+          <strong>Ruta del Préstamo *</strong>
+          <span class="label-hint">Selecciona el sentido del movimiento</span>
+        </label>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 8px;">
+          <div class="loan-route-card selected" id="routeCardTrinToTman" onclick="selectLoanRoute('trinitarias_to_tmania')">
+            <div style="font-size: 1.4rem;">➡️</div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.84rem; color: #1d4ed8;">Trinitarias ➔ T-Mania</div>
+              <div style="font-size: 0.72rem; color: #64748b;">Prestamos a T-Mania</div>
+            </div>
+          </div>
+          <div class="loan-route-card" id="routeCardTmanToTrin" onclick="selectLoanRoute('tmania_to_trinitarias')">
+            <div style="font-size: 1.4rem;">⬅️</div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.84rem; color: #7e22ce;">T-Mania ➔ Trinitarias</div>
+              <div style="font-size: 0.72rem; color: #64748b;">T-Mania nos presta</div>
+            </div>
+          </div>
+          <div class="loan-route-card" id="routeCardCustom" onclick="selectLoanRoute('otro')">
+            <div style="font-size: 1.4rem;">🔄</div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.84rem; color: #334155;">Otra Ruta</div>
+              <div style="font-size: 0.72rem; color: #64748b;">Personalizada</div>
+            </div>
+          </div>
+        </div>
+
+        <input type="hidden" id="loanRouteType" value="trinitarias_to_tmania">
+
+        <!-- Detalle de Almacenes Origen / Destino (editable o auto) -->
+        <div class="form-row" id="loanCustomRouteRow" style="display: none; margin-top: 10px; background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px dashed #cbd5e1;">
+          <div class="form-group">
+            <label class="form-label" for="loanOriginSelect" style="font-size: 0.78rem;">Almacén Origen (Presta)</label>
+            <select id="loanOriginSelect" class="form-control" style="font-size: 0.85rem;">
+              <option value="barquisimeto_trinitarias">🏪 Barquisimeto Trinitarias</option>
+              <option value="barquisimeto_tmania">🛍️ Barquisimeto T-Mania</option>
+              <option value="maracay_la_morita">🏬 Maracay La Morita</option>
+              <option value="externo">📦 Proveedor / Aliado Externo</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="loanDestinationSelect" style="font-size: 0.78rem;">Almacén Destino (Recibe)</label>
+            <select id="loanDestinationSelect" class="form-control" style="font-size: 0.85rem;">
+              <option value="barquisimeto_tmania">🛍️ Barquisimeto T-Mania</option>
+              <option value="barquisimeto_trinitarias">🏪 Barquisimeto Trinitarias</option>
+              <option value="maracay_la_morita">🏬 Maracay La Morita</option>
+              <option value="externo">📦 Proveedor / Aliado Externo</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Producto Prestado -->
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="loanProductSelect">
+          <strong>Producto en Préstamo *</strong>
+          <span class="label-hint">Selecciona del catálogo o escribe código</span>
+        </label>
+        <select id="loanProductSelect" class="form-control" onchange="handleLoanProductSelect(this.value)">
+          <option value="">-- Seleccionar Producto del Catálogo --</option>
+          <!-- Populated dynamically -->
+        </select>
+      </div>
+
+      <!-- Cantidad y Valor Estimado -->
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="loanQuantityInput">Cantidad (Unidades) *</label>
+          <input type="number" id="loanQuantityInput" class="form-control" value="1" min="1" step="1" oninput="updateLoanTotalCalc()" style="font-weight: 700; font-size: 1.05rem;">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="loanUnitValueInput">Valor Unitario Ref. ($)</label>
+          <div class="currency-input-wrap">
+            <span class="currency-prefix">$</span>
+            <input type="number" id="loanUnitValueInput" class="form-control with-prefix" value="0.00" min="0" step="0.5" oninput="updateLoanTotalCalc()">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Valor Total Estimado</label>
+          <div id="loanTotalValueDisplay" style="font-weight: 800; font-size: 1.15rem; color: #0284c7; padding: 8px 12px; background: #e0f2fe; border-radius: 6px; text-align: center;">$0.00</div>
+        </div>
+      </div>
+
+      <!-- Fecha y Responsable -->
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="loanDateInput">Fecha del Préstamo *</label>
+          <input type="datetime-local" id="loanDateInput" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="loanResponsibleInput">Persona Responsable / Asesor</label>
+          <input type="text" id="loanResponsibleInput" class="form-control" placeholder="Ej: Juan Pérez / Carlos Encargado">
+        </div>
+      </div>
+
+      <!-- Observaciones / Motivo -->
+      <div class="form-group" style="margin-bottom: 1.25rem;">
+        <label class="form-label" for="loanNotesInput">Observaciones / Motivo del Préstamo</label>
+        <input type="text" id="loanNotesInput" class="form-control" placeholder="Ej: Préstamo temporal por falta de stock en vitrina Trinitarias...">
+      </div>
+
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button type="button" class="btn btn-outline" onclick="closeCreateLoanModal()">Cancelar</button>
+        <button type="button" class="btn btn-primary" onclick="handleCreateLoan()" style="padding: 10px 24px; background: linear-gradient(135deg, #0284c7, #0369a1); border: none;">
+          🤝 Registrar Préstamo
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Conciliar Mercancía en Préstamo -->
+  <div class="modal-overlay" id="reconcileLoanModal">
+    <div class="modal-box" style="max-width: 580px; max-height: 90vh; overflow-y: auto;">
+      <button class="modal-close-btn" onclick="closeReconcileLoanModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.25rem;">
+        <span style="font-size: 1.3rem;">✅</span>
+        <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0;">Conciliar Préstamo de Mercancía</h3>
+      </div>
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.15rem;">
+        Registra la resolución del préstamo (devolución física, liquidación por venta o compensación).
+      </p>
+
+      <input type="hidden" id="reconcileLoanId">
+
+      <!-- Loan Summary Card -->
+      <div id="reconcileLoanSummaryCard" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 1.15rem; font-size: 0.85rem;">
+        <!-- Populated dynamically -->
+      </div>
+
+      <!-- Forma de Conciliación -->
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="reconcileTypeSelect">
+          <strong>Tipo de Resolución / Conciliación *</strong>
+        </label>
+        <select id="reconcileTypeSelect" class="form-control">
+          <option value="DEVUELTO">↩️ Mercancía Devuelta físicamente al almacén de origen</option>
+          <option value="VENDIDO_LIQUIDADO">💵 Mercancía Vendida y liquidada / pagada</option>
+          <option value="COMPENSADO">🔄 Compensado con otro producto o crédito a favor</option>
+          <option value="AJUSTE_OTRO">⚙️ Ajuste especial / Otro</option>
+        </select>
+      </div>
+
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label class="form-label" for="reconcileDateInput">Fecha de Conciliación *</label>
+          <input type="date" id="reconcileDateInput" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reconcileResponsibleInput">Responsable de Conciliación</label>
+          <input type="text" id="reconcileResponsibleInput" class="form-control" placeholder="Ej: Gerente de Tienda / Ana">
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.25rem;">
+        <label class="form-label" for="reconcileNotesInput">Observaciones / Comprobante de Conciliación</label>
+        <textarea id="reconcileNotesInput" class="form-control" rows="2" placeholder="Detalle de la entrega o confirmación..."></textarea>
+      </div>
+
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button type="button" class="btn btn-outline" onclick="closeReconcileLoanModal()">Cancelar</button>
+        <button type="button" class="btn btn-success" onclick="handleConfirmReconcileLoan()" style="padding: 10px 24px;">
+          ✅ Confirmar Conciliación
+        </button>
       </div>
     </div>
   </div>

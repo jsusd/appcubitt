@@ -48,12 +48,19 @@ const state = {
   // Inventory & Invoices State
   invoices: [],
   inventoryMovements: [],
-  inventorySubTab: 'stock', // 'stock', 'invoices', 'movements'
+  inventorySubTab: 'stock', // 'stock', 'invoices', 'movements', 'loans'
   inventoryFilterCategory: 'all',
   inventoryFilterStockStatus: 'all', // 'all', 'disponible', 'bajo', 'agotado'
   inventorySearchQuery: '',
   invoicesSearchQuery: '',
-  currentUploadedInvoicePhoto: null
+  currentUploadedInvoicePhoto: null,
+  // Warehouse & Inter-Warehouse Loans State
+  posWarehouse: 'barquisimeto_trinitarias', // 'barquisimeto_trinitarias', 'barquisimeto_tmania', 'maracay_la_morita'
+  historyFilterWarehouse: 'all', // 'all', 'barquisimeto_trinitarias', 'barquisimeto_tmania', 'maracay_la_morita'
+  loans: [], // [{ id, date, timestamp, route, originWarehouse, destWarehouse, productCode, productName, category, qty, unitPrice, totalValue, responsible, notes, status: 'PENDIENTE'|'CONCILIADO', reconciledAt, reconciledBy, reconcileType, reconcileNotes }]
+  loansFilterStatus: 'all', // 'all', 'PENDIENTE', 'CONCILIADO'
+  loansFilterRoute: 'all', // 'all', 'trinitarias_to_tmania', 'tmania_to_trinitarias', 'otro'
+  loansSearchQuery: ''
 };
 window.state = state;
 
@@ -158,6 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadUsersFromStorage();
   loadInvoicesFromStorage();
   loadInventoryMovementsFromStorage();
+  loadLoansFromStorage();
   loadSessionFromStorage();
   
   // Synchronize payables for all recorded sales (Cashea, IVA, T-Mania, and custom commissions)
@@ -182,6 +190,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderGoalsTab();
   renderUsersTab();
   renderInventoryTab();
+  renderLoansTab();
   updateInventoryBadges();
   setupAutocomplete();
   setupClientAutocomplete();
@@ -947,6 +956,42 @@ function switchPreviewImage(src, el, idx) {
 }
 
 // ==========================================================================
+// ALMACENES / UBICACIONES DE DESPACHO
+// ==========================================================================
+function setSalesWarehouse(wh) {
+  state.posWarehouse = wh || 'barquisimeto_trinitarias';
+
+  const wTrin = document.getElementById('warehouseTrinitarias');
+  const wTman = document.getElementById('warehouseTmania');
+  const wMori = document.getElementById('warehouseMorita');
+  const tmaniaNotice = document.getElementById('warehouseTmaniaNotice');
+
+  if (wTrin) wTrin.classList.toggle('selected', state.posWarehouse === 'barquisimeto_trinitarias');
+  if (wTman) wTman.classList.toggle('selected', state.posWarehouse === 'barquisimeto_tmania');
+  if (wMori) wMori.classList.toggle('selected', state.posWarehouse === 'maracay_la_morita');
+
+  if (tmaniaNotice) tmaniaNotice.style.display = (state.posWarehouse === 'barquisimeto_tmania') ? 'block' : 'none';
+
+  updateLiveCalculations();
+}
+
+function getWarehouseLabel(wh) {
+  if (wh === 'barquisimeto_tmania') return 'Bqto T-Mania';
+  if (wh === 'maracay_la_morita') return 'Maracay La Morita';
+  return 'Bqto Trinitarias';
+}
+
+function getWarehouseBadge(wh) {
+  if (wh === 'barquisimeto_tmania') {
+    return `<span class="warehouse-badge warehouse-badge-tmania">🛍️ T-Mania</span>`;
+  }
+  if (wh === 'maracay_la_morita') {
+    return `<span class="warehouse-badge warehouse-badge-morita">🏬 La Morita</span>`;
+  }
+  return `<span class="warehouse-badge warehouse-badge-trinitarias">🏪 Trinitarias</span>`;
+}
+
+// ==========================================================================
 // PLATAFORMAS DE VENTA (CANAL ONLINE VS TIENDA DIRECTA)
 // ==========================================================================
 function setSalesPlatform(platform) {
@@ -1385,6 +1430,25 @@ function updateLiveCalculations() {
     }
   }
 
+  // Warehouse T-Mania: 10% commission on any sale dispatched from Barquisimeto T-Mania
+  if (state.posWarehouse === 'barquisimeto_tmania') {
+    if (comisionTMania === 0) {
+      comisionTMania = subtotal * 0.10;
+      netoTienda -= comisionTMania;
+    }
+  }
+
+  // Warehouse T-Mania live breakdown
+  const tmLiveBreakdown = document.getElementById('tmaniaWarehouseLiveBreakdown');
+  if (tmLiveBreakdown) {
+    if (state.posWarehouse === 'barquisimeto_tmania' && subtotal > 0) {
+      const tmCommission = subtotal * 0.10;
+      tmLiveBreakdown.innerHTML = `Venta Subtotal: <strong>$${subtotal.toFixed(2)}</strong> | Comisión T-Mania (10% CXP): <span style="color: #7e22ce; font-weight: 700;">-$${tmCommission.toFixed(2)}</span> | Neto Restante: <strong style="color: #047857;">$${(subtotal - tmCommission).toFixed(2)}</strong>`;
+    } else {
+      tmLiveBreakdown.innerHTML = '';
+    }
+  }
+
   // Net Profit after wholesale cost AND additional commissions
   const finalProfit = (netoTienda - mayorCost) - addComms.total;
 
@@ -1394,6 +1458,8 @@ function updateLiveCalculations() {
   const totEl = document.getElementById('calcTotal');
   const mlCommRow = document.getElementById('calcPlatformCommRow');
   const mlCommTotalEl = document.getElementById('calcPlatformCommTotal');
+  const tmCommRow = document.getElementById('calcWarehouseTmaniaCommRow');
+  const tmCommTotalEl = document.getElementById('calcWarehouseTmaniaCommTotal');
   const addCommRow = document.getElementById('calcAdditionalCommRow');
   const addCommTotalEl = document.getElementById('calcAdditionalCommTotal');
   const btnRegisterLabel = document.getElementById('btnRegisterSaleLabel');
@@ -1401,6 +1467,16 @@ function updateLiveCalculations() {
   if (subEl) subEl.textContent = `$${subtotal.toFixed(2)}`;
   if (totEl) totEl.textContent = `$${subtotal.toFixed(2)}`;
   if (profEl) profEl.textContent = `$${finalProfit.toFixed(2)} (${subtotal > 0 ? ((finalProfit / subtotal) * 100).toFixed(1) : 0}%)`;
+
+  if (tmCommRow && tmCommTotalEl) {
+    if (state.posWarehouse === 'barquisimeto_tmania' && subtotal > 0) {
+      const tmAmt = subtotal * 0.10;
+      tmCommRow.style.display = 'flex';
+      tmCommTotalEl.textContent = `-$${tmAmt.toFixed(2)}`;
+    } else {
+      tmCommRow.style.display = 'none';
+    }
+  }
 
   if (mlCommRow && mlCommTotalEl) {
     if (comisionMercadoLibre > 0) {
@@ -1503,6 +1579,9 @@ function handleRegisterSaleDirect() {
   const comisionMercadoLibre = (plataforma === 'mercadolibre') ? (subtotal * 0.12) : 0;
   let netoTienda = subtotal - comisionMercadoLibre;
 
+  const almacen = state.posWarehouse || 'barquisimeto_trinitarias';
+  const almacenLabel = getWarehouseLabel(almacen);
+
   let creditSubtype = null;
   let creditSubtypeLabel = null;
   let vendedor = null;
@@ -1561,6 +1640,14 @@ function handleRegisterSaleDirect() {
     }
   }
 
+  // If sale is dispatched from Barquisimeto T-Mania, apply 10% T-Mania partner commission (generates CXP TMANIA)
+  if (almacen === 'barquisimeto_tmania') {
+    if (comisionTMania === 0) {
+      comisionTMania = subtotal * 0.10;
+      netoTienda -= comisionTMania;
+    }
+  }
+
   // Obtain salesperson for the sale
   if (isVendedor()) {
     vendedor = state.currentUser.sellerName || state.currentUser.fullName || state.currentUser.username;
@@ -1582,6 +1669,8 @@ function handleRegisterSaleDirect() {
     totalAmount: subtotal,
     totalMayor: mayorCost,
     totalProfit: finalProfit,
+    almacen: almacen,
+    almacenLabel: almacenLabel,
     plataforma: plataforma,
     plataformaLabel: getPlatformLabel(plataforma),
     paymentType: paymentType,
@@ -1648,6 +1737,7 @@ function resetPOSForm() {
   state.posSaleItems = [];
   renderPosSaleItems();
   setSalesPlatform('ninguna');
+  setSalesWarehouse('barquisimeto_trinitarias');
 
   document.getElementById('productSearchInput').value = '';
   document.getElementById('saleQtyInput').value = '1';
@@ -1844,6 +1934,17 @@ function handleCheckoutCart() {
     }
   }
 
+  const almacen = state.posWarehouse || 'barquisimeto_trinitarias';
+  const almacenLabel = getWarehouseLabel(almacen);
+
+  // If sale is dispatched from Barquisimeto T-Mania, apply 10% partner commission (generates CXP TMANIA)
+  if (almacen === 'barquisimeto_tmania') {
+    if (comisionTMania === 0) {
+      comisionTMania = total * 0.10;
+      netoTienda -= comisionTMania;
+    }
+  }
+
   // Obtain salesperson for the sale
   if (isVendedor()) {
     vendedor = state.currentUser.sellerName || state.currentUser.fullName || state.currentUser.username;
@@ -1864,6 +1965,8 @@ function handleCheckoutCart() {
     totalAmount: total,
     totalMayor: totalMayor,
     totalProfit: finalProfit,
+    almacen: almacen,
+    almacenLabel: almacenLabel,
     plataforma: state.posPlatform || 'ninguna',
     plataformaLabel: getPlatformLabel(state.posPlatform || 'ninguna'),
     paymentType: paymentType,
@@ -1963,6 +2066,14 @@ function renderHistory() {
     }
   }
 
+  // Filter by Warehouse
+  if (state.historyFilterWarehouse && state.historyFilterWarehouse !== 'all') {
+    filtered = filtered.filter(s => {
+      const wh = s.almacen || 'barquisimeto_trinitarias';
+      return wh === state.historyFilterWarehouse;
+    });
+  }
+
   const now = new Date();
   if (state.historyFilterDate === 'today') {
     const todayStr = now.toISOString().split('T')[0];
@@ -2003,6 +2114,8 @@ function renderHistory() {
     const isML = (sale.plataforma === 'mercadolibre') || sale.paymentType === 'contado_mercadolibre' || sale.paymentMethod === 'Contado - MercadoLibre';
     const platform = sale.plataforma || (isML ? 'mercadolibre' : 'ninguna');
     const platformBadge = getPlatformBadge(platform);
+    const wh = sale.almacen || 'barquisimeto_trinitarias';
+    const whBadge = getWarehouseBadge(wh);
     const isPaid = sale.creditStatus === 'PAGADO';
     const itemsPreview = sale.items.map(i => `${i.code} (x${i.quantity})`).join(', ');
     const firstImg = sale.items[0]?.image || 'images/placeholder.png';
@@ -2019,12 +2132,16 @@ function renderHistory() {
     }
 
     const mlComm = sale.comisionMercadoLibre !== undefined ? sale.comisionMercadoLibre : (platform === 'mercadolibre' ? (sale.totalAmount || 0) * 0.12 : 0);
+    const tmComm = sale.comisionTMania || 0;
 
     return `
       <tr>
         <td>
           <div style="font-weight: 700;">#${escapeHtml(sale.id)}</div>
           <div style="font-size: 0.75rem; color: #64748b;">${escapeHtml(sale.displayDate)}</div>
+        </td>
+        <td>
+          ${whBadge}
         </td>
         <td>
           <div style="display: flex; align-items: center; gap: 8px;">
@@ -2055,6 +2172,7 @@ function renderHistory() {
         <td>
           <div style="font-weight: 800; font-size: 1rem; color: #0f172a;">$${sale.totalAmount.toFixed(2)}</div>
           <div style="font-size: 0.72rem; color: #059669; font-weight: 600;">Ganancia Real: +$${(sale.totalProfit || 0).toFixed(2)}</div>
+          ${tmComm > 0 ? `<div style="font-size: 0.7rem; color: #7e22ce; font-weight: 600;">CXP T-Mania: -$${tmComm.toFixed(2)}</div>` : ''}
           ${mlComm > 0 ? `<div style="font-size: 0.7rem; color: #b45309; font-weight: 600;">CXP MercadoLibre: -$${mlComm.toFixed(2)}</div>` : ''}
           ${sale.additionalCommissionsTotal > 0 ? `<div style="font-size: 0.7rem; color: #b91c1c;">CXP Comis: -$${sale.additionalCommissionsTotal.toFixed(2)}</div>` : ''}
         </td>
@@ -2494,6 +2612,11 @@ function openEditSaleModal(saleId) {
     editPlatformSelect.value = curPlatform;
   }
 
+  const editWarehouseSelect = document.getElementById('editSaleWarehouseSelect');
+  if (editWarehouseSelect) {
+    editWarehouseSelect.value = currentEditingSale.almacen || 'barquisimeto_trinitarias';
+  }
+
   const editPaymentTypeSelect = document.getElementById('editPaymentTypeSelect');
   if (editPaymentTypeSelect) {
     editPaymentTypeSelect.value = isCredit ? 'credito' : 'contado';
@@ -2687,6 +2810,7 @@ function updateEditModalCalculations() {
 
   const editPlatform = document.getElementById('editSalePlatformSelect')?.value || 'ninguna';
   const isML = editPlatform === 'mercadolibre';
+  const editWarehouse = document.getElementById('editSaleWarehouseSelect')?.value || (currentEditingSale.almacen || 'barquisimeto_trinitarias');
 
   const paymentType = document.getElementById('editPaymentTypeSelect').value;
   const isCredit = paymentType === 'credito';
@@ -2714,6 +2838,14 @@ function updateEditModalCalculations() {
       netoTienda = totalAmount - (comisionCashea + comisionTMania + comisionMercadoLibre);
     } else if (subtype === 'jp') {
       netoTienda = totalAmount - comisionMercadoLibre;
+    }
+  }
+
+  // T-Mania Warehouse 10% partner commission
+  if (editWarehouse === 'barquisimeto_tmania') {
+    if (comisionTMania === 0) {
+      comisionTMania = totalAmount * 0.10;
+      netoTienda -= comisionTMania;
     }
   }
 
@@ -2802,6 +2934,7 @@ function saveEditedSale() {
   const isCredit = paymentType === 'credito';
   const editPlatform = document.getElementById('editSalePlatformSelect')?.value || 'ninguna';
   const isML = editPlatform === 'mercadolibre';
+  const editWarehouse = document.getElementById('editSaleWarehouseSelect')?.value || 'barquisimeto_trinitarias';
 
   if (isCredit && !clientName) {
     showToast('El nombre del cliente es obligatorio para ventas a crédito', 'danger');
@@ -2857,6 +2990,14 @@ function saveEditedSale() {
     }
   }
 
+  // T-Mania Partner Commission
+  if (editWarehouse === 'barquisimeto_tmania') {
+    if (comisionTMania === 0) {
+      comisionTMania = totalAmount * 0.10;
+      netoTienda -= comisionTMania;
+    }
+  }
+
   // Gather 3 additional commissions ($ USD)
   const addComms = [];
   let totalAddComms = 0;
@@ -2898,6 +3039,8 @@ function saveEditedSale() {
     clientName: clientName || 'Cliente General',
     clientPhone: (clientPhoneInput.value || '').trim(),
     notes: (notesInput.value || '').trim(),
+    almacen: editWarehouse,
+    almacenLabel: getWarehouseLabel(editWarehouse),
     plataforma: editPlatform,
     plataformaLabel: getPlatformLabel(editPlatform),
     paymentType: paymentType,
@@ -3534,6 +3677,10 @@ function showSaleTicketModal(sale) {
         <span>${escapeHtml(sale.displayDate)}</span>
       </div>
       <div class="ticket-row">
+        <span>Almacén:</span>
+        <strong>${escapeHtml(sale.almacenLabel || getWarehouseLabel(sale.almacen || 'barquisimeto_trinitarias'))}</strong>
+      </div>
+      <div class="ticket-row">
         <span>Cliente:</span>
         <strong>${escapeHtml(sale.clientName || 'General')}</strong>
       </div>
@@ -3839,6 +3986,7 @@ function exportSalesToCSV() {
   const headers = [
     'ID Venta',
     'Fecha',
+    'Almacén',
     'Cliente',
     'Teléfono',
     'Plataforma',
@@ -3870,6 +4018,7 @@ function exportSalesToCSV() {
     return [
       `"${s.id}"`,
       `"${s.displayDate}"`,
+      `"${getWarehouseLabel(s.almacen || 'barquisimeto_trinitarias')}"`,
       `"${s.clientName || 'General'}"`,
       `"${s.clientPhone || ''}"`,
       `"${getPlatformLabel(s.plataforma || (isML ? 'mercadolibre' : 'ninguna'))}"`,
@@ -5589,6 +5738,33 @@ function initEventListeners() {
     });
   });
 
+  document.querySelectorAll('[data-hist-warehouse]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('[data-hist-warehouse]').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      state.historyFilterWarehouse = chip.dataset.histWarehouse;
+      renderHistory();
+    });
+  });
+
+  document.querySelectorAll('[data-loan-status]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('[data-loan-status]').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      state.loansFilterStatus = chip.dataset.loanStatus;
+      renderLoansTab();
+    });
+  });
+
+  document.querySelectorAll('[data-loan-route]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('[data-loan-route]').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      state.loansFilterRoute = chip.dataset.loanRoute;
+      renderLoansTab();
+    });
+  });
+
   document.querySelectorAll('[data-hist-date]').forEach(chip => {
     chip.addEventListener('click', () => {
       document.querySelectorAll('[data-hist-date]').forEach(c => c.classList.remove('active'));
@@ -6975,26 +7151,63 @@ function recordInventoryMovement(movement) {
 // Stock Decrement on POS Sales
 function decrementStockForSale(saleRecord) {
   if (!saleRecord || !Array.isArray(saleRecord.items)) return;
+  const isTmaniaWarehouse = (saleRecord.almacen === 'barquisimeto_tmania');
+
   saleRecord.items.forEach(item => {
     const prod = (state.products || []).find(p => p.code === item.code);
     if (prod) {
       const currentStock = Number(prod.stock) || 0;
       const soldQty = Number(item.quantity) || 1;
-      const newStock = Math.max(0, currentStock - soldQty);
-      prod.stock = newStock;
-      if (newStock <= 0) {
-        prod.status = 'AGOTADO';
+
+      if (isTmaniaWarehouse) {
+        // Inventario Externo T-Mania:
+        // Se genera automáticamente un ingreso ("Mercancia Tmania") y un egreso
+        // para no afectar el stock de facturas de compra del negocio.
+        const intermediateStock = currentStock + soldQty;
+
+        // 1. Ingreso de la mercancía externa
+        recordInventoryMovement({
+          type: 'ENTRADA_CONSIGNACION',
+          productCode: prod.code,
+          productName: prod.description || prod.category || prod.code,
+          quantity: soldQty,
+          stockBefore: currentStock,
+          stockAfter: intermediateStock,
+          reference: 'Mercancia Tmania',
+          notes: `Ingreso automático stock externo T-Mania • Venta #${saleRecord.id}`
+        });
+
+        // 2. Egreso por la venta
+        recordInventoryMovement({
+          type: 'SALIDA_VENTA',
+          productCode: prod.code,
+          productName: prod.description || prod.category || prod.code,
+          quantity: soldQty,
+          stockBefore: intermediateStock,
+          stockAfter: currentStock,
+          reference: `Venta #${saleRecord.id} (T-Mania)`,
+          notes: `Cliente: ${saleRecord.clientName || 'General'} • Vendedor: ${saleRecord.vendedor || 'Tienda'}`
+        });
+
+        // El stock propio de facturas permanece intacto
+        prod.stock = currentStock;
+      } else {
+        const newStock = Math.max(0, currentStock - soldQty);
+        prod.stock = newStock;
+        if (newStock <= 0) {
+          prod.status = 'AGOTADO';
+        }
+        recordInventoryMovement({
+          type: 'SALIDA_VENTA',
+          productCode: prod.code,
+          productName: prod.description || prod.category || prod.code,
+          quantity: soldQty,
+          stockBefore: currentStock,
+          stockAfter: newStock,
+          reference: `Venta #${saleRecord.id}`,
+          notes: `Cliente: ${saleRecord.clientName || 'General'} • Vendedor: ${saleRecord.vendedor || 'Tienda'}`
+        });
       }
-      recordInventoryMovement({
-        type: 'SALIDA_VENTA',
-        productCode: prod.code,
-        productName: prod.description || prod.category || prod.code,
-        quantity: soldQty,
-        stockBefore: currentStock,
-        stockAfter: newStock,
-        reference: `Venta #${saleRecord.id}`,
-        notes: `Cliente: ${saleRecord.clientName || 'General'} • Vendedor: ${saleRecord.vendedor || 'Tienda'}`
-      });
     }
   });
   saveProductsToStorage();
@@ -7008,18 +7221,22 @@ function switchInventorySubTab(subtab) {
   const btnStock = document.getElementById('subtabInvStockBtn');
   const btnInvoices = document.getElementById('subtabInvInvoicesBtn');
   const btnMovements = document.getElementById('subtabInvMovementsBtn');
+  const btnLoans = document.getElementById('subtabInvLoansBtn');
 
   if (btnStock) btnStock.classList.toggle('active', subtab === 'stock');
   if (btnInvoices) btnInvoices.classList.toggle('active', subtab === 'invoices');
   if (btnMovements) btnMovements.classList.toggle('active', subtab === 'movements');
+  if (btnLoans) btnLoans.classList.toggle('active', subtab === 'loans');
 
   const secStock = document.getElementById('invStockSection');
   const secInvoices = document.getElementById('invInvoicesSection');
   const secMovements = document.getElementById('invMovementsSection');
+  const secLoans = document.getElementById('invLoansSection');
 
   if (secStock) secStock.style.display = subtab === 'stock' ? 'block' : 'none';
   if (secInvoices) secInvoices.style.display = subtab === 'invoices' ? 'block' : 'none';
   if (secMovements) secMovements.style.display = subtab === 'movements' ? 'block' : 'none';
+  if (secLoans) secLoans.style.display = subtab === 'loans' ? 'block' : 'none';
 
   if (subtab === 'stock') {
     renderInventoryStockTable();
@@ -7027,6 +7244,8 @@ function switchInventorySubTab(subtab) {
     renderInventoryInvoicesTable();
   } else if (subtab === 'movements') {
     renderInventoryMovementsTable();
+  } else if (subtab === 'loans') {
+    renderLoansTab();
   }
 }
 
@@ -7081,6 +7300,18 @@ function updateInventoryBadges() {
   const badge = document.getElementById('badgeInventoryStock');
   if (badge) {
     badge.textContent = `${totalUnits} un`;
+  }
+
+  const activeLoansCount = (state.loans || []).filter(l => l.status === 'PENDIENTE').length;
+  const badgeSubtab = document.getElementById('badgePendingLoansCount');
+  if (badgeSubtab) {
+    badgeSubtab.textContent = activeLoansCount;
+    badgeSubtab.style.display = activeLoansCount > 0 ? 'inline-block' : 'none';
+  }
+  const badgeNav = document.getElementById('badgeNavLoansCount');
+  if (badgeNav) {
+    badgeNav.textContent = activeLoansCount;
+    badgeNav.style.display = activeLoansCount > 0 ? 'inline-block' : 'none';
   }
 }
 
@@ -7377,10 +7608,22 @@ function renderInventoryMovementsTable() {
       typeBadge = '<span class="badge badge-success" style="font-size: 0.72rem;">📥 ENTRADA FACTURA</span>';
       qtyColor = '#059669';
       qtyPrefix = '+';
+    } else if (m.type === 'ENTRADA_CONSIGNACION') {
+      typeBadge = '<span class="badge" style="background: #faf5ff; color: #7e22ce; border: 1px solid #e9d5ff; font-size: 0.72rem;">🛍️ INGRESO T-MANIA</span>';
+      qtyColor = '#7e22ce';
+      qtyPrefix = '+';
     } else if (m.type === 'SALIDA_VENTA') {
       typeBadge = '<span class="badge badge-danger" style="font-size: 0.72rem;">📤 SALIDA VENTA</span>';
       qtyColor = '#dc2626';
       qtyPrefix = '-';
+    } else if (m.type === 'PRESTAMO_SALIDA') {
+      typeBadge = '<span class="badge" style="background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; font-size: 0.72rem;">🤝 PRÉSTAMO SALIDA</span>';
+      qtyColor = '#1d4ed8';
+      qtyPrefix = '-';
+    } else if (m.type === 'PRESTAMO_ENTRADA') {
+      typeBadge = '<span class="badge" style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; font-size: 0.72rem;">🤝 CONCILIACIÓN PRÉSTAMO</span>';
+      qtyColor = '#047857';
+      qtyPrefix = '+';
     } else if (m.type === 'AJUSTE_MANUAL') {
       typeBadge = '<span class="badge badge-warning" style="font-size: 0.72rem;">✏️ AJUSTE AUDITORÍA</span>';
       qtyColor = m.quantity >= 0 ? '#059669' : '#dc2626';
@@ -7413,6 +7656,564 @@ function renderInventoryMovementsTable() {
       </tr>
     `;
   }).join('');
+}
+
+// ==========================================================================
+// SECTION 4: MERCANCÍA EN PRÉSTAMO (INTER-ALMACENES) & CONCILIACIÓN
+// ==========================================================================
+
+function loadLoansFromStorage() {
+  try {
+    const saved = localStorage.getItem('cubitt_loans_v1');
+    if (saved) {
+      state.loans = JSON.parse(saved);
+    } else {
+      // Pre-seed with realistic demo loans between Trinitarias and T-Mania
+      state.loans = [
+        {
+          id: 'PRE-1001',
+          timestamp: new Date(Date.now() - 3600000 * 48).toISOString(),
+          displayDate: formatDateTime(new Date(Date.now() - 3600000 * 48)),
+          route: 'trinitarias_to_tmania',
+          originWarehouse: 'barquisimeto_trinitarias',
+          destWarehouse: 'barquisimeto_tmania',
+          productCode: 'CTHR-1',
+          productName: 'Reloj Inteligente C/ Conexión Bluetooth CTHR-1',
+          category: 'RELOJ INTELIGENTE C/ CONEXIÓN BLUETOOTH',
+          qty: 2,
+          unitPrice: 69.00,
+          totalValue: 138.00,
+          responsible: 'Carlos Pérez',
+          notes: 'Préstamo temporal para vitrina comercial en T-Mania',
+          status: 'PENDIENTE',
+          createdAt: new Date(Date.now() - 3600000 * 48).toISOString(),
+          reconciledAt: null,
+          reconciledBy: null,
+          reconcileType: null,
+          reconcileNotes: null
+        },
+        {
+          id: 'PRE-1002',
+          timestamp: new Date(Date.now() - 3600000 * 96).toISOString(),
+          displayDate: formatDateTime(new Date(Date.now() - 3600000 * 96)),
+          route: 'tmania_to_trinitarias',
+          originWarehouse: 'barquisimeto_tmania',
+          destWarehouse: 'barquisimeto_trinitarias',
+          productCode: 'CT-COF1',
+          productName: 'Termo Coffee Mug Color Negro Obsidiana CT-COF1',
+          category: 'TERMO PARA CAFÉ',
+          qty: 3,
+          unitPrice: 25.00,
+          totalValue: 75.00,
+          responsible: 'Ana Silva',
+          notes: 'Préstamo para pedido corporativo especial',
+          status: 'CONCILIADO',
+          createdAt: new Date(Date.now() - 3600000 * 96).toISOString(),
+          reconciledAt: new Date(Date.now() - 3600000 * 24).toISOString(),
+          reconciledBy: 'Gerencia Tienda',
+          reconcileType: 'DEVUELTO',
+          reconcileNotes: 'Mercancía devuelta completa y en perfecto estado al almacén de origen'
+        }
+      ];
+      saveLoansToStorage();
+    }
+  } catch (e) {
+    console.error('Error loading loans from storage:', e);
+    state.loans = [];
+  }
+}
+
+function saveLoansToStorage() {
+  try {
+    safeStorageSet('cubitt_loans_v1', JSON.stringify(state.loans || []));
+  } catch (e) {
+    console.error('Error saving loans to storage:', e);
+  }
+}
+
+function generateLoanId() {
+  let maxId = 1000;
+  if (state.loans && state.loans.length > 0) {
+    state.loans.forEach(l => {
+      if (l.id && typeof l.id === 'string' && l.id.startsWith('PRE-')) {
+        const num = parseInt(l.id.replace('PRE-', ''), 10);
+        if (!isNaN(num) && num > maxId) maxId = num;
+      }
+    });
+  }
+  return `PRE-${maxId + 1}`;
+}
+
+function selectLoanRoute(route) {
+  const hiddenInput = document.getElementById('loanRouteType');
+  if (hiddenInput) hiddenInput.value = route;
+
+  const cardTrin = document.getElementById('routeCardTrinToTman');
+  const cardTman = document.getElementById('routeCardTmanToTrin');
+  const cardCustom = document.getElementById('routeCardCustom');
+  const customRow = document.getElementById('loanCustomRouteRow');
+
+  if (cardTrin) cardTrin.classList.toggle('selected', route === 'trinitarias_to_tmania');
+  if (cardTman) cardTman.classList.toggle('selected', route === 'tmania_to_trinitarias');
+  if (cardCustom) cardCustom.classList.toggle('selected', route === 'otro');
+
+  if (customRow) {
+    customRow.style.display = (route === 'otro') ? 'grid' : 'none';
+  }
+}
+
+function openCreateLoanModal() {
+  const modal = document.getElementById('createLoanModal');
+  if (!modal) return;
+
+  // Set date to now
+  const dateInput = document.getElementById('loanDateInput');
+  if (dateInput) {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60000;
+    dateInput.value = (new Date(now.getTime() - offset)).toISOString().slice(0, 16);
+  }
+
+  // Populate product select
+  const prodSelect = document.getElementById('loanProductSelect');
+  if (prodSelect) {
+    prodSelect.innerHTML = `<option value="">-- Seleccionar Producto del Catálogo --</option>` +
+      (state.products || []).map(p => `
+        <option value="${p.code}">${p.code} - ${p.description || p.category} ($${(p.pvpActual || p.pvpTienda || p.costo || 0).toFixed(2)})</option>
+      `).join('');
+  }
+
+  // Reset fields
+  selectLoanRoute('trinitarias_to_tmania');
+  const qtyInput = document.getElementById('loanQuantityInput');
+  if (qtyInput) qtyInput.value = '1';
+  const valInput = document.getElementById('loanUnitValueInput');
+  if (valInput) valInput.value = '0.00';
+  const respInput = document.getElementById('loanResponsibleInput');
+  if (respInput) respInput.value = isVendedor() ? (state.currentUser?.fullName || state.currentUser?.username || '') : '';
+  const notesInput = document.getElementById('loanNotesInput');
+  if (notesInput) notesInput.value = '';
+
+  updateLoanTotalCalc();
+  modal.classList.add('active');
+}
+
+function closeCreateLoanModal() {
+  const modal = document.getElementById('createLoanModal');
+  if (modal) modal.classList.remove('active');
+}
+
+function handleLoanProductSelect(code) {
+  const prod = (state.products || []).find(p => p.code === code);
+  const valInput = document.getElementById('loanUnitValueInput');
+  if (prod && valInput) {
+    valInput.value = (prod.pvpActual || prod.pvpTienda || prod.costo || 0).toFixed(2);
+  }
+  updateLoanTotalCalc();
+}
+
+function updateLoanTotalCalc() {
+  const qty = parseInt(document.getElementById('loanQuantityInput')?.value) || 1;
+  const unitVal = parseFloat(document.getElementById('loanUnitValueInput')?.value) || 0;
+  const total = qty * unitVal;
+  const display = document.getElementById('loanTotalValueDisplay');
+  if (display) {
+    display.textContent = `$${total.toFixed(2)}`;
+  }
+}
+
+function handleCreateLoan() {
+  const prodCode = document.getElementById('loanProductSelect')?.value;
+  if (!prodCode) {
+    showToast('Seleccione un producto para registrar el préstamo', 'danger');
+    document.getElementById('loanProductSelect')?.focus();
+    return;
+  }
+
+  const qty = parseInt(document.getElementById('loanQuantityInput')?.value) || 0;
+  if (qty <= 0) {
+    showToast('Ingrese una cantidad válida mayor a cero', 'danger');
+    document.getElementById('loanQuantityInput')?.focus();
+    return;
+  }
+
+  const unitVal = parseFloat(document.getElementById('loanUnitValueInput')?.value) || 0;
+  const totalVal = qty * unitVal;
+  const routeType = document.getElementById('loanRouteType')?.value || 'trinitarias_to_tmania';
+
+  let originWh = 'barquisimeto_trinitarias';
+  let destWh = 'barquisimeto_tmania';
+
+  if (routeType === 'tmania_to_trinitarias') {
+    originWh = 'barquisimeto_tmania';
+    destWh = 'barquisimeto_trinitarias';
+  } else if (routeType === 'otro') {
+    originWh = document.getElementById('loanOriginSelect')?.value || 'barquisimeto_trinitarias';
+    destWh = document.getElementById('loanDestinationSelect')?.value || 'barquisimeto_tmania';
+  }
+
+  if (originWh === destWh) {
+    showToast('El almacén de origen y destino no pueden ser el mismo', 'danger');
+    return;
+  }
+
+  const prod = (state.products || []).find(p => p.code === prodCode);
+  const productName = prod ? (prod.description || prod.category || prod.code) : prodCode;
+  const category = prod ? (prod.category || '') : '';
+
+  const dateVal = document.getElementById('loanDateInput')?.value;
+  const loanDate = dateVal ? new Date(dateVal) : new Date();
+  const responsible = (document.getElementById('loanResponsibleInput')?.value || '').trim() || (state.currentUser?.fullName || 'Encargado');
+  const notes = (document.getElementById('loanNotesInput')?.value || '').trim();
+
+  const newLoan = {
+    id: generateLoanId(),
+    timestamp: loanDate.toISOString(),
+    displayDate: formatDateTime(loanDate),
+    route: routeType,
+    originWarehouse: originWh,
+    destWarehouse: destWh,
+    productCode: prodCode,
+    productName: productName,
+    category: category,
+    qty: qty,
+    unitPrice: unitVal,
+    totalValue: totalVal,
+    responsible: responsible,
+    notes: notes,
+    status: 'PENDIENTE',
+    createdAt: new Date().toISOString(),
+    reconciledAt: null,
+    reconciledBy: null,
+    reconcileType: null,
+    reconcileNotes: null
+  };
+
+  state.loans.unshift(newLoan);
+  saveLoansToStorage();
+
+  // Registrar movimiento en kardex de inventario
+  const originLabel = getWarehouseLabel(originWh);
+  const destLabel = getWarehouseLabel(destWh);
+  recordInventoryMovement({
+    type: 'PRESTAMO_SALIDA',
+    productCode: prodCode,
+    productName: productName,
+    quantity: qty,
+    stockBefore: prod ? (prod.stock || 0) : 0,
+    stockAfter: prod ? (prod.stock || 0) : 0,
+    reference: `Préstamo #${newLoan.id}`,
+    notes: `Traslado: ${originLabel} ➔ ${destLabel} • Resp: ${responsible}`
+  });
+
+  closeCreateLoanModal();
+  renderLoansTab();
+  showToast(`¡Préstamo #${newLoan.id} registrado con éxito!`, 'success');
+}
+
+// Reconcile Loan Modal & Logic
+function openReconcileLoanModal(loanId) {
+  const loan = (state.loans || []).find(l => l.id === loanId);
+  if (!loan) return;
+
+  const modal = document.getElementById('reconcileLoanModal');
+  if (!modal) return;
+
+  document.getElementById('reconcileLoanId').value = loan.id;
+
+  const card = document.getElementById('reconcileLoanSummaryCard');
+  if (card) {
+    const routeHtml = getLoanRouteBadge(loan);
+    card.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <span style="font-weight: 800; font-size: 0.95rem; color: #1e293b;">#${escapeHtml(loan.id)}</span>
+        ${routeHtml}
+      </div>
+      <div style="font-weight: 700; color: #0f172a; font-size: 0.92rem; margin-bottom: 4px;">
+        ${escapeHtml(loan.productName)}
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #64748b; margin-top: 4px;">
+        <span>Cantidad: <strong style="color: #0f172a;">${loan.qty} unidades</strong></span>
+        <span>Valor Estimado: <strong style="color: #0284c7;">$${Number(loan.totalValue || 0).toFixed(2)}</strong></span>
+      </div>
+      <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">
+        Fecha Registro: ${escapeHtml(loan.displayDate)} • Resp: ${escapeHtml(loan.responsible || 'N/A')}
+      </div>
+      ${loan.notes ? `<div style="font-size: 0.75rem; color: #475569; margin-top: 4px; font-style: italic;">"${escapeHtml(loan.notes)}"</div>` : ''}
+    `;
+  }
+
+  const dateInput = document.getElementById('reconcileDateInput');
+  if (dateInput) {
+    dateInput.value = new Date().toISOString().split('T')[0];
+  }
+
+  const respInput = document.getElementById('reconcileResponsibleInput');
+  if (respInput) {
+    respInput.value = state.currentUser?.fullName || state.currentUser?.username || '';
+  }
+
+  const notesInput = document.getElementById('reconcileNotesInput');
+  if (notesInput) notesInput.value = '';
+
+  modal.classList.add('active');
+}
+
+function closeReconcileLoanModal() {
+  const modal = document.getElementById('reconcileLoanModal');
+  if (modal) modal.classList.remove('active');
+}
+
+function handleConfirmReconcileLoan() {
+  const loanId = document.getElementById('reconcileLoanId')?.value;
+  const loan = (state.loans || []).find(l => l.id === loanId);
+  if (!loan) return;
+
+  const recType = document.getElementById('reconcileTypeSelect')?.value || 'DEVUELTO';
+  const recDate = document.getElementById('reconcileDateInput')?.value || new Date().toISOString().split('T')[0];
+  const recResp = (document.getElementById('reconcileResponsibleInput')?.value || '').trim() || (state.currentUser?.fullName || 'Gerencia');
+  const recNotes = (document.getElementById('reconcileNotesInput')?.value || '').trim();
+
+  loan.status = 'CONCILIADO';
+  loan.reconciledAt = new Date().toISOString();
+  loan.reconciledBy = recResp;
+  loan.reconcileType = recType;
+  loan.reconcileNotes = recNotes;
+
+  saveLoansToStorage();
+
+  // Registrar movimiento de retorno / resolución en kardex
+  let typeLabel = 'Devolución física al origen';
+  if (recType === 'VENDIDO_LIQUIDADO') typeLabel = 'Venta liquidada';
+  if (recType === 'COMPENSADO') typeLabel = 'Compensación de saldo';
+
+  const prod = (state.products || []).find(p => p.code === loan.productCode);
+  recordInventoryMovement({
+    type: 'PRESTAMO_ENTRADA',
+    productCode: loan.productCode,
+    productName: loan.productName,
+    quantity: loan.qty,
+    stockBefore: prod ? (prod.stock || 0) : 0,
+    stockAfter: prod ? (prod.stock || 0) : 0,
+    reference: `Conciliación #${loan.id}`,
+    notes: `${typeLabel} • ${recNotes || 'Sin notas adicionales'} • Resp: ${recResp}`
+  });
+
+  closeReconcileLoanModal();
+  renderLoansTab();
+  showToast(`¡Préstamo #${loan.id} conciliado exitosamente!`, 'success');
+}
+
+function deleteLoan(loanId) {
+  if (!confirm(`¿Estás seguro de eliminar el registro de préstamo #${loanId}?`)) return;
+  state.loans = (state.loans || []).filter(l => l.id !== loanId);
+  saveLoansToStorage();
+  renderLoansTab();
+  showToast(`Préstamo #${loanId} eliminado`, 'info');
+}
+
+function handleLoansSearch(query) {
+  state.loansSearchQuery = query || '';
+  renderLoansTab();
+}
+
+function getLoanRouteBadge(loan) {
+  if (loan.route === 'trinitarias_to_tmania') {
+    return `<span class="loan-route-badge loan-route-trinitarias-tmania">Trinitarias ➔ T-Mania</span>`;
+  }
+  if (loan.route === 'tmania_to_trinitarias') {
+    return `<span class="loan-route-badge loan-route-tmania-trinitarias">T-Mania ➔ Trinitarias</span>`;
+  }
+  const orig = getWarehouseLabel(loan.originWarehouse || '');
+  const dest = getWarehouseLabel(loan.destWarehouse || '');
+  return `<span class="loan-route-badge loan-route-otro">${orig} ➔ ${dest}</span>`;
+}
+
+function renderLoansTab() {
+  const tbody = document.getElementById('loansTableBody');
+  const emptyState = document.getElementById('loansEmptyState');
+  const loans = state.loans || [];
+
+  // Calculate Metrics
+  const activeLoans = loans.filter(l => l.status === 'PENDIENTE');
+  const activeUnits = activeLoans.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+  const activeValue = activeLoans.reduce((sum, l) => sum + (Number(l.totalValue) || 0), 0);
+
+  const trinToTmanUnits = activeLoans
+    .filter(l => l.route === 'trinitarias_to_tmania' || (l.originWarehouse === 'barquisimeto_trinitarias' && l.destWarehouse === 'barquisimeto_tmania'))
+    .reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+
+  const tmanToTrinUnits = activeLoans
+    .filter(l => l.route === 'tmania_to_trinitarias' || (l.originWarehouse === 'barquisimeto_tmania' && l.destWarehouse === 'barquisimeto_trinitarias'))
+    .reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+
+  // Update Metric Cards UI
+  const elActive = document.getElementById('loanMetricActiveCount');
+  const elUnits = document.getElementById('loanMetricUnitsPending');
+  const elVal = document.getElementById('loanMetricValuePending');
+  const elTrin = document.getElementById('loanMetricTrinitariasToTmania');
+  const elTman = document.getElementById('loanMetricTmaniaToTrinitarias');
+
+  if (elActive) elActive.textContent = activeLoans.length;
+  if (elUnits) elUnits.textContent = `${activeUnits} unds`;
+  if (elVal) elVal.textContent = `Valor: $${activeValue.toFixed(2)}`;
+  if (elTrin) elTrin.textContent = `${trinToTmanUnits} unds`;
+  if (elTman) elTman.textContent = `${tmanToTrinUnits} unds`;
+
+  // Update Subtab and Nav Badges
+  const badgeSubtab = document.getElementById('badgePendingLoansCount');
+  if (badgeSubtab) {
+    if (activeLoans.length > 0) {
+      badgeSubtab.style.display = 'inline-block';
+      badgeSubtab.textContent = activeLoans.length;
+    } else {
+      badgeSubtab.style.display = 'none';
+    }
+  }
+
+  const badgeNav = document.getElementById('badgeNavLoansCount');
+  if (badgeNav) {
+    badgeNav.textContent = activeLoans.length;
+    badgeNav.style.display = activeLoans.length > 0 ? 'inline-block' : 'none';
+  }
+
+  if (!tbody) return;
+
+  // Filter Loans
+  let filtered = [...loans];
+
+  if (state.loansFilterStatus && state.loansFilterStatus !== 'all') {
+    filtered = filtered.filter(l => l.status === state.loansFilterStatus);
+  }
+
+  if (state.loansFilterRoute && state.loansFilterRoute !== 'all') {
+    if (state.loansFilterRoute === 'otro') {
+      filtered = filtered.filter(l => l.route !== 'trinitarias_to_tmania' && l.route !== 'tmania_to_trinitarias');
+    } else {
+      filtered = filtered.filter(l => l.route === state.loansFilterRoute);
+    }
+  }
+
+  if (state.loansSearchQuery) {
+    const q = state.loansSearchQuery.toLowerCase();
+    filtered = filtered.filter(l => {
+      const matchId = (l.id || '').toLowerCase().includes(q);
+      const matchCode = (l.productCode || '').toLowerCase().includes(q);
+      const matchName = (l.productName || '').toLowerCase().includes(q);
+      const matchResp = (l.responsible || '').toLowerCase().includes(q);
+      const matchNotes = (l.notes || '').toLowerCase().includes(q);
+      return matchId || matchCode || matchName || matchResp || matchNotes;
+    });
+  }
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'block';
+    return;
+  }
+
+  if (emptyState) emptyState.style.display = 'none';
+
+  tbody.innerHTML = filtered.map(loan => {
+    const isPending = loan.status === 'PENDIENTE';
+    const statusBadge = isPending
+      ? `<span class="badge badge-warning" style="background: #fef3c7; color: #92400e; border: 1px solid #fde68a;">🟡 PENDIENTE</span>`
+      : `<span class="badge badge-success" style="background: #dcfce7; color: #166534; border: 1px solid #bbf7d0;">✅ CONCILIADO</span>`;
+
+    const routeBadge = getLoanRouteBadge(loan);
+
+    return `
+      <tr>
+        <td>
+          <div style="font-weight: 800; font-size: 0.92rem; color: #0f172a;">#${escapeHtml(loan.id)}</div>
+          <div style="font-size: 0.72rem; color: #64748b;">${escapeHtml(loan.displayDate || '')}</div>
+        </td>
+        <td>
+          ${routeBadge}
+        </td>
+        <td>
+          <div style="font-weight: 700; color: #0f172a; font-size: 0.88rem;">${escapeHtml(loan.productName)}</div>
+          <div style="font-size: 0.72rem; color: #64748b; font-family: monospace;">${escapeHtml(loan.productCode)}</div>
+          ${loan.notes ? `<div style="font-size: 0.72rem; color: #475569; font-style: italic; margin-top: 2px;">"${escapeHtml(loan.notes)}"</div>` : ''}
+        </td>
+        <td>
+          <span style="font-weight: 800; font-size: 0.95rem; color: #1e293b;">
+            ${loan.qty} unds
+          </span>
+        </td>
+        <td>
+          <div style="font-weight: 800; color: #0284c7; font-size: 0.92rem;">
+            $${Number(loan.totalValue || 0).toFixed(2)}
+          </div>
+          <div style="font-size: 0.70rem; color: #64748b;">$${Number(loan.unitPrice || 0).toFixed(2)} c/u</div>
+        </td>
+        <td>
+          <div style="font-weight: 600; color: #1e293b; font-size: 0.82rem;">${escapeHtml(loan.responsible || 'N/A')}</div>
+        </td>
+        <td>
+          ${statusBadge}
+          ${!isPending && loan.reconciledAt ? `
+            <div style="font-size: 0.70rem; color: #166534; margin-top: 2px;">
+              ${escapeHtml(loan.reconcileType || 'Conciliado')} • ${escapeHtml(loan.reconciledBy || '')}
+            </div>
+          ` : ''}
+        </td>
+        <td>
+          <div style="display: flex; gap: 6px;">
+            ${isPending ? `
+              <button class="btn btn-success btn-sm" onclick="openReconcileLoanModal('${loan.id}')" title="Conciliar Préstamo">
+                ✅ Conciliar
+              </button>
+            ` : ''}
+            <button class="btn btn-outline btn-sm" onclick="deleteLoan('${loan.id}')" style="color: #ef4444; border-color: #fee2e2;" title="Eliminar Registro">
+              🗑️
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function exportLoansToCSV() {
+  const loans = state.loans || [];
+  if (loans.length === 0) {
+    showToast('No hay préstamos para exportar', 'warning');
+    return;
+  }
+
+  const headers = ['ID', 'Fecha', 'Ruta', 'Origen', 'Destino', 'Codigo_Producto', 'Producto', 'Cantidad', 'Valor_Unitario_USD', 'Total_Valor_USD', 'Responsable', 'Estado', 'Notas', 'Tipo_Conciliacion', 'Fecha_Conciliacion', 'Responsable_Conciliacion'];
+
+  const rows = loans.map(l => [
+    `"${l.id || ''}"`,
+    `"${l.displayDate || ''}"`,
+    `"${l.route || ''}"`,
+    `"${getWarehouseLabel(l.originWarehouse || '')}"`,
+    `"${getWarehouseLabel(l.destWarehouse || '')}"`,
+    `"${l.productCode || ''}"`,
+    `"${(l.productName || '').replace(/"/g, '""')}"`,
+    l.qty || 0,
+    (l.unitPrice || 0).toFixed(2),
+    (l.totalValue || 0).toFixed(2),
+    `"${(l.responsible || '').replace(/"/g, '""')}"`,
+    `"${l.status || ''}"`,
+    `"${(l.notes || '').replace(/"/g, '""')}"`,
+    `"${(l.reconcileType || '').replace(/"/g, '""')}"`,
+    `"${l.reconciledAt ? formatDateTime(new Date(l.reconciledAt)) : ''}"`,
+    `"${(l.reconciledBy || '').replace(/"/g, '""')}"`
+  ]);
+
+  const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Prestamos_Mercancia_Cubitt_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Archivo CSV de Préstamos descargado con éxito', 'success');
 }
 
 // Quick Stock Adjustment Modal
