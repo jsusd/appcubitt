@@ -17,6 +17,9 @@ const state = {
   editingSale: null,
   creditSubtype: 'cashea_bull', // 'cashea_bull', 'cashea_tmania', 'jp'
   activeTab: 'pos', // 'pos', 'history', 'credits', 'payables', 'catalog', 'clients'
+  posPlatform: 'ninguna', // 'ninguna', 'mercadolibre', 'facebook_marketplace'
+  posSaleItems: [], // Multi-product items in current POS sale: [{ code, description, category, image, quantity, unitPrice, mayor, subtotal }]
+  historyFilterPlatform: 'all', // 'all', 'ninguna', 'mercadolibre', 'facebook_marketplace', 'online_all'
   historyFilterType: 'all', // 'all', 'contado', 'cashea_bull', 'cashea_tmania', 'jp'
   historyFilterCreditStatus: 'all', // 'all', 'pendiente', 'pagado'
   historyFilterDate: 'all', // 'all', 'today', 'week', 'month'
@@ -498,8 +501,8 @@ function syncPayablesForSale(saleRecord) {
     });
   }
 
-  // 5. Comisión MercadoLibre 12% (Contado - MercadoLibre)
-  const isML = saleRecord.paymentType === 'contado_mercadolibre' || saleRecord.paymentMethod === 'Contado - MercadoLibre';
+  // 5. Comisión MercadoLibre 12% (Plataforma MercadoLibre o legado)
+  const isML = (saleRecord.plataforma === 'mercadolibre') || saleRecord.paymentType === 'contado_mercadolibre' || saleRecord.paymentMethod === 'Contado - MercadoLibre';
   const mlCommission = (saleRecord.comisionMercadoLibre !== undefined && saleRecord.comisionMercadoLibre > 0)
     ? saleRecord.comisionMercadoLibre
     : (isML ? (saleRecord.totalAmount || 0) * 0.12 : 0);
@@ -943,6 +946,200 @@ function switchPreviewImage(src, el, idx) {
   }
 }
 
+// ==========================================================================
+// PLATAFORMAS DE VENTA (CANAL ONLINE VS TIENDA DIRECTA)
+// ==========================================================================
+function setSalesPlatform(platform) {
+  if (platform === 'facebook') platform = 'facebook_marketplace';
+  state.posPlatform = platform || 'ninguna';
+
+  const pNone = document.getElementById('platformNone');
+  const pML = document.getElementById('platformMercadoLibre');
+  const pFB = document.getElementById('platformFacebook');
+  const mlNotice = document.getElementById('platformMercadoLibreNotice');
+  const fbNotice = document.getElementById('platformFacebookNotice');
+
+  if (pNone) pNone.classList.toggle('selected', state.posPlatform === 'ninguna');
+  if (pML) pML.classList.toggle('selected', state.posPlatform === 'mercadolibre');
+  if (pFB) pFB.classList.toggle('selected', state.posPlatform === 'facebook_marketplace');
+
+  if (mlNotice) mlNotice.style.display = (state.posPlatform === 'mercadolibre') ? 'block' : 'none';
+  if (fbNotice) fbNotice.style.display = (state.posPlatform === 'facebook_marketplace') ? 'block' : 'none';
+
+  updateLiveCalculations();
+}
+
+function getPlatformLabel(platform) {
+  if (platform === 'mercadolibre') return 'MercadoLibre';
+  if (platform === 'facebook_marketplace' || platform === 'facebook') return 'FB Marketplace';
+  return 'Tienda / Directa';
+}
+
+function getPlatformBadge(platform) {
+  if (platform === 'mercadolibre') {
+    return `<span class="platform-badge platform-badge-ml">🛍️ MercadoLibre</span>`;
+  }
+  if (platform === 'facebook_marketplace' || platform === 'facebook') {
+    return `<span class="platform-badge platform-badge-fb">🔵 FB Marketplace</span>`;
+  }
+  return `<span class="platform-badge platform-badge-none">🏪 Tienda</span>`;
+}
+
+// ==========================================================================
+// POS MULTI-PRODUCT CART / SALE ITEMS INGESTION
+// ==========================================================================
+function handleAddProductToSale() {
+  if (!state.selectedProduct) {
+    showToast('Seleccione un producto por código o búsqueda primero', 'danger');
+    document.getElementById('productSearchInput')?.focus();
+    return;
+  }
+
+  const qtyInput = document.getElementById('saleQtyInput');
+  const priceInput = document.getElementById('salePriceInput');
+  const qty = parseInt(qtyInput?.value) || 1;
+  const unitPrice = parseFloat(priceInput?.value);
+
+  if (isNaN(unitPrice) || unitPrice < 0) {
+    showToast('Ingrese un precio de venta unitario válido', 'danger');
+    priceInput?.focus();
+    return;
+  }
+
+  const prod = state.selectedProduct;
+  const existingIdx = state.posSaleItems.findIndex(i => i.code === prod.code);
+  if (existingIdx >= 0) {
+    state.posSaleItems[existingIdx].quantity += qty;
+    state.posSaleItems[existingIdx].unitPrice = unitPrice;
+    state.posSaleItems[existingIdx].subtotal = state.posSaleItems[existingIdx].quantity * unitPrice;
+    showToast(`Se agregaron ${qty} und más de ${prod.code}`, 'info');
+  } else {
+    state.posSaleItems.push({
+      code: prod.code,
+      description: prod.description || prod.category || prod.code,
+      category: prod.category || '',
+      image: prod.image || (Array.isArray(prod.images) ? prod.images[0] : '') || '',
+      quantity: qty,
+      unitPrice: unitPrice,
+      mayor: prod.mayor !== undefined ? prod.mayor : (prod.costo || 0),
+      subtotal: qty * unitPrice
+    });
+    showToast(`${qty}x ${prod.code} agregado a la venta`, 'success');
+  }
+
+  // Clear single-product inputs
+  state.selectedProduct = null;
+  const searchInput = document.getElementById('productSearchInput');
+  if (searchInput) searchInput.value = '';
+  if (qtyInput) qtyInput.value = '1';
+  if (priceInput) priceInput.value = '';
+  const clearBtn = document.getElementById('clearSearchBtn');
+  if (clearBtn) clearBtn.classList.remove('visible');
+
+  const previewBox = document.getElementById('productPreviewBox');
+  if (previewBox) {
+    previewBox.innerHTML = `
+      <div class="no-product-selected">
+        <div class="no-product-icon">
+          <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"/>
+          </svg>
+        </div>
+        <p style="font-weight: 600;">Escribe o selecciona un código de producto</p>
+        <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 4px;">Ejemplos: <strong>CTHR-1</strong>, <strong>CT-COF1</strong>, <strong>CT-PWANC1</strong></p>
+      </div>
+    `;
+  }
+
+  renderPosSaleItems();
+  updateLiveCalculations();
+}
+
+function renderPosSaleItems() {
+  const tbody = document.getElementById('posSaleItemsTableBody');
+  const tableWrap = document.getElementById('posSaleItemsTableWrap');
+  const emptyNotice = document.getElementById('posSaleItemsEmptyNotice');
+  const countBadge = document.getElementById('posSaleItemsCountBadge');
+  const clearBtn = document.getElementById('btnPosClearItems');
+
+  const count = state.posSaleItems.length;
+  const totalUnits = state.posSaleItems.reduce((acc, item) => acc + item.quantity, 0);
+
+  if (countBadge) {
+    countBadge.textContent = count === 0 ? '0 productos' : `${count} prod. (${totalUnits} und)`;
+  }
+
+  if (count === 0) {
+    if (tableWrap) tableWrap.style.display = 'none';
+    if (emptyNotice) emptyNotice.style.display = 'block';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (tbody) tbody.innerHTML = '';
+    return;
+  }
+
+  if (tableWrap) tableWrap.style.display = 'block';
+  if (emptyNotice) emptyNotice.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'inline-flex';
+
+  if (!tbody) return;
+
+  tbody.innerHTML = state.posSaleItems.map((item, idx) => `
+    <tr class="pos-sale-item-row">
+      <td>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <img src="${item.image || 'images/placeholder.png'}" class="pos-item-thumb" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'36\\' height=\\'36\\' fill=\\'%23f1f5f9\\' viewBox=\\'0 0 24 24\\'><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' font-size=\\'7\\'>Cubitt</text></svg>'">
+          <div style="min-width: 0;">
+            <div style="font-weight: 700; font-size: 0.84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;" title="${escapeHtml(item.description || item.code)}">${escapeHtml(item.description || item.code)}</div>
+            <div style="font-size: 0.72rem; color: #64748b;">${escapeHtml(item.code)} • ${escapeHtml(item.category || '')}</div>
+          </div>
+        </div>
+      </td>
+      <td style="text-align: center;">
+        <div style="display: inline-flex; align-items: center; gap: 4px;">
+          <button type="button" class="pos-item-stepper-btn" onclick="handlePosItemQtyChange(${idx}, -1)">−</button>
+          <span style="font-weight: 700; min-width: 22px; text-align: center;">${item.quantity}</span>
+          <button type="button" class="pos-item-stepper-btn" onclick="handlePosItemQtyChange(${idx}, 1)">+</button>
+        </div>
+      </td>
+      <td style="text-align: right; font-weight: 600;">
+        $${item.unitPrice.toFixed(2)}
+      </td>
+      <td style="text-align: right; font-weight: 800; color: #0f172a;">
+        $${item.subtotal.toFixed(2)}
+      </td>
+      <td style="text-align: center;">
+        <button type="button" class="pos-item-delete-btn" onclick="removePosSaleItem(${idx})" title="Quitar producto">&times;</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function handlePosItemQtyChange(idx, delta) {
+  if (!state.posSaleItems[idx]) return;
+  const newQty = state.posSaleItems[idx].quantity + delta;
+  if (newQty <= 0) {
+    removePosSaleItem(idx);
+    return;
+  }
+  state.posSaleItems[idx].quantity = newQty;
+  state.posSaleItems[idx].subtotal = newQty * state.posSaleItems[idx].unitPrice;
+  renderPosSaleItems();
+  updateLiveCalculations();
+}
+
+function removePosSaleItem(idx) {
+  if (!state.posSaleItems[idx]) return;
+  state.posSaleItems.splice(idx, 1);
+  renderPosSaleItems();
+  updateLiveCalculations();
+}
+
+function clearPosSaleItems() {
+  state.posSaleItems = [];
+  renderPosSaleItems();
+  updateLiveCalculations();
+}
+
 // Payment Modality and Credit Subtypes
 function getSelectedPaymentType() {
   const sel = document.querySelector('.payment-type-card.selected');
@@ -950,36 +1147,25 @@ function getSelectedPaymentType() {
 }
 
 function setPaymentType(type) {
+  if (type === 'contado_mercadolibre') {
+    type = 'contado';
+    setSalesPlatform('mercadolibre');
+  }
+
   document.querySelectorAll('.payment-type-card').forEach(card => {
     card.classList.toggle('selected', card.dataset.type === type);
   });
 
   const contadoPanel = document.getElementById('contadoPanel');
-  const mercadolibrePanel = document.getElementById('mercadolibrePanel');
   const creditoPanel = document.getElementById('creditoPanel');
   const condContainer = document.getElementById('conditionalPaymentPanel');
 
   if (type === 'contado') {
     if (contadoPanel) contadoPanel.style.display = 'block';
-    if (mercadolibrePanel) mercadolibrePanel.style.display = 'none';
     if (creditoPanel) creditoPanel.style.display = 'none';
     if (condContainer) condContainer.classList.remove('credito-active');
-    const methodSelect = document.getElementById('paymentMethodSelect');
-    if (methodSelect && methodSelect.value === 'Contado - MercadoLibre') {
-      methodSelect.value = 'Efectivo ($ USD)';
-    }
-  } else if (type === 'contado_mercadolibre') {
-    if (contadoPanel) contadoPanel.style.display = 'none';
-    if (mercadolibrePanel) mercadolibrePanel.style.display = 'block';
-    if (creditoPanel) creditoPanel.style.display = 'none';
-    if (condContainer) condContainer.classList.remove('credito-active');
-    const methodSelect = document.getElementById('paymentMethodSelect');
-    if (methodSelect) {
-      methodSelect.value = 'Contado - MercadoLibre';
-    }
   } else {
     if (contadoPanel) contadoPanel.style.display = 'none';
-    if (mercadolibrePanel) mercadolibrePanel.style.display = 'none';
     if (creditoPanel) creditoPanel.style.display = 'block';
     if (condContainer) condContainer.classList.add('credito-active');
   }
@@ -988,18 +1174,7 @@ function setPaymentType(type) {
 }
 
 function handlePaymentMethodChange() {
-  const methodSelect = document.getElementById('paymentMethodSelect');
-  if (!methodSelect) return;
-  if (methodSelect.value === 'Contado - MercadoLibre') {
-    setPaymentType('contado_mercadolibre');
-  } else {
-    const currentType = getSelectedPaymentType();
-    if (currentType === 'contado_mercadolibre') {
-      setPaymentType('contado');
-    } else {
-      updateLiveCalculations();
-    }
-  }
+  updateLiveCalculations();
 }
 
 function setCreditSubtype(subtype) {
@@ -1060,10 +1235,22 @@ function getAdditionalCommissionsData() {
 
 // Live Calculations
 function updateLiveCalculations() {
-  const qty = parseInt(document.getElementById('saleQtyInput')?.value) || 1;
-  const unitPrice = parseFloat(document.getElementById('salePriceInput')?.value) || (state.selectedProduct ? (state.selectedProduct.pvpActual || state.selectedProduct.pvpTienda || 0) : 0);
-  const mayorCost = (state.selectedProduct ? (state.selectedProduct.mayor || 0) : 0) * qty;
-  const subtotal = qty * unitPrice;
+  let itemsToCalc = [];
+  if (state.posSaleItems && state.posSaleItems.length > 0) {
+    itemsToCalc = state.posSaleItems;
+  } else if (state.selectedProduct) {
+    const qty = parseInt(document.getElementById('saleQtyInput')?.value) || 1;
+    const unitPrice = parseFloat(document.getElementById('salePriceInput')?.value) || (state.selectedProduct.pvpActual || state.selectedProduct.pvpTienda || 0);
+    itemsToCalc = [{
+      quantity: qty,
+      unitPrice: unitPrice,
+      mayor: state.selectedProduct.mayor !== undefined ? state.selectedProduct.mayor : (state.selectedProduct.costo || 0),
+      subtotal: qty * unitPrice
+    }];
+  }
+
+  const subtotal = itemsToCalc.reduce((acc, it) => acc + (it.subtotal || 0), 0);
+  const mayorCost = itemsToCalc.reduce((acc, it) => acc + ((it.mayor || 0) * (it.quantity || 1)), 0);
 
   // Additional Commissions Calculation
   const addComms = getAdditionalCommissionsData(subtotal);
@@ -1075,42 +1262,33 @@ function updateLiveCalculations() {
   let comisionTMania = 0;
   let montoIVA = 0;
   let comisionMercadoLibre = 0;
-  let netoTienda = subtotal;
+
+  // Platform Commission: 12% if platform is MercadoLibre
+  if (state.posPlatform === 'mercadolibre') {
+    comisionMercadoLibre = subtotal * 0.12;
+  }
+
+  let netoTienda = subtotal - comisionMercadoLibre;
+
+  // Platform notice live breakdown
+  const mlLiveBreakdown = document.getElementById('mercadolibreLiveBreakdown');
+  if (mlLiveBreakdown) {
+    if (state.posPlatform === 'mercadolibre' && subtotal > 0) {
+      mlLiveBreakdown.innerHTML = `PVP: <strong>$${subtotal.toFixed(2)}</strong> | Comisión ML (12%): <span style="color: #d97706; font-weight: 700;">-$${comisionMercadoLibre.toFixed(2)}</span> | Neto Tienda: <span style="color: #059669; font-weight: 800;">$${(subtotal - comisionMercadoLibre).toFixed(2)}</span>`;
+    } else {
+      mlLiveBreakdown.innerHTML = '';
+    }
+  }
 
   const breakdownBox = document.getElementById('creditFinancialBreakdown');
-  const mlBreakdownBox = document.getElementById('mercadolibreFinancialBreakdown');
 
-  if (paymentType === 'contado_mercadolibre') {
-    comisionMercadoLibre = subtotal * 0.12;
-    netoTienda = subtotal - comisionMercadoLibre;
-
-    if (mlBreakdownBox) {
-      mlBreakdownBox.innerHTML = `
-        <div class="financial-row">
-          <span>PVP Venta Total:</span>
-          <strong>$${subtotal.toFixed(2)}</strong>
-        </div>
-        <div class="financial-row">
-          <span>Comisión MercadoLibre (12%):</span>
-          <span style="color: #d97706; font-weight: 700;">-$${comisionMercadoLibre.toFixed(2)}</span>
-        </div>
-        <div class="financial-row highlight" style="background: #fef3c7; border-color: #fde68a;">
-          <span style="color: #92400e;">Neto a Liquidar Tienda (88%):</span>
-          <span style="color: #b45309; font-weight: 800;">$${netoTienda.toFixed(2)}</span>
-        </div>
-        <div class="financial-row" style="font-size: 0.78rem; color: #78350f;">
-          <span>Cuenta por Pagar generada:</span>
-          <span style="font-weight: 600;">$${comisionMercadoLibre.toFixed(2)} a favor de MercadoLibre</span>
-        </div>
-      `;
-    }
-  } else if (paymentType === 'credito') {
+  if (paymentType === 'credito') {
     if (subtype === 'cashea_bull') {
       // Cashea Bull: 3% cashea, 16% IVA facturado dentro del PVP
       comisionCashea = subtotal * 0.03;
       const baseImponible = subtotal / 1.16;
       montoIVA = subtotal - baseImponible;
-      netoTienda = subtotal - (comisionCashea + montoIVA);
+      netoTienda = subtotal - (comisionCashea + montoIVA + comisionMercadoLibre);
 
       if (breakdownBox) {
         breakdownBox.innerHTML = `
@@ -1126,6 +1304,12 @@ function updateLiveCalculations() {
             <span>IVA 16% (Facturado en PVP):</span>
             <span style="color: #ef4444; font-weight: 600;">-$${montoIVA.toFixed(2)} (Base: $${baseImponible.toFixed(2)})</span>
           </div>
+          ${comisionMercadoLibre > 0 ? `
+            <div class="financial-row">
+              <span>Comisión MercadoLibre (12%):</span>
+              <span style="color: #d97706; font-weight: 600;">-$${comisionMercadoLibre.toFixed(2)}</span>
+            </div>
+          ` : ''}
           <div class="financial-row highlight">
             <span>Neto a Liquidar Tienda:</span>
             <span style="color: #2563eb; font-weight: 800;">$${netoTienda.toFixed(2)}</span>
@@ -1136,8 +1320,7 @@ function updateLiveCalculations() {
       // Cashea T-Mania: 8% cashea, 10% T-Mania, Sin IVA
       comisionCashea = subtotal * 0.08;
       comisionTMania = subtotal * 0.10;
-      const totalComis = comisionCashea + comisionTMania;
-      netoTienda = subtotal - totalComis;
+      netoTienda = subtotal - (comisionCashea + comisionTMania + comisionMercadoLibre);
 
       if (breakdownBox) {
         breakdownBox.innerHTML = `
@@ -1153,6 +1336,12 @@ function updateLiveCalculations() {
             <span>Comisión T-Mania (10%):</span>
             <span style="color: #ef4444; font-weight: 600;">-$${comisionTMania.toFixed(2)}</span>
           </div>
+          ${comisionMercadoLibre > 0 ? `
+            <div class="financial-row">
+              <span>Comisión MercadoLibre (12%):</span>
+              <span style="color: #d97706; font-weight: 600;">-$${comisionMercadoLibre.toFixed(2)}</span>
+            </div>
+          ` : ''}
           <div class="financial-row highlight">
             <span>Neto a Liquidar Tienda (82%):</span>
             <span style="color: #7c3aed; font-weight: 800;">$${netoTienda.toFixed(2)}</span>
@@ -1161,7 +1350,7 @@ function updateLiveCalculations() {
       }
     } else if (subtype === 'jp') {
       // JP: 0% comisiones automáticas
-      netoTienda = subtotal;
+      netoTienda = subtotal - comisionMercadoLibre;
 
       if (breakdownBox) {
         breakdownBox.innerHTML = `
@@ -1169,9 +1358,15 @@ function updateLiveCalculations() {
             <span>PVP Venta Total:</span>
             <strong>$${subtotal.toFixed(2)}</strong>
           </div>
-          <div class="financial-row">
-            <span>Comisiones Automáticas:</span>
-            <span style="color: #059669; font-weight: 600;">$0.00 (0%)</span>
+          ${comisionMercadoLibre > 0 ? `
+            <div class="financial-row">
+              <span>Comisión MercadoLibre (12%):</span>
+              <span style="color: #d97706; font-weight: 600;">-$${comisionMercadoLibre.toFixed(2)}</span>
+            </div>
+          ` : ''}
+          <div class="financial-row highlight">
+            <span>Neto a Liquidar Tienda:</span>
+            <span style="color: #059669; font-weight: 800;">$${netoTienda.toFixed(2)}</span>
           </div>
           <div class="financial-row" style="font-size: 0.78rem; color: #64748b;">
             <span>Gestión:</span>
@@ -1197,12 +1392,24 @@ function updateLiveCalculations() {
   const subEl = document.getElementById('calcSubtotal');
   const profEl = document.getElementById('calcProfit');
   const totEl = document.getElementById('calcTotal');
+  const mlCommRow = document.getElementById('calcPlatformCommRow');
+  const mlCommTotalEl = document.getElementById('calcPlatformCommTotal');
   const addCommRow = document.getElementById('calcAdditionalCommRow');
   const addCommTotalEl = document.getElementById('calcAdditionalCommTotal');
+  const btnRegisterLabel = document.getElementById('btnRegisterSaleLabel');
 
   if (subEl) subEl.textContent = `$${subtotal.toFixed(2)}`;
   if (totEl) totEl.textContent = `$${subtotal.toFixed(2)}`;
   if (profEl) profEl.textContent = `$${finalProfit.toFixed(2)} (${subtotal > 0 ? ((finalProfit / subtotal) * 100).toFixed(1) : 0}%)`;
+
+  if (mlCommRow && mlCommTotalEl) {
+    if (comisionMercadoLibre > 0) {
+      mlCommRow.style.display = 'flex';
+      mlCommTotalEl.textContent = `-$${comisionMercadoLibre.toFixed(2)}`;
+    } else {
+      mlCommRow.style.display = 'none';
+    }
+  }
 
   if (addCommRow && addCommTotalEl) {
     if (addComms.total > 0) {
@@ -1210,6 +1417,15 @@ function updateLiveCalculations() {
       addCommTotalEl.textContent = `-$${addComms.total.toFixed(2)}`;
     } else {
       addCommRow.style.display = 'none';
+    }
+  }
+
+  if (btnRegisterLabel) {
+    const itemCount = state.posSaleItems.length;
+    if (itemCount > 1) {
+      btnRegisterLabel.textContent = `⚡ Registrar Venta (${itemCount} productos)`;
+    } else {
+      btnRegisterLabel.textContent = `⚡ Registrar Venta`;
     }
   }
 }
@@ -1240,31 +1456,52 @@ function generateSaleId() {
 
 // Register Sale Direct
 function handleRegisterSaleDirect() {
-  if (!state.selectedProduct) {
-    showToast('Por favor seleccione un producto por código', 'danger');
-    document.getElementById('productSearchInput').focus();
-    return;
+  // If no items in posSaleItems, check if a single product is currently selected
+  if (state.posSaleItems.length === 0) {
+    if (!state.selectedProduct) {
+      showToast('Por favor seleccione al menos un producto para la venta', 'danger');
+      document.getElementById('productSearchInput')?.focus();
+      return;
+    }
+
+    const qty = parseInt(document.getElementById('saleQtyInput')?.value) || 1;
+    const unitPrice = parseFloat(document.getElementById('salePriceInput')?.value);
+
+    if (isNaN(unitPrice) || unitPrice < 0) {
+      showToast('Ingrese un precio de venta unitario válido', 'danger');
+      document.getElementById('salePriceInput')?.focus();
+      return;
+    }
+
+    const prod = state.selectedProduct;
+    state.posSaleItems.push({
+      code: prod.code,
+      description: prod.description || prod.category || prod.code,
+      category: prod.category || '',
+      image: prod.image || (Array.isArray(prod.images) ? prod.images[0] : '') || '',
+      quantity: qty,
+      unitPrice: unitPrice,
+      mayor: prod.mayor !== undefined ? prod.mayor : (prod.costo || 0),
+      subtotal: qty * unitPrice
+    });
   }
 
-  const qty = parseInt(document.getElementById('saleQtyInput').value) || 1;
-  const unitPrice = parseFloat(document.getElementById('salePriceInput').value);
-
-  if (isNaN(unitPrice) || unitPrice < 0) {
-    showToast('Ingrese un precio de venta válido', 'danger');
-    return;
-  }
+  const items = [...state.posSaleItems];
+  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const mayorCost = items.reduce((sum, item) => sum + ((item.mayor || 0) * item.quantity), 0);
 
   const saleId = generateSaleId();
   const saleDate = getSelectedSaleDate();
   const paymentType = getSelectedPaymentType();
-  const clientName = (document.getElementById('clientNameInput').value || '').trim();
-  const clientPhone = (document.getElementById('clientPhoneInput').value || '').trim();
-  const notes = (document.getElementById('saleNotesInput').value || '').trim();
-
-  const subtotal = qty * unitPrice;
-  const mayorCost = (state.selectedProduct.mayor || 0) * qty;
+  const clientName = (document.getElementById('clientNameInput')?.value || '').trim();
+  const clientPhone = (document.getElementById('clientPhoneInput')?.value || '').trim();
+  const notes = (document.getElementById('saleNotesInput')?.value || '').trim();
 
   const addComms = getAdditionalCommissionsData(subtotal);
+
+  const plataforma = state.posPlatform || 'ninguna';
+  const comisionMercadoLibre = (plataforma === 'mercadolibre') ? (subtotal * 0.12) : 0;
+  let netoTienda = subtotal - comisionMercadoLibre;
 
   let creditSubtype = null;
   let creditSubtypeLabel = null;
@@ -1276,18 +1513,11 @@ function handleRegisterSaleDirect() {
   let comisionCashea = 0;
   let comisionTMania = 0;
   let montoIVA = 0;
-  let comisionMercadoLibre = 0;
-  let netoTienda = subtotal;
   let paymentMethod = 'Efectivo ($ USD)';
 
   if (paymentType === 'contado') {
     const methodSelect = document.getElementById('paymentMethodSelect');
     if (methodSelect) paymentMethod = methodSelect.value;
-  } else if (paymentType === 'contado_mercadolibre') {
-    paymentMethod = 'Contado - MercadoLibre';
-    comisionMercadoLibre = subtotal * 0.12;
-    netoTienda = subtotal - comisionMercadoLibre;
-    creditStatus = 'PAGADO';
   } else {
     creditSubtype = state.creditSubtype || 'cashea_bull';
     const initialMethodSelect = document.getElementById('creditInitialMethodSelect');
@@ -1303,12 +1533,12 @@ function handleRegisterSaleDirect() {
       comisionCashea = subtotal * 0.03;
       const base = subtotal / 1.16;
       montoIVA = subtotal - base;
-      netoTienda = subtotal - (comisionCashea + montoIVA);
+      netoTienda = subtotal - (comisionCashea + montoIVA + comisionMercadoLibre);
     } else if (creditSubtype === 'cashea_tmania') {
       creditSubtypeLabel = 'Cashea T-Mania';
       comisionCashea = subtotal * 0.08;
       comisionTMania = subtotal * 0.10;
-      netoTienda = subtotal - (comisionCashea + comisionTMania);
+      netoTienda = subtotal - (comisionCashea + comisionTMania + comisionMercadoLibre);
     } else if (creditSubtype === 'jp') {
       creditSubtypeLabel = 'Crédito JP';
       const vendInput = document.getElementById('vendedorInput');
@@ -1321,12 +1551,12 @@ function handleRegisterSaleDirect() {
       }
       const dueInput = document.getElementById('creditDueDate');
       creditDueDate = dueInput ? dueInput.value : '';
-      netoTienda = subtotal;
+      netoTienda = subtotal - comisionMercadoLibre;
     }
 
     if (!clientName) {
       showToast('Para ventas a crédito el Nombre del Cliente es obligatorio', 'danger');
-      document.getElementById('clientNameInput').focus();
+      document.getElementById('clientNameInput')?.focus();
       return;
     }
   }
@@ -1340,17 +1570,6 @@ function handleRegisterSaleDirect() {
 
   const finalProfit = (netoTienda - mayorCost) - addComms.total;
 
-  const saleItem = {
-    code: state.selectedProduct.code,
-    description: state.selectedProduct.description || state.selectedProduct.category,
-    category: state.selectedProduct.category,
-    image: state.selectedProduct.image,
-    quantity: qty,
-    unitPrice: unitPrice,
-    mayor: state.selectedProduct.mayor || 0,
-    subtotal: subtotal
-  };
-
   const isBajoPedido = (state.orderMode === 'bajo_pedido');
   const orderExpectedDate = isBajoPedido ? (document.getElementById('orderExpectedDate')?.value || '') : '';
   const orderSupplierNotes = isBajoPedido ? (document.getElementById('orderSupplierNotes')?.value || '').trim() : '';
@@ -1359,10 +1578,12 @@ function handleRegisterSaleDirect() {
     id: saleId,
     timestamp: saleDate.toISOString(),
     displayDate: formatDateTime(saleDate),
-    items: [saleItem],
+    items: items,
     totalAmount: subtotal,
     totalMayor: mayorCost,
     totalProfit: finalProfit,
+    plataforma: plataforma,
+    plataformaLabel: getPlatformLabel(plataforma),
     paymentType: paymentType,
     paymentMethod: paymentMethod,
     creditSubtype: creditSubtype,
@@ -1424,6 +1645,10 @@ function handleRegisterSaleDirect() {
 // Reset POS Form
 function resetPOSForm() {
   state.selectedProduct = null;
+  state.posSaleItems = [];
+  renderPosSaleItems();
+  setSalesPlatform('ninguna');
+
   document.getElementById('productSearchInput').value = '';
   document.getElementById('saleQtyInput').value = '1';
   document.getElementById('salePriceInput').value = '';
@@ -1626,6 +1851,7 @@ function handleCheckoutCart() {
     vendedor = (document.getElementById('saleSellerSelect')?.value || '').trim() || 'Tienda Principal';
   }
 
+  const finalProfit = (netoTienda - totalMayor) - addComms.total;
   const isBajoPedido = (state.orderMode === 'bajo_pedido');
   const orderExpectedDate = isBajoPedido ? (document.getElementById('orderExpectedDate')?.value || '') : '';
   const orderSupplierNotes = isBajoPedido ? (document.getElementById('orderSupplierNotes')?.value || '').trim() : '';
@@ -1638,6 +1864,8 @@ function handleCheckoutCart() {
     totalAmount: total,
     totalMayor: totalMayor,
     totalProfit: finalProfit,
+    plataforma: state.posPlatform || 'ninguna',
+    plataformaLabel: getPlatformLabel(state.posPlatform || 'ninguna'),
     paymentType: paymentType,
     paymentMethod: paymentMethod,
     creditSubtype: creditSubtype,
@@ -1715,6 +1943,26 @@ function renderHistory() {
     }
   }
 
+  // Filter by Platform (Online vs Physical Store)
+  if (state.historyFilterPlatform && state.historyFilterPlatform !== 'all') {
+    if (state.historyFilterPlatform === 'online_all') {
+      filtered = filtered.filter(s => {
+        const p = s.plataforma || (s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre' ? 'mercadolibre' : 'ninguna');
+        return p === 'mercadolibre' || p === 'facebook_marketplace' || p === 'facebook';
+      });
+    } else if (state.historyFilterPlatform === 'ninguna') {
+      filtered = filtered.filter(s => {
+        const p = s.plataforma || (s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre' ? 'mercadolibre' : 'ninguna');
+        return p === 'ninguna' || !p;
+      });
+    } else {
+      filtered = filtered.filter(s => {
+        const p = s.plataforma || (s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre' ? 'mercadolibre' : 'ninguna');
+        return p === state.historyFilterPlatform;
+      });
+    }
+  }
+
   const now = new Date();
   if (state.historyFilterDate === 'today') {
     const todayStr = now.toISOString().split('T')[0];
@@ -1752,15 +2000,15 @@ function renderHistory() {
 
   tbody.innerHTML = filtered.map(sale => {
     const isCredit = sale.paymentType === 'credito';
-    const isML = sale.paymentType === 'contado_mercadolibre' || sale.paymentMethod === 'Contado - MercadoLibre';
+    const isML = (sale.plataforma === 'mercadolibre') || sale.paymentType === 'contado_mercadolibre' || sale.paymentMethod === 'Contado - MercadoLibre';
+    const platform = sale.plataforma || (isML ? 'mercadolibre' : 'ninguna');
+    const platformBadge = getPlatformBadge(platform);
     const isPaid = sale.creditStatus === 'PAGADO';
     const itemsPreview = sale.items.map(i => `${i.code} (x${i.quantity})`).join(', ');
     const firstImg = sale.items[0]?.image || 'images/placeholder.png';
 
     let modalityBadge = '';
-    if (isML) {
-      modalityBadge = `<span class="status-badge" style="background: #fef3c7; color: #b45309; border: 1px solid #fde68a;">🟡 ML Contado</span>`;
-    } else if (!isCredit) {
+    if (!isCredit) {
       modalityBadge = `<span class="status-badge" style="background: #ecfdf5; color: #047857;">Contado</span>`;
     } else if (sale.creditSubtype === 'cashea_bull') {
       modalityBadge = `<span class="status-badge" style="background: #dbeafe; color: #1d4ed8;">Cashea Bull</span>`;
@@ -1770,7 +2018,7 @@ function renderHistory() {
       modalityBadge = `<span class="status-badge" style="background: #dcfce7; color: #15803d;">Crédito JP</span>`;
     }
 
-    const mlComm = sale.comisionMercadoLibre !== undefined ? sale.comisionMercadoLibre : (isML ? (sale.totalAmount || 0) * 0.12 : 0);
+    const mlComm = sale.comisionMercadoLibre !== undefined ? sale.comisionMercadoLibre : (platform === 'mercadolibre' ? (sale.totalAmount || 0) * 0.12 : 0);
 
     return `
       <tr>
@@ -1791,6 +2039,9 @@ function renderHistory() {
           <div style="font-weight: 600;">${escapeHtml(sale.clientName || 'General')}</div>
           ${sale.vendedor ? `<div style="font-size: 0.75rem; color: #059669;">👤 Vend: ${escapeHtml(sale.vendedor)}</div>` : ''}
           ${sale.clientPhone ? `<div style="font-size: 0.75rem; color: #2563eb;">📱 ${escapeHtml(sale.clientPhone)}</div>` : ''}
+        </td>
+        <td>
+          ${platformBadge}
         </td>
         <td>
           ${modalityBadge}
@@ -1828,15 +2079,34 @@ function renderHistoryMetrics(salesList) {
   const totalContado = salesList.filter(s => s.paymentType === 'contado' || s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre').reduce((acc, s) => acc + s.totalAmount, 0);
   const totalCreditoPendiente = salesList.filter(s => s.paymentType === 'credito' && s.creditStatus === 'PENDIENTE').reduce((acc, s) => acc + s.creditBalance, 0);
 
+  // Online Platforms Metrics
+  const onlineSales = salesList.filter(s => {
+    const p = s.plataforma || (s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre' ? 'mercadolibre' : 'ninguna');
+    return p === 'mercadolibre' || p === 'facebook_marketplace' || p === 'facebook';
+  });
+  const totalOnline = onlineSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+  const totalML = salesList.filter(s => {
+    const p = s.plataforma || (s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre' ? 'mercadolibre' : 'ninguna');
+    return p === 'mercadolibre';
+  }).reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+  const totalFB = salesList.filter(s => {
+    const p = s.plataforma || '';
+    return p === 'facebook_marketplace' || p === 'facebook';
+  }).reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+
   const elTotal = document.getElementById('histMetricTotal');
   const elProfit = document.getElementById('histMetricProfit');
   const elContado = document.getElementById('histMetricContado');
   const elCredito = document.getElementById('histMetricCredito');
+  const elOnline = document.getElementById('histMetricOnlinePlatforms');
+  const elBreakdown = document.getElementById('histMetricOnlineBreakdown');
 
   if (elTotal) elTotal.textContent = `$${totalAmount.toFixed(2)}`;
   if (elProfit) elProfit.textContent = `$${totalProfit.toFixed(2)}`;
   if (elContado) elContado.textContent = `$${totalContado.toFixed(2)}`;
   if (elCredito) elCredito.textContent = `$${totalCreditoPendiente.toFixed(2)}`;
+  if (elOnline) elOnline.textContent = `$${totalOnline.toFixed(2)}`;
+  if (elBreakdown) elBreakdown.textContent = `ML: $${totalML.toFixed(2)} • FB: $${totalFB.toFixed(2)}`;
 }
 
 // Render Credits (Cuentas por Cobrar)
@@ -2213,15 +2483,26 @@ function openEditSaleModal(saleId) {
     bpStatusSelect.value = currentEditingSale.orderStatus || 'PENDIENTE_COMPRA';
   }
 
-  // Payment
+  // Payment & Platform
   const isCredit = currentEditingSale.paymentType === 'credito';
-  const isML = currentEditingSale.paymentType === 'contado_mercadolibre' || currentEditingSale.paymentMethod === 'Contado - MercadoLibre';
-  if (isML) {
-    document.getElementById('editPaymentTypeSelect').value = 'contado_mercadolibre';
-    document.getElementById('editPaymentMethodSelect').value = 'Contado - MercadoLibre';
-  } else {
-    document.getElementById('editPaymentTypeSelect').value = isCredit ? 'credito' : 'contado';
-    document.getElementById('editPaymentMethodSelect').value = currentEditingSale.paymentMethod || 'Efectivo ($ USD)';
+  const isLegacyML = currentEditingSale.paymentType === 'contado_mercadolibre' || currentEditingSale.paymentMethod === 'Contado - MercadoLibre';
+  let curPlatform = currentEditingSale.plataforma || (isLegacyML ? 'mercadolibre' : 'ninguna');
+  if (curPlatform === 'facebook') curPlatform = 'facebook_marketplace';
+
+  const editPlatformSelect = document.getElementById('editSalePlatformSelect');
+  if (editPlatformSelect) {
+    editPlatformSelect.value = curPlatform;
+  }
+
+  const editPaymentTypeSelect = document.getElementById('editPaymentTypeSelect');
+  if (editPaymentTypeSelect) {
+    editPaymentTypeSelect.value = isCredit ? 'credito' : 'contado';
+  }
+  const editPaymentMethodSelect = document.getElementById('editPaymentMethodSelect');
+  if (editPaymentMethodSelect) {
+    editPaymentMethodSelect.value = (isLegacyML || !currentEditingSale.paymentMethod || currentEditingSale.paymentMethod === 'Contado - MercadoLibre') 
+      ? 'Efectivo ($ USD)' 
+      : currentEditingSale.paymentMethod;
   }
 
   // Credit fields wrap
@@ -2404,32 +2685,35 @@ function updateEditModalCalculations() {
   const totalAmount = currentEditingSale.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
   const totalMayor = currentEditingSale.items.reduce((sum, item) => sum + ((item.mayor || 0) * item.quantity), 0);
 
+  const editPlatform = document.getElementById('editSalePlatformSelect')?.value || 'ninguna';
+  const isML = editPlatform === 'mercadolibre';
+
   const paymentType = document.getElementById('editPaymentTypeSelect').value;
   const isCredit = paymentType === 'credito';
-  const isML = paymentType === 'contado_mercadolibre' || document.getElementById('editPaymentMethodSelect')?.value === 'Contado - MercadoLibre';
   const subtype = document.getElementById('editCreditSubtypeSelect').value;
 
   let comisionCashea = 0;
   let comisionTMania = 0;
   let montoIVA = 0;
   let comisionMercadoLibre = 0;
-  let netoTienda = totalAmount;
 
   if (isML) {
     comisionMercadoLibre = totalAmount * 0.12;
-    netoTienda = totalAmount - comisionMercadoLibre;
-  } else if (isCredit) {
+  }
+  let netoTienda = totalAmount - comisionMercadoLibre;
+
+  if (isCredit) {
     if (subtype === 'cashea_bull') {
       comisionCashea = totalAmount * 0.03;
       const base = totalAmount / 1.16;
       montoIVA = totalAmount - base;
-      netoTienda = totalAmount - (comisionCashea + montoIVA);
+      netoTienda = totalAmount - (comisionCashea + montoIVA + comisionMercadoLibre);
     } else if (subtype === 'cashea_tmania') {
       comisionCashea = totalAmount * 0.08;
       comisionTMania = totalAmount * 0.10;
-      netoTienda = totalAmount - (comisionCashea + comisionTMania);
+      netoTienda = totalAmount - (comisionCashea + comisionTMania + comisionMercadoLibre);
     } else if (subtype === 'jp') {
-      netoTienda = totalAmount;
+      netoTienda = totalAmount - comisionMercadoLibre;
     }
   }
 
@@ -2516,7 +2800,8 @@ function saveEditedSale() {
   const clientName = (clientNameInput.value || '').trim();
   const paymentType = paymentTypeSelect.value;
   const isCredit = paymentType === 'credito';
-  const isML = paymentType === 'contado_mercadolibre' || paymentMethodSelect.value === 'Contado - MercadoLibre';
+  const editPlatform = document.getElementById('editSalePlatformSelect')?.value || 'ninguna';
+  const isML = editPlatform === 'mercadolibre';
 
   if (isCredit && !clientName) {
     showToast('El nombre del cliente es obligatorio para ventas a crédito', 'danger');
@@ -2547,28 +2832,28 @@ function saveEditedSale() {
   let comisionTMania = 0;
   let montoIVA = 0;
   let comisionMercadoLibre = 0;
-  let netoTienda = totalAmount;
   let creditSubtypeLabel = null;
 
   if (isML) {
     comisionMercadoLibre = totalAmount * 0.12;
-    netoTienda = totalAmount - comisionMercadoLibre;
-    paymentMethodSelect.value = 'Contado - MercadoLibre';
-  } else if (isCredit) {
+  }
+  let netoTienda = totalAmount - comisionMercadoLibre;
+
+  if (isCredit) {
     if (creditSubtype === 'cashea_bull') {
       creditSubtypeLabel = 'Cashea Bull';
       comisionCashea = totalAmount * 0.03;
       const base = totalAmount / 1.16;
       montoIVA = totalAmount - base;
-      netoTienda = totalAmount - (comisionCashea + montoIVA);
+      netoTienda = totalAmount - (comisionCashea + montoIVA + comisionMercadoLibre);
     } else if (creditSubtype === 'cashea_tmania') {
       creditSubtypeLabel = 'Cashea T-Mania';
       comisionCashea = totalAmount * 0.08;
       comisionTMania = totalAmount * 0.10;
-      netoTienda = totalAmount - (comisionCashea + comisionTMania);
+      netoTienda = totalAmount - (comisionCashea + comisionTMania + comisionMercadoLibre);
     } else if (creditSubtype === 'jp') {
       creditSubtypeLabel = 'Crédito JP';
-      netoTienda = totalAmount;
+      netoTienda = totalAmount - comisionMercadoLibre;
     }
   }
 
@@ -2613,6 +2898,8 @@ function saveEditedSale() {
     clientName: clientName || 'Cliente General',
     clientPhone: (clientPhoneInput.value || '').trim(),
     notes: (notesInput.value || '').trim(),
+    plataforma: editPlatform,
+    plataformaLabel: getPlatformLabel(editPlatform),
     paymentType: paymentType,
     paymentMethod: paymentMethodSelect.value,
     creditSubtype: creditSubtype,
@@ -3295,9 +3582,16 @@ function showSaleTicketModal(sale) {
         <span>$${sale.totalAmount.toFixed(2)}</span>
       </div>
 
+      ${(sale.plataforma && sale.plataforma !== 'ninguna') || isML ? `
+        <div class="ticket-row" style="margin-top: 6px;">
+          <span>Plataforma:</span>
+          <strong>${escapeHtml(getPlatformLabel(sale.plataforma || (isML ? 'mercadolibre' : 'ninguna')))}</strong>
+        </div>
+      ` : ''}
+
       <div class="ticket-row" style="margin-top: 6px;">
         <span>Modalidad:</span>
-        <strong style="text-transform: uppercase;">${isML ? 'CONTADO - MERCADOLIBRE' : (isCredit ? (sale.creditSubtypeLabel || 'A CRÉDITO') : 'DE CONTADO')}</strong>
+        <strong style="text-transform: uppercase;">${isCredit ? (sale.creditSubtypeLabel || 'A CRÉDITO') : 'DE CONTADO'}</strong>
       </div>
 
       <div class="ticket-row">
@@ -3305,7 +3599,7 @@ function showSaleTicketModal(sale) {
         <span>${escapeHtml(sale.paymentMethod || 'Efectivo')}</span>
       </div>
 
-      ${isML ? `
+      ${(sale.comisionMercadoLibre > 0 || isML) ? `
         <div class="ticket-row" style="font-size: 0.75rem; color: #555;">
           <span>Comisión MercadoLibre (12%):</span>
           <span>$${((sale.comisionMercadoLibre !== undefined ? sale.comisionMercadoLibre : (sale.totalAmount * 0.12))).toFixed(2)}</span>
@@ -3547,6 +3841,7 @@ function exportSalesToCSV() {
     'Fecha',
     'Cliente',
     'Teléfono',
+    'Plataforma',
     'Tipo de Venta',
     'Subtipo Crédito',
     'Vendedor Responsable',
@@ -3577,6 +3872,7 @@ function exportSalesToCSV() {
       `"${s.displayDate}"`,
       `"${s.clientName || 'General'}"`,
       `"${s.clientPhone || ''}"`,
+      `"${getPlatformLabel(s.plataforma || (isML ? 'mercadolibre' : 'ninguna'))}"`,
       `"${s.paymentType}"`,
       `"${s.creditSubtypeLabel || (isML ? 'Contado ML (12%)' : 'N/A')}"`,
       `"${s.vendedor || 'N/A'}"`,
@@ -5280,6 +5576,15 @@ function initEventListeners() {
       document.querySelectorAll('[data-hist-type]').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
       state.historyFilterType = chip.dataset.histType;
+      renderHistory();
+    });
+  });
+
+  document.querySelectorAll('[data-hist-platform]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('[data-hist-platform]').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      state.historyFilterPlatform = chip.dataset.histPlatform;
       renderHistory();
     });
   });

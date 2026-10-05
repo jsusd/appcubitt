@@ -223,10 +223,10 @@
 
           <!-- Sales Inputs Section -->
           <div class="form-section">
-            <div class="form-row">
+            <div class="form-row" style="align-items: flex-end;">
               <!-- Quantity Stepper -->
-              <div class="form-group">
-                <label class="form-label" for="saleQtyInput">Cantidad Vendida</label>
+              <div class="form-group" style="flex: 1; min-width: 120px;">
+                <label class="form-label" for="saleQtyInput">Cantidad</label>
                 <div class="qty-stepper">
                   <button type="button" class="qty-btn" onclick="stepQty(-1)">−</button>
                   <input type="number" id="saleQtyInput" class="qty-input" value="1" min="1">
@@ -235,15 +235,56 @@
               </div>
 
               <!-- Sale Price Input -->
-              <div class="form-group">
+              <div class="form-group" style="flex: 1.5; min-width: 150px;">
                 <label class="form-label" for="salePriceInput">
-                  <span>Precio de Venta Unitario</span>
-                  <span class="label-hint">Editable</span>
+                  <span>Precio Unitario ($)</span>
+                  <span class="label-hint">PVP Editable</span>
                 </label>
                 <div class="currency-input-wrap">
                   <span class="currency-prefix">$</span>
                   <input type="number" id="salePriceInput" class="form-control with-prefix" placeholder="0.00" step="0.01" min="0">
                 </div>
+              </div>
+
+              <!-- Add to Sale Button -->
+              <div class="form-group" style="flex: 1.2; min-width: 150px;">
+                <button type="button" class="btn btn-primary btn-block" id="btnPosAddProduct" onclick="handleAddProductToSale()" style="padding: 11px 14px; font-weight: 700; background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none; box-shadow: 0 2px 6px rgba(37,99,235,0.3);" title="Añadir este artículo a la lista de venta">
+                  <span>➕ Agregar a Venta</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Dynamic Sale Items List (Multi-Product Ingestion) -->
+            <div id="posSaleItemsContainer" style="margin-bottom: 1.25rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div style="font-weight: 700; font-size: 0.88rem; color: #0f172a; display: flex; align-items: center; gap: 6px;">
+                  <span>🛒 Artículos en esta Venta:</span>
+                  <span id="posSaleItemsCountBadge" class="badge" style="background: #e0f2fe; color: #0369a1; font-weight: 700; font-size: 0.75rem;">0 productos</span>
+                </div>
+                <button type="button" id="btnPosClearItems" onclick="clearPosSaleItems()" class="btn btn-outline btn-xs" style="display: none; color: #ef4444; border-color: #fca5a5;" title="Vaciar todos los artículos">
+                  🗑️ Vaciar lista
+                </button>
+              </div>
+
+              <div id="posSaleItemsTableWrap" class="table-responsive" style="display: none; border: 1.5px solid #cbd5e1; border-radius: 8px; max-height: 280px; overflow-y: auto; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <table class="data-table" style="font-size: 0.82rem; margin: 0;">
+                  <thead style="position: sticky; top: 0; background: #f8fafc; z-index: 1;">
+                    <tr>
+                      <th style="width: 44%;">Producto</th>
+                      <th style="width: 22%; text-align: center;">Cantidad</th>
+                      <th style="width: 16%; text-align: right;">Precio ($)</th>
+                      <th style="width: 14%; text-align: right;">Subtotal</th>
+                      <th style="width: 4%; text-align: center;"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="posSaleItemsTableBody">
+                    <!-- Populated dynamically via renderPosSaleItems() -->
+                  </tbody>
+                </table>
+              </div>
+
+              <div id="posSaleItemsEmptyNotice" style="background: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 8px; padding: 12px; text-align: center; color: #64748b; font-size: 0.82rem;">
+                ℹ️ Selecciona un producto arriba y haz clic en <strong>"➕ Agregar a Venta"</strong> para incluir múltiples productos en esta misma transacción.
               </div>
             </div>
 
@@ -291,23 +332,74 @@
               </div>
             </div>
 
+            <!-- Plataforma de Venta (Canal en Línea vs Presencial) -->
+            <div class="form-group" style="margin-bottom: 1.25rem;">
+              <label class="form-label">
+                <span>🌐 Plataforma / Canal de Venta *</span>
+                <span class="label-hint">¿Por dónde se originó la venta? (Para estadísticas de ventas online)</span>
+              </label>
+              <div class="platform-selector-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                <!-- Option 1: No aplica / Tienda Física -->
+                <div class="platform-card selected" id="platformNone" onclick="setSalesPlatform('ninguna')">
+                  <div style="font-size: 1.35rem;">🏪</div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.86rem; color: #0f172a;">No aplica</div>
+                    <div style="font-size: 0.72rem; color: #64748b;">Tienda física / Directa</div>
+                  </div>
+                </div>
+
+                <!-- Option 2: MercadoLibre -->
+                <div class="platform-card" id="platformMercadoLibre" onclick="setSalesPlatform('mercadolibre')">
+                  <div style="font-size: 1.35rem;">🟡</div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.86rem; color: #92400e;">MercadoLibre</div>
+                    <div style="font-size: 0.72rem; color: #b45309;">12% comisión • Genera CXP</div>
+                  </div>
+                </div>
+
+                <!-- Option 3: Facebook Marketplace -->
+                <div class="platform-card" id="platformFacebook" onclick="setSalesPlatform('facebook_marketplace')">
+                  <div style="font-size: 1.35rem;">🔵</div>
+                  <div>
+                    <div style="font-weight: 700; font-size: 0.86rem; color: #1e40af;">FB Marketplace</div>
+                    <div style="font-size: 0.72rem; color: #2563eb;">0% comisión • Canal online</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- MercadoLibre Info Banner -->
+              <div id="platformMercadoLibreNotice" style="display: none; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <span style="font-weight: 700; color: #92400e; font-size: 0.88rem;">🟡 Canal: MercadoLibre</span>
+                  <span style="font-size: 0.72rem; background: #fef3c7; color: #92400e; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid #fde68a;">Comisión 12%</span>
+                </div>
+                <div style="font-size: 0.78rem; color: #78350f;">
+                  Se deduce automáticamente el 12% de comisión sobre el total y se genera una Cuenta por Pagar (CXP) a favor de MercadoLibre.
+                </div>
+                <div id="mercadolibreLiveBreakdown" style="margin-top: 6px; font-size: 0.82rem; font-weight: 700; color: #92400e;"></div>
+              </div>
+
+              <!-- Facebook Marketplace Info Banner -->
+              <div id="platformFacebookNotice" style="display: none; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <span style="font-weight: 700; color: #1e40af; font-size: 0.88rem;">🔵 Canal: Facebook Marketplace</span>
+                  <span style="font-size: 0.72rem; background: #dbeafe; color: #1e40af; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid #bfdbfe;">0% Comisión</span>
+                </div>
+                <div style="font-size: 0.78rem; color: #1e3a8a;">
+                  Esta plataforma <strong>no genera comisiones</strong>. Los ingresos van 100% íntegros a la tienda y la venta queda registrada en estadísticas de plataformas en línea.
+                </div>
+              </div>
+            </div>
+
             <!-- Payment Type (Contado vs Crédito) -->
             <div class="form-group">
               <label class="form-label">Modalidad de Pago *</label>
-              <div class="payment-type-selector">
+              <div class="payment-type-selector" style="grid-template-columns: 1fr 1fr;">
                 <div class="payment-type-card selected contado" data-type="contado" onclick="setPaymentType('contado')">
                   <div class="payment-icon-wrap">💵</div>
                   <div>
                     <div class="payment-card-title">De Contado</div>
                     <div class="payment-card-sub">Pago directo</div>
-                  </div>
-                </div>
-
-                <div class="payment-type-card mercadolibre" data-type="contado_mercadolibre" onclick="setPaymentType('contado_mercadolibre')">
-                  <div class="payment-icon-wrap">🟡</div>
-                  <div>
-                    <div class="payment-card-title">Contado - MercadoLibre</div>
-                    <div class="payment-card-sub">12% comisión • Genera CXP</div>
                   </div>
                 </div>
 
@@ -336,24 +428,7 @@
                     <option value="PayPal USD $">🅿️ PayPal USD $</option>
                     <option value="Zinli USD $">💳 Zinli USD $</option>
                     <option value="Tarjeta / Punto de Venta">💳 Tarjeta / Punto de Venta</option>
-                    <option value="Contado - MercadoLibre">🟡 Contado - MercadoLibre (12% comisión)</option>
                   </select>
-                </div>
-              </div>
-
-              <!-- MercadoLibre Details Panel -->
-              <div id="mercadolibrePanel" style="display: none;">
-                <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; margin-bottom: 0.5rem;">
-                  <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px;">
-                    <span style="font-weight: 700; color: #92400e; font-size: 0.95rem;">🟡 Venta Contado por MercadoLibre</span>
-                    <span style="font-size: 0.75rem; background: #fef3c7; color: #92400e; font-weight: 700; padding: 2px 8px; border-radius: 4px; border: 1px solid #fde68a;">Comisión 12%</span>
-                  </div>
-                  <p style="font-size: 0.8rem; color: #78350f; margin: 4px 0 8px 0;">
-                    El cliente paga de contado a través de MercadoLibre. Se deduce automáticamente la comisión del 12% y se genera una Cuenta por Pagar (CXP) a nombre de MercadoLibre.
-                  </p>
-                  <div id="mercadolibreFinancialBreakdown" class="financial-breakdown-box" style="background: #ffffff; border-color: #fde68a; margin-top: 6px;">
-                    <!-- Populated dynamically via updateLiveCalculations -->
-                  </div>
                 </div>
               </div>
 
@@ -572,6 +647,10 @@
                 <span>Subtotal Artículos:</span>
                 <strong id="calcSubtotal">$0.00</strong>
               </div>
+              <div class="calc-row" id="calcPlatformCommRow" style="display: none; color: #b45309;">
+                <span>- Comisión MercadoLibre (12%):</span>
+                <strong id="calcPlatformCommTotal">-$0.00</strong>
+              </div>
               <div class="calc-row" id="calcAdditionalCommRow" style="display: none; color: #b91c1c;">
                 <span>- Comisiones Adicionales CXP:</span>
                 <strong id="calcAdditionalCommTotal">-$0.00</strong>
@@ -587,12 +666,9 @@
             </div>
 
             <!-- Action Buttons -->
-            <div class="form-actions-grid">
-              <button type="button" class="btn btn-primary" onclick="handleRegisterSaleDirect()">
-                <span>⚡ Registrar Venta Directa</span>
-              </button>
-              <button type="button" class="btn btn-outline" onclick="handleAddToCart()">
-                <span>🛒 Añadir al Pedido</span>
+            <div style="margin-top: 1rem;">
+              <button type="button" class="btn btn-primary btn-block" id="btnRegisterSale" onclick="handleRegisterSaleDirect()" style="padding: 13px; font-weight: 800; font-size: 1.05rem; background: linear-gradient(135deg, #10b981, #059669); border: none; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);">
+                <span id="btnRegisterSaleLabel">⚡ Registrar Venta</span>
               </button>
             </div>
           </div>
@@ -699,6 +775,14 @@
             <div class="metric-value" id="histMetricCredito">$0.00</div>
           </div>
         </div>
+        <div class="metric-card">
+          <div class="metric-icon-box" style="background: #fffbeb; color: #d97706;">🌐</div>
+          <div>
+            <div class="metric-title">Ventas en Plataformas</div>
+            <div class="metric-value" id="histMetricOnlinePlatforms" style="color: #b45309;">$0.00</div>
+            <div style="font-size: 0.72rem; color: #78350f; font-weight: 600; margin-top: 2px;" id="histMetricOnlineBreakdown">ML: $0.00 • FB: $0.00</div>
+          </div>
+        </div>
       </div>
 
       <!-- Filters Bar -->
@@ -708,10 +792,18 @@
             <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Modalidad:</span>
             <div class="filter-chip active" data-hist-type="all">Todas</div>
             <div class="filter-chip" data-hist-type="contado">Contado Directo</div>
-            <div class="filter-chip" data-hist-type="contado_mercadolibre">🟡 MercadoLibre</div>
             <div class="filter-chip" data-hist-type="cashea_bull">Cashea Bull</div>
             <div class="filter-chip" data-hist-type="cashea_tmania">Cashea T-Mania</div>
             <div class="filter-chip" data-hist-type="jp">Crédito JP</div>
+          </div>
+
+          <div class="filter-group">
+            <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Plataforma:</span>
+            <div class="filter-chip active" data-hist-platform="all">Todas</div>
+            <div class="filter-chip" data-hist-platform="ninguna">🏪 Tienda / Directa</div>
+            <div class="filter-chip" data-hist-platform="mercadolibre">🛍️ MercadoLibre</div>
+            <div class="filter-chip" data-hist-platform="facebook_marketplace">🔵 FB Marketplace</div>
+            <div class="filter-chip" data-hist-platform="online_all">🌐 En Línea (ML + FB)</div>
           </div>
 
           <div class="filter-group">
@@ -741,6 +833,7 @@
                 <th>Venta / Fecha</th>
                 <th>Artículos</th>
                 <th>Cliente</th>
+                <th>Plataforma</th>
                 <th>Modalidad</th>
                 <th>Total ($)</th>
                 <th>Acciones</th>
@@ -1814,13 +1907,20 @@
 
       <!-- Section 2: Modalidad y Pago -->
       <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 1rem;">
-        <div style="font-weight: 700; font-size: 0.88rem; color: #1e293b; margin-bottom: 10px;">💳 Modalidad y Método de Pago</div>
+        <div style="font-weight: 700; font-size: 0.88rem; color: #1e293b; margin-bottom: 10px;">💳 Plataforma, Modalidad y Método de Pago</div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label" for="editPaymentTypeSelect">Tipo de Operación</label>
+            <label class="form-label" for="editSalePlatformSelect">🌐 Plataforma de Venta</label>
+            <select id="editSalePlatformSelect" class="form-control" onchange="updateEditModalCalculations()">
+              <option value="ninguna">🏪 No aplica (Tienda / Presencial)</option>
+              <option value="mercadolibre">🟡 MercadoLibre (12% comisión • Genera CXP)</option>
+              <option value="facebook_marketplace">🔵 Facebook Marketplace (0% comisión)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="editPaymentTypeSelect">Modalidad de Pago</label>
             <select id="editPaymentTypeSelect" class="form-control" onchange="handleEditPaymentTypeChange()">
               <option value="contado">💵 De Contado</option>
-              <option value="contado_mercadolibre">🟡 Contado - MercadoLibre (12% comisión)</option>
               <option value="credito">📋 A Crédito</option>
             </select>
           </div>
@@ -1835,7 +1935,6 @@
               <option value="PayPal USD $">🅿️ PayPal USD $</option>
               <option value="Zinli USD $">💳 Zinli USD $</option>
               <option value="Tarjeta / Punto de Venta">💳 Tarjeta / Punto de Venta</option>
-              <option value="Contado - MercadoLibre">🟡 Contado - MercadoLibre (12% comisión)</option>
             </select>
           </div>
         </div>
