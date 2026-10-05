@@ -3265,89 +3265,38 @@ function loadProductsFromStorage() {
     }
   });
 
-  // Sync official Belt Bag definitions (descriptions, main image and gallery images)
-  const beltBagUpdates = {
-    'CTBLT-1': {
-      description: 'Belt Bag Cubitt Obsidian Black',
-      image: 'images/CTBLT-1.webp',
-      images: [
-        'images/CTBLT-1.webp',
-        'images/CTBLT-1-1.webp',
-        'images/CTBLT-1-a.webp',
-        'images/CTBLT-1-b.webp',
-        'images/CTBLT-1-2.webp',
-        'images/CTBLT-1-3.webp',
-        'images/CTBLT-1-4.webp'
-      ]
-    },
-    'CTBLT-2': {
-      description: 'Belt Bag Cubitt Smoke Blue',
-      image: 'images/CTBLT-2.webp',
-      images: [
-        'images/CTBLT-2.webp',
-        'images/CTBLT-2-1.webp',
-        'images/CTBLT-2-a.webp',
-        'images/CTBLT-2-b.webp',
-        'images/CTBLT-2-2.webp',
-        'images/CTBLT-2-3.webp',
-        'images/CTBLT-2-4.webp'
-      ]
-    },
-    'CTBLT-3': {
-      description: 'Belt Bag Cubitt Olive Green',
-      image: 'images/CTBLT-3a.webp',
-      images: [
-        'images/CTBLT-3a.webp',
-        'images/CTBLT-3.webp',
-        'images/CTBLT-3-1.webp',
-        'images/CTBLT-3-2.webp',
-        'images/CTBLT-3-3.webp',
-        'images/CTBLT-3-4.webp',
-        'images/CTBLT-3-5.webp'
-      ]
-    },
-    'CTBLT-4': {
-      description: 'Belt Bag Cubitt Dusty Mauve',
-      image: 'images/CTBLT-4a.webp',
-      images: [
-        'images/CTBLT-4a.webp',
-        'images/CTBLT-4.webp',
-        'images/CTBLT-4-1.webp',
-        'images/CTBLT-4-2.webp',
-        'images/CTBLT-4-3.webp',
-        'images/CTBLT-4-4.webp',
-        'images/CTBLT-4-5.webp'
-      ]
-    },
-    'CTBLT-9': {
-      description: 'Belt Bag Cubitt Warm Beige',
-      image: 'images/CTBLT-9.webp',
-      images: [
-        'images/CTBLT-9.webp',
-        'images/CTBLT-9-1.webp',
-        'images/CTBLT-9-a.webp',
-        'images/CTBLT-9-b.webp',
-        'images/CTBLT-9-2.webp',
-        'images/CTBLT-9-3.webp',
-        'images/CTBLT-9-4.webp'
-      ]
-    }
-  };
+  // Synchronize all products with official descriptions and images from CUBITT_PRODUCTS (from Shopify)
+  if (typeof CUBITT_PRODUCTS !== 'undefined' && Array.isArray(CUBITT_PRODUCTS)) {
+    const officialMap = {};
+    CUBITT_PRODUCTS.forEach(op => {
+      if (op.code) officialMap[op.code.toUpperCase()] = op;
+    });
 
-  let beltBagsModified = false;
-  state.products.forEach(p => {
-    if (beltBagUpdates[p.code]) {
-      const u = beltBagUpdates[p.code];
-      if (p.description !== u.description || p.image !== u.image || !p.images || p.images.length < u.images.length) {
-        p.description = u.description;
-        p.image = u.image;
-        p.images = [...u.images];
-        beltBagsModified = true;
+    let catalogUpdated = false;
+    state.products.forEach(p => {
+      const codeKey = (p.code || '').toUpperCase();
+      const official = officialMap[codeKey];
+      if (official) {
+        if (official.description && p.description !== official.description) {
+          p.description = official.description;
+          catalogUpdated = true;
+        }
+        if (official.image && p.image !== official.image) {
+          p.image = official.image;
+          catalogUpdated = true;
+        }
+        if (Array.isArray(official.images) && official.images.length > 0) {
+          if (!p.images || p.images.length !== official.images.length || p.images[0] !== official.images[0]) {
+            p.images = [...official.images];
+            catalogUpdated = true;
+          }
+        }
       }
+    });
+
+    if (catalogUpdated) {
+      saveProductsToStorage();
     }
-  });
-  if (beltBagsModified) {
-    saveProductsToStorage();
   }
 
   // Initial Zero-Stock Migration: ensure all existing stock starts strictly at 0 for clean invoice feeding
