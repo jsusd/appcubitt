@@ -57,10 +57,14 @@ const state = {
   // Warehouse & Inter-Warehouse Loans State
   posWarehouse: 'barquisimeto_trinitarias', // 'barquisimeto_trinitarias', 'barquisimeto_tmania', 'maracay_la_morita'
   historyFilterWarehouse: 'all', // 'all', 'barquisimeto_trinitarias', 'barquisimeto_tmania', 'maracay_la_morita'
-  loans: [], // [{ id, date, timestamp, route, originWarehouse, destWarehouse, productCode, productName, category, qty, unitPrice, totalValue, responsible, notes, status: 'PENDIENTE'|'CONCILIADO', reconciledAt, reconciledBy, reconcileType, reconcileNotes }]
-  loansFilterStatus: 'all', // 'all', 'PENDIENTE', 'CONCILIADO'
+  loans: [], // [{ id, date, timestamp, route, originWarehouse, destWarehouse, items: [], productCode, productName, category, qty, unitPrice, totalValue, responsible, notes, status: 'PENDIENTE'|'PARCIAL'|'CONCILIADO', reconciledAt, reconciledBy, reconcileType, reconcileNotes, reconciliations: [] }]
+  loansFilterStatus: 'all', // 'all', 'PENDIENTE', 'PARCIAL', 'CONCILIADO'
   loansFilterRoute: 'all', // 'all', 'trinitarias_to_tmania', 'tmania_to_trinitarias', 'otro'
-  loansSearchQuery: ''
+  loansSearchQuery: '',
+  loanDraftItems: [], // Multi-product items in loan creation draft: [{ code, name, category, image, qty, unitPrice, totalValue, pendingQty, reconciledQty }]
+  selectedLoanProduct: null,
+  reconcileMode: 'total', // 'total' | 'parcial'
+  currentReconcilingLoan: null
 };
 window.state = state;
 
@@ -194,6 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateInventoryBadges();
   setupAutocomplete();
   setupClientAutocomplete();
+  setupLoanProductAutocomplete();
   
   // Set default credit due date to 15 days ahead
   const defaultDueDate = new Date();
@@ -7662,11 +7667,47 @@ function renderInventoryMovementsTable() {
 // SECTION 4: MERCANCÍA EN PRÉSTAMO (INTER-ALMACENES) & CONCILIACIÓN
 // ==========================================================================
 
+function normalizeLoanItems(loan) {
+  if (!loan) return [];
+  if (!loan.items || !Array.isArray(loan.items) || loan.items.length === 0) {
+    const prod = (state.products || []).find(p => p.code === loan.productCode);
+    const qty = Number(loan.qty) || 1;
+    const isConciliated = loan.status === 'CONCILIADO';
+    loan.items = [{
+      code: loan.productCode || 'N/A',
+      name: loan.productName || loan.productCode || 'Producto',
+      category: loan.category || '',
+      image: prod?.image || 'images/placeholder.png',
+      qty: qty,
+      unitPrice: Number(loan.unitPrice) || 0,
+      totalValue: Number(loan.totalValue) || 0,
+      pendingQty: isConciliated ? 0 : qty,
+      reconciledQty: isConciliated ? qty : 0
+    }];
+  } else {
+    loan.items.forEach(item => {
+      const q = Number(item.qty) || 1;
+      if (item.reconciledQty === undefined) {
+        item.reconciledQty = loan.status === 'CONCILIADO' ? q : 0;
+      }
+      if (item.pendingQty === undefined) {
+        item.pendingQty = Math.max(0, q - (Number(item.reconciledQty) || 0));
+      }
+      if (!item.image) {
+        const prod = (state.products || []).find(p => p.code === item.code);
+        item.image = prod?.image || 'images/placeholder.png';
+      }
+    });
+  }
+  return loan.items;
+}
+
 function loadLoansFromStorage() {
   try {
     const saved = localStorage.getItem('cubitt_loans_v1');
     if (saved) {
       state.loans = JSON.parse(saved);
+      state.loans.forEach(l => normalizeLoanItems(l));
     } else {
       // Pre-seed with realistic demo loans between Trinitarias and T-Mania
       state.loans = [
@@ -7677,6 +7718,19 @@ function loadLoansFromStorage() {
           route: 'trinitarias_to_tmania',
           originWarehouse: 'barquisimeto_trinitarias',
           destWarehouse: 'barquisimeto_tmania',
+          items: [
+            {
+              code: 'CTHR-1',
+              name: 'Reloj Inteligente C/ Conexión Bluetooth CTHR-1',
+              category: 'RELOJ INTELIGENTE C/ CONEXIÓN BLUETOOTH',
+              image: 'images/placeholder.png',
+              qty: 2,
+              unitPrice: 69.00,
+              totalValue: 138.00,
+              pendingQty: 2,
+              reconciledQty: 0
+            }
+          ],
           productCode: 'CTHR-1',
           productName: 'Reloj Inteligente C/ Conexión Bluetooth CTHR-1',
           category: 'RELOJ INTELIGENTE C/ CONEXIÓN BLUETOOTH',
@@ -7690,7 +7744,8 @@ function loadLoansFromStorage() {
           reconciledAt: null,
           reconciledBy: null,
           reconcileType: null,
-          reconcileNotes: null
+          reconcileNotes: null,
+          reconciliations: []
         },
         {
           id: 'PRE-1002',
@@ -7699,6 +7754,19 @@ function loadLoansFromStorage() {
           route: 'tmania_to_trinitarias',
           originWarehouse: 'barquisimeto_tmania',
           destWarehouse: 'barquisimeto_trinitarias',
+          items: [
+            {
+              code: 'CT-COF1',
+              name: 'Termo Coffee Mug Color Negro Obsidiana CT-COF1',
+              category: 'TERMO PARA CAFÉ',
+              image: 'images/placeholder.png',
+              qty: 3,
+              unitPrice: 25.00,
+              totalValue: 75.00,
+              pendingQty: 0,
+              reconciledQty: 3
+            }
+          ],
           productCode: 'CT-COF1',
           productName: 'Termo Coffee Mug Color Negro Obsidiana CT-COF1',
           category: 'TERMO PARA CAFÉ',
@@ -7712,9 +7780,19 @@ function loadLoansFromStorage() {
           reconciledAt: new Date(Date.now() - 3600000 * 24).toISOString(),
           reconciledBy: 'Gerencia Tienda',
           reconcileType: 'DEVUELTO',
-          reconcileNotes: 'Mercancía devuelta completa y en perfecto estado al almacén de origen'
+          reconcileNotes: 'Mercancía devuelta completa y en perfecto estado al almacén de origen',
+          reconciliations: [
+            {
+              date: new Date(Date.now() - 3600000 * 24).toISOString().split('T')[0],
+              type: 'DEVUELTO',
+              responsible: 'Gerencia Tienda',
+              notes: 'Mercancía devuelta completa y en perfecto estado',
+              items: [{ code: 'CT-COF1', qty: 3 }]
+            }
+          ]
         }
       ];
+      state.loans.forEach(l => normalizeLoanItems(l));
       saveLoansToStorage();
     }
   } catch (e) {
@@ -7762,6 +7840,302 @@ function selectLoanRoute(route) {
   }
 }
 
+// --------------------------------------------------------------------------
+// Loan Creation: Autocomplete, Code Search, Image Preview & Multi-Product Draft
+// --------------------------------------------------------------------------
+
+function setupLoanProductAutocomplete() {
+  const searchInput = document.getElementById('loanProductSearchInput');
+  const dropdown = document.getElementById('loanAutocompleteDropdown');
+  const clearBtn = document.getElementById('clearLoanProductSearchBtn');
+
+  if (!searchInput || !dropdown) return;
+
+  searchInput.addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    if (clearBtn) clearBtn.style.display = q.length > 0 ? 'block' : 'none';
+
+    if (q.length === 0) {
+      dropdown.classList.remove('show');
+      dropdown.innerHTML = '';
+      return;
+    }
+
+    const matches = (state.products || []).filter(p => {
+      const codeMatch = (p.code || '').toLowerCase().includes(q);
+      const descMatch = (p.description || '').toLowerCase().includes(q);
+      const catMatch = (p.category || '').toLowerCase().includes(q);
+      return codeMatch || descMatch || catMatch;
+    }).slice(0, 15);
+
+    if (matches.length === 0) {
+      dropdown.innerHTML = `<div class="autocomplete-empty" style="padding: 10px; color: #64748b; font-size: 0.85rem; text-align: center;">No se encontraron productos con "<strong>${escapeHtml(q)}</strong>"</div>`;
+      dropdown.classList.add('show');
+      return;
+    }
+
+    dropdown.innerHTML = matches.map(p => {
+      const title = p.description || p.category || p.code;
+      const pvp = (p.pvpActual || p.pvpTienda || p.costo || 0);
+      const stock = p.stock || 0;
+      const thumb = p.image || 'images/placeholder.png';
+      return `
+        <div class="autocomplete-item" onclick="selectLoanProductForDraft('${escapeHtml(p.code)}')" style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
+          <img class="autocomplete-thumb" src="${thumb}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'36\\' height=\\'36\\' fill=\\'%23ccc\\' viewBox=\\'0 0 24 24\\'><rect width=\\'24\\' height=\\'24\\' fill=\\'%23eee\\'/></svg>'" style="width: 36px; height: 36px; object-fit: contain; background: #fff; border-radius: 4px; border: 1px solid #e2e8f0; flex-shrink: 0;">
+          <div class="autocomplete-details" style="flex: 1; min-width: 0;">
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.88rem; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              ${escapeHtml(title)}
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; margin-top: 3px; flex-wrap: wrap;">
+              <span class="product-code-tag" style="font-size: 0.72rem; padding: 1px 6px; background: #1e293b; color: #ffffff; border-radius: 4px; font-family: monospace; font-weight: 700;">${escapeHtml(p.code)}</span>
+              <span style="font-size: 0.74rem; color: #64748b;">${escapeHtml(p.category || '')}</span>
+              <span style="font-size: 0.72rem; color: #059669; font-weight: 600;">Stock: ${stock}</span>
+            </div>
+          </div>
+          <div style="text-align: right; flex-shrink: 0; min-width: 60px;">
+            <div class="autocomplete-price" style="font-weight: 800; color: #0284c7; font-size: 0.95rem;">$${pvp.toFixed(2)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    dropdown.classList.add('show');
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const q = e.target.value.trim().toLowerCase();
+      if (!q) return;
+      const exact = (state.products || []).find(p => p.code.toLowerCase() === q);
+      if (exact) {
+        selectLoanProductForDraft(exact.code);
+        return;
+      }
+      const first = (state.products || []).find(p =>
+        p.code.toLowerCase().includes(q) ||
+        (p.description || '').toLowerCase().includes(q) ||
+        (p.category || '').toLowerCase().includes(q)
+      );
+      if (first) {
+        selectLoanProductForDraft(first.code);
+      }
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#loanProductSearchInput') && !e.target.closest('#loanAutocompleteDropdown')) {
+      dropdown.classList.remove('show');
+    }
+  });
+}
+
+function selectLoanProductForDraft(code) {
+  const prod = (state.products || []).find(p => p.code === code);
+  if (!prod) return;
+
+  state.selectedLoanProduct = prod;
+
+  // Hide dropdown
+  const dropdown = document.getElementById('loanAutocompleteDropdown');
+  if (dropdown) dropdown.classList.remove('show');
+
+  // Set search text to product code
+  const searchInput = document.getElementById('loanProductSearchInput');
+  if (searchInput) searchInput.value = prod.code;
+
+  const clearBtn = document.getElementById('clearLoanProductSearchBtn');
+  if (clearBtn) clearBtn.style.display = 'block';
+
+  // Update Preview Box
+  const preview = document.getElementById('loanSelectedProductPreview');
+  const imgEl = document.getElementById('loanPreviewImg');
+  const codeEl = document.getElementById('loanPreviewCodeBadge');
+  const catEl = document.getElementById('loanPreviewCategoryBadge');
+  const nameEl = document.getElementById('loanPreviewName');
+  const priceEl = document.getElementById('loanPreviewPriceDisplay');
+  const stockEl = document.getElementById('loanPreviewStockDisplay');
+
+  const pvp = (prod.pvpActual || prod.pvpTienda || prod.costo || 0);
+
+  if (imgEl) imgEl.src = prod.image || 'images/placeholder.png';
+  if (codeEl) codeEl.textContent = prod.code;
+  if (catEl) catEl.textContent = prod.category || 'Categoría';
+  if (nameEl) nameEl.textContent = prod.description || prod.category || prod.code;
+  if (priceEl) priceEl.textContent = `$${pvp.toFixed(2)}`;
+  if (stockEl) stockEl.textContent = prod.stock || 0;
+
+  if (preview) preview.style.display = 'block';
+
+  // Autofill unit value and focus quantity
+  const valInput = document.getElementById('loanItemValueInput');
+  if (valInput) valInput.value = pvp.toFixed(2);
+
+  const qtyInput = document.getElementById('loanItemQtyInput');
+  if (qtyInput) {
+    qtyInput.value = '1';
+    qtyInput.focus();
+    qtyInput.select();
+  }
+}
+
+function clearLoanProductSearch() {
+  state.selectedLoanProduct = null;
+  const searchInput = document.getElementById('loanProductSearchInput');
+  if (searchInput) searchInput.value = '';
+
+  const clearBtn = document.getElementById('clearLoanProductSearchBtn');
+  if (clearBtn) clearBtn.style.display = 'none';
+
+  const dropdown = document.getElementById('loanAutocompleteDropdown');
+  if (dropdown) dropdown.classList.remove('show');
+
+  const preview = document.getElementById('loanSelectedProductPreview');
+  if (preview) preview.style.display = 'none';
+
+  const valInput = document.getElementById('loanItemValueInput');
+  if (valInput) valInput.value = '0.00';
+
+  const qtyInput = document.getElementById('loanItemQtyInput');
+  if (qtyInput) qtyInput.value = '1';
+}
+
+function handleAddProductToLoan() {
+  let prod = state.selectedLoanProduct;
+  if (!prod) {
+    const searchVal = (document.getElementById('loanProductSearchInput')?.value || '').trim();
+    if (searchVal) {
+      prod = (state.products || []).find(p => p.code.toLowerCase() === searchVal.toLowerCase()) ||
+             (state.products || []).find(p => (p.description || '').toLowerCase().includes(searchVal.toLowerCase()));
+    }
+  }
+
+  if (!prod) {
+    showToast('Seleccione un producto del catálogo o escriba el código para agregarlo', 'warning');
+    document.getElementById('loanProductSearchInput')?.focus();
+    return;
+  }
+
+  const qty = parseInt(document.getElementById('loanItemQtyInput')?.value) || 0;
+  if (qty <= 0) {
+    showToast('Ingrese una cantidad válida mayor a cero', 'warning');
+    document.getElementById('loanItemQtyInput')?.focus();
+    return;
+  }
+
+  const unitVal = parseFloat(document.getElementById('loanItemValueInput')?.value) || 0;
+
+  // Check if product already exists in loan draft
+  const existing = state.loanDraftItems.find(i => i.code === prod.code);
+  if (existing) {
+    existing.qty += qty;
+    existing.pendingQty += qty;
+    existing.unitPrice = unitVal;
+    existing.totalValue = existing.qty * unitVal;
+  } else {
+    state.loanDraftItems.push({
+      code: prod.code,
+      name: prod.description || prod.category || prod.code,
+      category: prod.category || '',
+      image: prod.image || 'images/placeholder.png',
+      qty: qty,
+      unitPrice: unitVal,
+      totalValue: qty * unitVal,
+      pendingQty: qty,
+      reconciledQty: 0
+    });
+  }
+
+  // Clear product search input and preview for the next item
+  clearLoanProductSearch();
+
+  // Re-render draft items table
+  renderLoanDraftItems();
+  showToast(`¡${prod.code} agregado al préstamo (${qty} unds)!`, 'success');
+}
+
+function handleDraftItemQtyChange(index, newQty) {
+  const qty = parseInt(newQty) || 1;
+  if (qty < 1) return;
+  if (state.loanDraftItems && state.loanDraftItems[index]) {
+    state.loanDraftItems[index].qty = qty;
+    state.loanDraftItems[index].pendingQty = qty;
+    state.loanDraftItems[index].totalValue = qty * state.loanDraftItems[index].unitPrice;
+    renderLoanDraftItems();
+  }
+}
+
+function handleRemoveDraftLoanItem(index) {
+  if (state.loanDraftItems && state.loanDraftItems[index]) {
+    const removed = state.loanDraftItems.splice(index, 1);
+    renderLoanDraftItems();
+    if (removed[0]) {
+      showToast(`Producto ${removed[0].code} quitado del préstamo`, 'info');
+    }
+  }
+}
+
+function renderLoanDraftItems() {
+  const tbody = document.getElementById('loanItemsDraftTableBody');
+  const emptyState = document.getElementById('loanItemsDraftEmptyState');
+  const badgeCount = document.getElementById('loanItemsBadgeCount');
+  const summaryRow = document.getElementById('loanDraftSummaryRow');
+  const summaryItems = document.getElementById('loanSummaryItemsCount');
+  const summaryUnits = document.getElementById('loanSummaryUnitsCount');
+  const summaryValue = document.getElementById('loanSummaryTotalValue');
+
+  const items = state.loanDraftItems || [];
+
+  if (items.length === 0) {
+    if (tbody) tbody.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'block';
+    if (badgeCount) badgeCount.textContent = '0 productos';
+    if (summaryRow) summaryRow.style.display = 'none';
+    return;
+  }
+
+  if (emptyState) emptyState.style.display = 'none';
+  if (summaryRow) summaryRow.style.display = 'flex';
+
+  const totalUnits = items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+  const totalVal = items.reduce((s, i) => s + (Number(i.totalValue) || 0), 0);
+
+  if (badgeCount) badgeCount.textContent = `${items.length} producto${items.length > 1 ? 's' : ''}`;
+  if (summaryItems) summaryItems.textContent = items.length;
+  if (summaryUnits) summaryUnits.textContent = `${totalUnits} unds`;
+  if (summaryValue) summaryValue.textContent = `$${totalVal.toFixed(2)}`;
+
+  if (tbody) {
+    tbody.innerHTML = items.map((item, idx) => `
+      <tr>
+        <td>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <img src="${item.image || 'images/placeholder.png'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'36\\' height=\\'36\\' fill=\\'%23ccc\\' viewBox=\\'0 0 24 24\\'><rect width=\\'24\\' height=\\'24\\' fill=\\'%23eee\\'/></svg>'" style="width: 36px; height: 36px; object-fit: contain; background: #fff; border-radius: 4px; border: 1px solid #e2e8f0; flex-shrink: 0;">
+            <div style="min-width: 0;">
+              <div style="font-weight: 700; color: #0f172a; font-size: 0.85rem; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
+              <div style="font-size: 0.72rem; color: #2563eb; font-family: monospace; font-weight: 700;">${escapeHtml(item.code)}</div>
+            </div>
+          </div>
+        </td>
+        <td style="text-align: center;">
+          <input type="number" class="form-control" min="1" step="1" value="${item.qty}" style="width: 65px; text-align: center; font-weight: 700; padding: 4px 6px; font-size: 0.82rem; margin: 0 auto;" onchange="handleDraftItemQtyChange(${idx}, this.value)">
+        </td>
+        <td style="text-align: right; font-size: 0.82rem; color: #64748b;">
+          $${Number(item.unitPrice || 0).toFixed(2)}
+        </td>
+        <td style="text-align: right; font-weight: 700; color: #0284c7; font-size: 0.88rem;">
+          $${Number(item.totalValue || 0).toFixed(2)}
+        </td>
+        <td style="text-align: center;">
+          <button type="button" class="btn btn-outline btn-xs" onclick="handleRemoveDraftLoanItem(${idx})" style="color: #ef4444; border-color: #fee2e2; padding: 2px 6px;" title="Quitar de la lista">
+            🗑️
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  }
+}
+
 function openCreateLoanModal() {
   const modal = document.getElementById('createLoanModal');
   if (!modal) return;
@@ -7774,71 +8148,37 @@ function openCreateLoanModal() {
     dateInput.value = (new Date(now.getTime() - offset)).toISOString().slice(0, 16);
   }
 
-  // Populate product select
-  const prodSelect = document.getElementById('loanProductSelect');
-  if (prodSelect) {
-    prodSelect.innerHTML = `<option value="">-- Seleccionar Producto del Catálogo --</option>` +
-      (state.products || []).map(p => `
-        <option value="${p.code}">${p.code} - ${p.description || p.category} ($${(p.pvpActual || p.pvpTienda || p.costo || 0).toFixed(2)})</option>
-      `).join('');
-  }
-
   // Reset fields
   selectLoanRoute('trinitarias_to_tmania');
-  const qtyInput = document.getElementById('loanQuantityInput');
-  if (qtyInput) qtyInput.value = '1';
-  const valInput = document.getElementById('loanUnitValueInput');
-  if (valInput) valInput.value = '0.00';
   const respInput = document.getElementById('loanResponsibleInput');
   if (respInput) respInput.value = isVendedor() ? (state.currentUser?.fullName || state.currentUser?.username || '') : '';
   const notesInput = document.getElementById('loanNotesInput');
   if (notesInput) notesInput.value = '';
 
-  updateLoanTotalCalc();
+  // Reset multi-product draft
+  state.loanDraftItems = [];
+  clearLoanProductSearch();
+  renderLoanDraftItems();
+
   modal.classList.add('active');
+  setTimeout(() => {
+    document.getElementById('loanProductSearchInput')?.focus();
+  }, 100);
 }
 
 function closeCreateLoanModal() {
   const modal = document.getElementById('createLoanModal');
   if (modal) modal.classList.remove('active');
-}
-
-function handleLoanProductSelect(code) {
-  const prod = (state.products || []).find(p => p.code === code);
-  const valInput = document.getElementById('loanUnitValueInput');
-  if (prod && valInput) {
-    valInput.value = (prod.pvpActual || prod.pvpTienda || prod.costo || 0).toFixed(2);
-  }
-  updateLoanTotalCalc();
-}
-
-function updateLoanTotalCalc() {
-  const qty = parseInt(document.getElementById('loanQuantityInput')?.value) || 1;
-  const unitVal = parseFloat(document.getElementById('loanUnitValueInput')?.value) || 0;
-  const total = qty * unitVal;
-  const display = document.getElementById('loanTotalValueDisplay');
-  if (display) {
-    display.textContent = `$${total.toFixed(2)}`;
-  }
+  clearLoanProductSearch();
 }
 
 function handleCreateLoan() {
-  const prodCode = document.getElementById('loanProductSelect')?.value;
-  if (!prodCode) {
-    showToast('Seleccione un producto para registrar el préstamo', 'danger');
-    document.getElementById('loanProductSelect')?.focus();
+  if (!state.loanDraftItems || state.loanDraftItems.length === 0) {
+    showToast('Debe agregar al menos un producto al préstamo antes de registrarlo', 'danger');
+    document.getElementById('loanProductSearchInput')?.focus();
     return;
   }
 
-  const qty = parseInt(document.getElementById('loanQuantityInput')?.value) || 0;
-  if (qty <= 0) {
-    showToast('Ingrese una cantidad válida mayor a cero', 'danger');
-    document.getElementById('loanQuantityInput')?.focus();
-    return;
-  }
-
-  const unitVal = parseFloat(document.getElementById('loanUnitValueInput')?.value) || 0;
-  const totalVal = qty * unitVal;
   const routeType = document.getElementById('loanRouteType')?.value || 'trinitarias_to_tmania';
 
   let originWh = 'barquisimeto_trinitarias';
@@ -7857,15 +8197,29 @@ function handleCreateLoan() {
     return;
   }
 
-  const prod = (state.products || []).find(p => p.code === prodCode);
-  const productName = prod ? (prod.description || prod.category || prod.code) : prodCode;
-  const category = prod ? (prod.category || '') : '';
+  const totalUnits = state.loanDraftItems.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+  const totalVal = state.loanDraftItems.reduce((s, i) => s + (Number(i.totalValue) || 0), 0);
+  const avgUnitPrice = totalUnits > 0 ? (totalVal / totalUnits) : 0;
 
   const dateVal = document.getElementById('loanDateInput')?.value;
   const loanDate = dateVal ? new Date(dateVal) : new Date();
   const responsible = (document.getElementById('loanResponsibleInput')?.value || '').trim() || (state.currentUser?.fullName || 'Encargado');
   const notes = (document.getElementById('loanNotesInput')?.value || '').trim();
 
+  // Create deep copy of draft items
+  const loanItems = state.loanDraftItems.map(item => ({
+    code: item.code,
+    name: item.name,
+    category: item.category,
+    image: item.image,
+    qty: Number(item.qty),
+    unitPrice: Number(item.unitPrice),
+    totalValue: Number(item.totalValue),
+    pendingQty: Number(item.qty),
+    reconciledQty: 0
+  }));
+
+  const firstItem = loanItems[0];
   const newLoan = {
     id: generateLoanId(),
     timestamp: loanDate.toISOString(),
@@ -7873,11 +8227,12 @@ function handleCreateLoan() {
     route: routeType,
     originWarehouse: originWh,
     destWarehouse: destWh,
-    productCode: prodCode,
-    productName: productName,
-    category: category,
-    qty: qty,
-    unitPrice: unitVal,
+    items: loanItems,
+    productCode: loanItems.map(i => i.code).join(', '),
+    productName: loanItems.length === 1 ? firstItem.name : `${loanItems.length} productos (${totalUnits} unidades)`,
+    category: loanItems.length === 1 ? firstItem.category : 'Varios',
+    qty: totalUnits,
+    unitPrice: avgUnitPrice,
     totalValue: totalVal,
     responsible: responsible,
     notes: notes,
@@ -7886,35 +8241,116 @@ function handleCreateLoan() {
     reconciledAt: null,
     reconciledBy: null,
     reconcileType: null,
-    reconcileNotes: null
+    reconcileNotes: null,
+    reconciliations: []
   };
 
   state.loans.unshift(newLoan);
   saveLoansToStorage();
 
-  // Registrar movimiento en kardex de inventario
+  // Registrar movimiento en kardex de inventario para cada producto del préstamo
   const originLabel = getWarehouseLabel(originWh);
   const destLabel = getWarehouseLabel(destWh);
-  recordInventoryMovement({
-    type: 'PRESTAMO_SALIDA',
-    productCode: prodCode,
-    productName: productName,
-    quantity: qty,
-    stockBefore: prod ? (prod.stock || 0) : 0,
-    stockAfter: prod ? (prod.stock || 0) : 0,
-    reference: `Préstamo #${newLoan.id}`,
-    notes: `Traslado: ${originLabel} ➔ ${destLabel} • Resp: ${responsible}`
+
+  loanItems.forEach(item => {
+    const prod = (state.products || []).find(p => p.code === item.code);
+    recordInventoryMovement({
+      type: 'PRESTAMO_SALIDA',
+      productCode: item.code,
+      productName: item.name,
+      quantity: item.qty,
+      stockBefore: prod ? (prod.stock || 0) : 0,
+      stockAfter: prod ? (prod.stock || 0) : 0,
+      reference: `Préstamo #${newLoan.id}`,
+      notes: `Traslado: ${originLabel} ➔ ${destLabel} • Resp: ${responsible}`
+    });
   });
 
   closeCreateLoanModal();
   renderLoansTab();
-  showToast(`¡Préstamo #${newLoan.id} registrado con éxito!`, 'success');
+  showToast(`¡Préstamo #${newLoan.id} registrado con éxito! (${loanItems.length} productos, ${totalUnits} unds)`, 'success');
 }
 
-// Reconcile Loan Modal & Logic
+// --------------------------------------------------------------------------
+// Loan Reconciliation: Total & Partial Logic
+// --------------------------------------------------------------------------
+
+function setReconcileMode(mode) {
+  state.reconcileMode = mode;
+  const input = document.getElementById('reconcileModeInput');
+  if (input) input.value = mode;
+
+  const cardTotal = document.getElementById('recModeTotalCard');
+  const cardPartial = document.getElementById('recModePartialCard');
+
+  if (cardTotal) cardTotal.classList.toggle('selected', mode === 'total');
+  if (cardPartial) cardPartial.classList.toggle('selected', mode === 'parcial');
+
+  if (mode === 'total') {
+    resetReconcileQuantitiesToMax();
+  } else {
+    updateReconcileTotals();
+  }
+}
+
+function resetReconcileQuantitiesToMax() {
+  const inputs = document.querySelectorAll('.rec-item-input');
+  inputs.forEach(input => {
+    const max = parseInt(input.getAttribute('max')) || 0;
+    input.value = max;
+  });
+  updateReconcileTotals();
+}
+
+function updateReconcileTotals() {
+  const inputs = document.querySelectorAll('.rec-item-input');
+  let totalReconcilingNow = 0;
+  let totalPendingBefore = 0;
+
+  inputs.forEach(input => {
+    const max = parseInt(input.getAttribute('max')) || 0;
+    let val = parseInt(input.value) || 0;
+    if (val < 0) val = 0;
+    if (val > max) val = max;
+    input.value = val;
+
+    totalReconcilingNow += val;
+    totalPendingBefore += max;
+  });
+
+  const notice = document.getElementById('reconcileLiveStatusNotice');
+  const confirmBtn = document.getElementById('btnConfirmReconcile');
+
+  if (notice) {
+    if (totalReconcilingNow === 0) {
+      notice.style.background = '#fef2f2';
+      notice.style.borderColor = '#fecaca';
+      notice.style.color = '#b91c1c';
+      notice.innerHTML = '⚠️ Ingrese al menos 1 unidad para conciliar en este registro.';
+      if (confirmBtn) confirmBtn.disabled = true;
+    } else if (totalReconcilingNow === totalPendingBefore) {
+      notice.style.background = '#ecfdf5';
+      notice.style.borderColor = '#a7f3d0';
+      notice.style.color = '#047857';
+      notice.innerHTML = `🟢 <strong>Conciliación TOTAL (100%):</strong> Se liquidarán todas las <strong>${totalReconcilingNow}</strong> unidades pendientes. El préstamo quedará <strong>CONCILIADO AL 100%</strong>.`;
+      if (confirmBtn) confirmBtn.disabled = false;
+    } else {
+      const remaining = totalPendingBefore - totalReconcilingNow;
+      notice.style.background = '#fffbeb';
+      notice.style.borderColor = '#fde68a';
+      notice.style.color = '#b45309';
+      notice.innerHTML = `🟠 <strong>Conciliación PARCIAL:</strong> Se conciliarán <strong>${totalReconcilingNow}</strong> unidades ahora. Quedarán <strong>${remaining}</strong> unidades pendientes por liquidar. El préstamo pasará a estado <strong>PARCIAL</strong>.`;
+      if (confirmBtn) confirmBtn.disabled = false;
+    }
+  }
+}
+
 function openReconcileLoanModal(loanId) {
   const loan = (state.loans || []).find(l => l.id === loanId);
   if (!loan) return;
+
+  normalizeLoanItems(loan);
+  state.currentReconcilingLoan = loan;
 
   const modal = document.getElementById('reconcileLoanModal');
   if (!modal) return;
@@ -7924,6 +8360,10 @@ function openReconcileLoanModal(loanId) {
   const card = document.getElementById('reconcileLoanSummaryCard');
   if (card) {
     const routeHtml = getLoanRouteBadge(loan);
+    const totalLoanUnits = loan.qty || loan.items.reduce((s, i) => s + (i.qty || 0), 0);
+    const totalPendingUnits = loan.items.reduce((s, i) => s + (i.pendingQty !== undefined ? i.pendingQty : i.qty), 0);
+    const totalReconciledUnits = loan.items.reduce((s, i) => s + (i.reconciledQty || 0), 0);
+
     card.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
         <span style="font-weight: 800; font-size: 0.95rem; color: #1e293b;">#${escapeHtml(loan.id)}</span>
@@ -7932,9 +8372,12 @@ function openReconcileLoanModal(loanId) {
       <div style="font-weight: 700; color: #0f172a; font-size: 0.92rem; margin-bottom: 4px;">
         ${escapeHtml(loan.productName)}
       </div>
-      <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #64748b; margin-top: 4px;">
-        <span>Cantidad: <strong style="color: #0f172a;">${loan.qty} unidades</strong></span>
-        <span>Valor Estimado: <strong style="color: #0284c7;">$${Number(loan.totalValue || 0).toFixed(2)}</strong></span>
+      <div style="display: flex; justify-content: space-between; font-size: 0.82rem; color: #64748b; margin-top: 4px; flex-wrap: wrap; gap: 6px;">
+        <span>Artículos: <strong style="color: #0f172a;">${loan.items.length} producto(s)</strong></span>
+        <span>Prestadas: <strong style="color: #0f172a;">${totalLoanUnits} unds</strong></span>
+        <span>Conciliadas: <strong style="color: #166534;">${totalReconciledUnits} unds</strong></span>
+        <span>Pendientes: <strong style="color: #ea580c;">${totalPendingUnits} unds</strong></span>
+        <span>Valor Ref: <strong style="color: #0284c7;">$${Number(loan.totalValue || 0).toFixed(2)}</strong></span>
       </div>
       <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">
         Fecha Registro: ${escapeHtml(loan.displayDate)} • Resp: ${escapeHtml(loan.responsible || 'N/A')}
@@ -7943,6 +8386,44 @@ function openReconcileLoanModal(loanId) {
     `;
   }
 
+  // Populate reconcile items table
+  const tbody = document.getElementById('reconcileItemsTableBody');
+  if (tbody) {
+    tbody.innerHTML = loan.items.map(item => {
+      const isCompleted = (item.pendingQty || 0) <= 0;
+      return `
+        <tr>
+          <td>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <img src="${item.image || 'images/placeholder.png'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'32\\' height=\\'32\\' fill=\\'%23ccc\\' viewBox=\\'0 0 24 24\\'><rect width=\\'24\\' height=\\'24\\' fill=\\'%23eee\\'/></svg>'" style="width: 32px; height: 32px; object-fit: contain; background: #fff; border-radius: 4px; border: 1px solid #e2e8f0; flex-shrink: 0;">
+              <div style="min-width: 0;">
+                <div style="font-weight: 700; color: #0f172a; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
+                <div style="font-size: 0.70rem; color: #2563eb; font-family: monospace; font-weight: 700;">${escapeHtml(item.code)}</div>
+              </div>
+            </div>
+          </td>
+          <td style="text-align: center; font-size: 0.82rem; color: #64748b;">
+            ${item.qty}
+          </td>
+          <td style="text-align: center; font-size: 0.82rem; color: #166534; font-weight: 600;">
+            ${item.reconciledQty || 0}
+          </td>
+          <td style="text-align: center; font-size: 0.85rem; font-weight: 800; color: ${item.pendingQty > 0 ? '#ea580c' : '#94a3b8'};">
+            ${item.pendingQty}
+          </td>
+          <td style="text-align: center;">
+            ${isCompleted ? `
+              <span style="font-size: 0.74rem; color: #166534; font-weight: 700; background: #dcfce7; padding: 2px 6px; border-radius: 4px;">✅ Listo</span>
+            ` : `
+              <input type="number" class="form-control rec-item-input" data-code="${escapeHtml(item.code)}" min="0" max="${item.pendingQty}" value="${item.pendingQty}" style="width: 70px; text-align: center; font-weight: 700; padding: 4px 6px; font-size: 0.82rem; margin: 0 auto;" oninput="updateReconcileTotals()">
+            `}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  // Reset defaults
   const dateInput = document.getElementById('reconcileDateInput');
   if (dateInput) {
     dateInput.value = new Date().toISOString().split('T')[0];
@@ -7956,6 +8437,8 @@ function openReconcileLoanModal(loanId) {
   const notesInput = document.getElementById('reconcileNotesInput');
   if (notesInput) notesInput.value = '';
 
+  // Mode defaults to total
+  setReconcileMode('total');
   modal.classList.add('active');
 }
 
@@ -7969,39 +8452,91 @@ function handleConfirmReconcileLoan() {
   const loan = (state.loans || []).find(l => l.id === loanId);
   if (!loan) return;
 
+  normalizeLoanItems(loan);
+
   const recType = document.getElementById('reconcileTypeSelect')?.value || 'DEVUELTO';
   const recDate = document.getElementById('reconcileDateInput')?.value || new Date().toISOString().split('T')[0];
   const recResp = (document.getElementById('reconcileResponsibleInput')?.value || '').trim() || (state.currentUser?.fullName || 'Gerencia');
   const recNotes = (document.getElementById('reconcileNotesInput')?.value || '').trim();
 
-  loan.status = 'CONCILIADO';
-  loan.reconciledAt = new Date().toISOString();
-  loan.reconciledBy = recResp;
-  loan.reconcileType = recType;
-  loan.reconcileNotes = recNotes;
+  const inputs = document.querySelectorAll('.rec-item-input');
+  const reconciliationItems = [];
+  let totalReconciledThisRound = 0;
 
-  saveLoansToStorage();
+  inputs.forEach(input => {
+    const code = input.dataset.code;
+    const qtyNow = parseInt(input.value) || 0;
+    if (qtyNow > 0) {
+      const item = loan.items.find(i => i.code === code);
+      if (item) {
+        const actualQty = Math.min(qtyNow, item.pendingQty);
+        item.reconciledQty = (item.reconciledQty || 0) + actualQty;
+        item.pendingQty = Math.max(0, item.qty - item.reconciledQty);
+        totalReconciledThisRound += actualQty;
 
-  // Registrar movimiento de retorno / resolución en kardex
-  let typeLabel = 'Devolución física al origen';
-  if (recType === 'VENDIDO_LIQUIDADO') typeLabel = 'Venta liquidada';
-  if (recType === 'COMPENSADO') typeLabel = 'Compensación de saldo';
+        reconciliationItems.push({
+          code: item.code,
+          name: item.name,
+          qty: actualQty
+        });
 
-  const prod = (state.products || []).find(p => p.code === loan.productCode);
-  recordInventoryMovement({
-    type: 'PRESTAMO_ENTRADA',
-    productCode: loan.productCode,
-    productName: loan.productName,
-    quantity: loan.qty,
-    stockBefore: prod ? (prod.stock || 0) : 0,
-    stockAfter: prod ? (prod.stock || 0) : 0,
-    reference: `Conciliación #${loan.id}`,
-    notes: `${typeLabel} • ${recNotes || 'Sin notas adicionales'} • Resp: ${recResp}`
+        // Si la mercancía fue devuelta físicamente al origen, registrar movimiento PRESTAMO_ENTRADA en Kardex
+        if (recType === 'DEVUELTO') {
+          const prod = (state.products || []).find(p => p.code === item.code);
+          recordInventoryMovement({
+            type: 'PRESTAMO_ENTRADA',
+            productCode: item.code,
+            productName: item.name,
+            quantity: actualQty,
+            stockBefore: prod ? (prod.stock || 0) : 0,
+            stockAfter: prod ? (prod.stock || 0) : 0,
+            reference: `Conciliación #${loan.id}`,
+            notes: `Devolución física al origen • ${recNotes || 'Sin notas'} • Resp: ${recResp}`
+          });
+        }
+      }
+    }
   });
 
+  if (totalReconciledThisRound === 0) {
+    showToast('Debe ingresar al menos una unidad para conciliar', 'warning');
+    return;
+  }
+
+  // Registrar histórico de conciliaciones en el préstamo
+  loan.reconciliations = loan.reconciliations || [];
+  loan.reconciliations.push({
+    timestamp: new Date().toISOString(),
+    date: recDate,
+    type: recType,
+    responsible: recResp,
+    notes: recNotes,
+    totalUnits: totalReconciledThisRound,
+    items: reconciliationItems
+  });
+
+  // Verificar si todas las unidades de todos los productos quedaron en 0 pendiente
+  const remainingPendingUnits = loan.items.reduce((s, i) => s + (Number(i.pendingQty) || 0), 0);
+
+  if (remainingPendingUnits === 0) {
+    loan.status = 'CONCILIADO';
+    loan.reconciledAt = new Date().toISOString();
+    loan.reconciledBy = recResp;
+    loan.reconcileType = recType;
+    loan.reconcileNotes = recNotes;
+  } else {
+    loan.status = 'PARCIAL';
+  }
+
+  saveLoansToStorage();
   closeReconcileLoanModal();
   renderLoansTab();
-  showToast(`¡Préstamo #${loan.id} conciliado exitosamente!`, 'success');
+
+  if (loan.status === 'CONCILIADO') {
+    showToast(`¡Préstamo #${loan.id} conciliado exitosamente al 100%!`, 'success');
+  } else {
+    showToast(`¡Conciliación parcial registrada para préstamo #${loan.id}! (${totalReconciledThisRound} unds conciliadas, ${remainingPendingUnits} pendientes)`, 'info');
+  }
 }
 
 function deleteLoan(loanId) {
@@ -8029,23 +8564,38 @@ function getLoanRouteBadge(loan) {
   return `<span class="loan-route-badge loan-route-otro">${orig} ➔ ${dest}</span>`;
 }
 
+// --------------------------------------------------------------------------
+// Loan Tab Rendering: Table with Multi-Product Preview, Status Badges & Metrics
+// --------------------------------------------------------------------------
+
 function renderLoansTab() {
   const tbody = document.getElementById('loansTableBody');
   const emptyState = document.getElementById('loansEmptyState');
   const loans = state.loans || [];
 
-  // Calculate Metrics
-  const activeLoans = loans.filter(l => l.status === 'PENDIENTE');
-  const activeUnits = activeLoans.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
-  const activeValue = activeLoans.reduce((sum, l) => sum + (Number(l.totalValue) || 0), 0);
+  // Normalize items in all loans
+  loans.forEach(normalizeLoanItems);
+
+  // Calculate Metrics: Active = PENDIENTE or PARCIAL
+  const activeLoans = loans.filter(l => l.status === 'PENDIENTE' || l.status === 'PARCIAL');
+
+  const activeUnits = activeLoans.reduce((sum, l) => {
+    const pendingUnits = l.items.reduce((s, i) => s + (Number(i.pendingQty) || 0), 0);
+    return sum + pendingUnits;
+  }, 0);
+
+  const activeValue = activeLoans.reduce((sum, l) => {
+    const pendingVal = l.items.reduce((s, i) => s + ((Number(i.pendingQty) || 0) * (Number(i.unitPrice) || 0)), 0);
+    return sum + pendingVal;
+  }, 0);
 
   const trinToTmanUnits = activeLoans
     .filter(l => l.route === 'trinitarias_to_tmania' || (l.originWarehouse === 'barquisimeto_trinitarias' && l.destWarehouse === 'barquisimeto_tmania'))
-    .reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+    .reduce((sum, l) => sum + l.items.reduce((s, i) => s + (Number(i.pendingQty) || 0), 0), 0);
 
   const tmanToTrinUnits = activeLoans
     .filter(l => l.route === 'tmania_to_trinitarias' || (l.originWarehouse === 'barquisimeto_tmania' && l.destWarehouse === 'barquisimeto_trinitarias'))
-    .reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+    .reduce((sum, l) => sum + l.items.reduce((s, i) => s + (Number(i.pendingQty) || 0), 0), 0);
 
   // Update Metric Cards UI
   const elActive = document.getElementById('loanMetricActiveCount');
@@ -8102,7 +8652,11 @@ function renderLoansTab() {
       const matchName = (l.productName || '').toLowerCase().includes(q);
       const matchResp = (l.responsible || '').toLowerCase().includes(q);
       const matchNotes = (l.notes || '').toLowerCase().includes(q);
-      return matchId || matchCode || matchName || matchResp || matchNotes;
+      const matchItems = (l.items || []).some(item =>
+        (item.code || '').toLowerCase().includes(q) ||
+        (item.name || '').toLowerCase().includes(q)
+      );
+      return matchId || matchCode || matchName || matchResp || matchNotes || matchItems;
     });
   }
 
@@ -8116,11 +8670,72 @@ function renderLoansTab() {
 
   tbody.innerHTML = filtered.map(loan => {
     const isPending = loan.status === 'PENDIENTE';
-    const statusBadge = isPending
-      ? `<span class="badge badge-warning" style="background: #fef3c7; color: #92400e; border: 1px solid #fde68a;">🟡 PENDIENTE</span>`
-      : `<span class="badge badge-success" style="background: #dcfce7; color: #166534; border: 1px solid #bbf7d0;">✅ CONCILIADO</span>`;
+    const isPartial = loan.status === 'PARCIAL';
+    const isConciliated = loan.status === 'CONCILIADO';
+
+    const totalLoanUnits = loan.qty || loan.items.reduce((s, i) => s + (i.qty || 0), 0);
+    const totalPendingUnits = loan.items.reduce((s, i) => s + (Number(i.pendingQty) || 0), 0);
+
+    let statusBadge = '';
+    if (isConciliated) {
+      statusBadge = `<span class="badge badge-success" style="background: #dcfce7; color: #166534; border: 1px solid #bbf7d0;">✅ CONCILIADO</span>`;
+    } else if (isPartial) {
+      statusBadge = `<span class="badge loan-badge-partial" style="font-weight: 700; padding: 3px 8px; border-radius: 9999px;">🟠 PARCIAL (${totalPendingUnits} pend.)</span>`;
+    } else {
+      statusBadge = `<span class="badge badge-warning" style="background: #fef3c7; color: #92400e; border: 1px solid #fde68a;">🟡 PENDIENTE</span>`;
+    }
 
     const routeBadge = getLoanRouteBadge(loan);
+
+    // Product visual representation: single item or multi-product badge
+    let productDisplayHtml = '';
+    const isMultiItem = loan.items && loan.items.length > 1;
+
+    if (isMultiItem) {
+      const firstTwoImages = loan.items.slice(0, 2);
+      const moreCount = loan.items.length - 2;
+      const imagesHtml = `
+        <div style="display: flex; align-items: center; position: relative;">
+          ${firstTwoImages.map((it, idx) => `
+            <img src="${it.image || 'images/placeholder.png'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'34\\' height=\\'34\\' fill=\\'%23ccc\\' viewBox=\\'0 0 24 24\\'><rect width=\\'24\\' height=\\'24\\' fill=\\'%23eee\\'/></svg>'" style="width: 34px; height: 34px; object-fit: contain; background: #fff; border-radius: 4px; border: 1px solid #cbd5e1; margin-left: ${idx > 0 ? '-10px' : '0'}; z-index: ${2 - idx};">
+          `).join('')}
+          ${moreCount > 0 ? `<span style="margin-left: 4px; font-size: 0.72rem; font-weight: 800; background: #e2e8f0; color: #475569; padding: 2px 5px; border-radius: 4px;">+${moreCount}</span>` : ''}
+        </div>
+      `;
+
+      const codesPills = loan.items.map(it => `
+        <span style="display: inline-block; font-family: monospace; font-size: 0.70rem; background: #f1f5f9; color: #1e293b; padding: 1px 5px; border-radius: 3px; border: 1px solid #e2e8f0; margin-right: 3px; margin-top: 2px;">
+          ${escapeHtml(it.code)} (${it.qty}u)
+        </span>
+      `).join('');
+
+      productDisplayHtml = `
+        <div style="display: flex; align-items: flex-start; gap: 8px;">
+          ${imagesHtml}
+          <div style="min-width: 0;">
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.88rem; line-height: 1.25;">
+              ${loan.items.length} productos prestados
+            </div>
+            <div style="margin-top: 3px;">
+              ${codesPills}
+            </div>
+            ${loan.notes ? `<div style="font-size: 0.72rem; color: #475569; font-style: italic; margin-top: 3px;">"${escapeHtml(loan.notes)}"</div>` : ''}
+          </div>
+        </div>
+      `;
+    } else {
+      const item = loan.items[0] || {};
+      productDisplayHtml = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <img src="${item.image || 'images/placeholder.png'}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'36\\' height=\\'36\\' fill=\\'%23ccc\\' viewBox=\\'0 0 24 24\\'><rect width=\\'24\\' height=\\'24\\' fill=\\'%23eee\\'/></svg>'" style="width: 36px; height: 36px; object-fit: contain; background: #fff; border-radius: 4px; border: 1px solid #cbd5e1; flex-shrink: 0;">
+          <div style="min-width: 0;">
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.88rem; line-height: 1.25;">${escapeHtml(item.name || loan.productName)}</div>
+            <div style="font-size: 0.72rem; color: #2563eb; font-family: monospace; font-weight: 700; margin-top: 1px;">${escapeHtml(item.code || loan.productCode)}</div>
+            ${loan.notes ? `<div style="font-size: 0.72rem; color: #475569; font-style: italic; margin-top: 2px;">"${escapeHtml(loan.notes)}"</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
 
     return `
       <tr>
@@ -8132,20 +8747,24 @@ function renderLoansTab() {
           ${routeBadge}
         </td>
         <td>
-          <div style="font-weight: 700; color: #0f172a; font-size: 0.88rem;">${escapeHtml(loan.productName)}</div>
-          <div style="font-size: 0.72rem; color: #64748b; font-family: monospace;">${escapeHtml(loan.productCode)}</div>
-          ${loan.notes ? `<div style="font-size: 0.72rem; color: #475569; font-style: italic; margin-top: 2px;">"${escapeHtml(loan.notes)}"</div>` : ''}
+          ${productDisplayHtml}
         </td>
         <td>
-          <span style="font-weight: 800; font-size: 0.95rem; color: #1e293b;">
-            ${loan.qty} unds
-          </span>
+          ${isPartial ? `
+            <div style="font-weight: 800; font-size: 0.95rem; color: #ea580c;">${totalPendingUnits} pend.</div>
+            <div style="font-size: 0.70rem; color: #64748b;">de ${totalLoanUnits} unds</div>
+          ` : isConciliated ? `
+            <div style="font-weight: 800; font-size: 0.95rem; color: #166534;">${totalLoanUnits} unds</div>
+            <div style="font-size: 0.70rem; color: #166534;">(100% concil.)</div>
+          ` : `
+            <div style="font-weight: 800; font-size: 0.95rem; color: #1e293b;">${totalLoanUnits} unds</div>
+          `}
         </td>
         <td>
           <div style="font-weight: 800; color: #0284c7; font-size: 0.92rem;">
             $${Number(loan.totalValue || 0).toFixed(2)}
           </div>
-          <div style="font-size: 0.70rem; color: #64748b;">$${Number(loan.unitPrice || 0).toFixed(2)} c/u</div>
+          <div style="font-size: 0.70rem; color: #64748b;">$${Number(loan.unitPrice || 0).toFixed(2)} prom/u</div>
         </td>
         <td>
           <div style="font-weight: 600; color: #1e293b; font-size: 0.82rem;">${escapeHtml(loan.responsible || 'N/A')}</div>
@@ -8156,11 +8775,15 @@ function renderLoansTab() {
             <div style="font-size: 0.70rem; color: #166534; margin-top: 2px;">
               ${escapeHtml(loan.reconcileType || 'Conciliado')} • ${escapeHtml(loan.reconciledBy || '')}
             </div>
+          ` : isPartial && loan.reconciliations && loan.reconciliations.length > 0 ? `
+            <div style="font-size: 0.70rem; color: #c2410c; margin-top: 2px;">
+              ${loan.reconciliations.length} entrega(s) reg.
+            </div>
           ` : ''}
         </td>
         <td>
           <div style="display: flex; gap: 6px;">
-            ${isPending ? `
+            ${(isPending || isPartial) ? `
               <button class="btn btn-success btn-sm" onclick="openReconcileLoanModal('${loan.id}')" title="Conciliar Préstamo">
                 ✅ Conciliar
               </button>
@@ -8182,26 +8805,32 @@ function exportLoansToCSV() {
     return;
   }
 
-  const headers = ['ID', 'Fecha', 'Ruta', 'Origen', 'Destino', 'Codigo_Producto', 'Producto', 'Cantidad', 'Valor_Unitario_USD', 'Total_Valor_USD', 'Responsable', 'Estado', 'Notas', 'Tipo_Conciliacion', 'Fecha_Conciliacion', 'Responsable_Conciliacion'];
+  loans.forEach(normalizeLoanItems);
 
-  const rows = loans.map(l => [
-    `"${l.id || ''}"`,
-    `"${l.displayDate || ''}"`,
-    `"${l.route || ''}"`,
-    `"${getWarehouseLabel(l.originWarehouse || '')}"`,
-    `"${getWarehouseLabel(l.destWarehouse || '')}"`,
-    `"${l.productCode || ''}"`,
-    `"${(l.productName || '').replace(/"/g, '""')}"`,
-    l.qty || 0,
-    (l.unitPrice || 0).toFixed(2),
-    (l.totalValue || 0).toFixed(2),
-    `"${(l.responsible || '').replace(/"/g, '""')}"`,
-    `"${l.status || ''}"`,
-    `"${(l.notes || '').replace(/"/g, '""')}"`,
-    `"${(l.reconcileType || '').replace(/"/g, '""')}"`,
-    `"${l.reconciledAt ? formatDateTime(new Date(l.reconciledAt)) : ''}"`,
-    `"${(l.reconciledBy || '').replace(/"/g, '""')}"`
-  ]);
+  const headers = ['ID', 'Fecha', 'Ruta', 'Origen', 'Destino', 'Codigo_Producto', 'Producto', 'Cantidad_Total', 'Unidades_Pendientes', 'Valor_Unitario_USD', 'Total_Valor_USD', 'Responsable', 'Estado', 'Notas', 'Tipo_Conciliacion', 'Fecha_Conciliacion', 'Responsable_Conciliacion'];
+
+  const rows = loans.map(l => {
+    const totalPending = l.items.reduce((s, i) => s + (Number(i.pendingQty) || 0), 0);
+    return [
+      `"${l.id || ''}"`,
+      `"${l.displayDate || ''}"`,
+      `"${l.route || ''}"`,
+      `"${getWarehouseLabel(l.originWarehouse || '')}"`,
+      `"${getWarehouseLabel(l.destWarehouse || '')}"`,
+      `"${l.productCode || ''}"`,
+      `"${(l.productName || '').replace(/"/g, '""')}"`,
+      l.qty || 0,
+      totalPending,
+      (l.unitPrice || 0).toFixed(2),
+      (l.totalValue || 0).toFixed(2),
+      `"${(l.responsible || '').replace(/"/g, '""')}"`,
+      `"${l.status || ''}"`,
+      `"${(l.notes || '').replace(/"/g, '""')}"`,
+      `"${(l.reconcileType || '').replace(/"/g, '""')}"`,
+      `"${l.reconciledAt ? formatDateTime(new Date(l.reconciledAt)) : ''}"`,
+      `"${(l.reconciledBy || '').replace(/"/g, '""')}"`
+    ];
+  });
 
   const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

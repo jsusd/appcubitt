@@ -1845,6 +1845,7 @@
             <span style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Estado:</span>
             <div class="filter-chip active" data-loan-status="all">Todos</div>
             <div class="filter-chip" data-loan-status="PENDIENTE">🟡 Pendientes</div>
+            <div class="filter-chip" data-loan-status="PARCIAL">🟠 Parciales</div>
             <div class="filter-chip" data-loan-status="CONCILIADO">✅ Conciliados</div>
           </div>
 
@@ -3342,16 +3343,16 @@
     </div>
   </div>
 
-  <!-- MODAL: Registrar Mercancía en Préstamo -->
+  <!-- MODAL: Registrar Mercancía en Préstamo (Multi-Producto & Búsqueda por Código) -->
   <div class="modal-overlay" id="createLoanModal">
-    <div class="modal-box" style="max-width: 640px; max-height: 90vh; overflow-y: auto;">
+    <div class="modal-box" style="max-width: 760px; max-height: 92vh; overflow-y: auto;">
       <button class="modal-close-btn" onclick="closeCreateLoanModal()">&times;</button>
       <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.25rem;">
-        <span style="font-size: 1.3rem;">🤝</span>
+        <span style="font-size: 1.35rem;">🤝</span>
         <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0;">Registrar Mercancía en Préstamo</h3>
       </div>
       <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.15rem;">
-        Registra el traslado de inventario en calidad de préstamo entre almacenes (ej. Trinitarias y T-Mania).
+        Registra el traslado de uno o varios productos en préstamo entre almacenes con control de código, foto e inventario.
       </p>
 
       <!-- Selector de Ruta de Préstamo Rápida -->
@@ -3409,37 +3410,6 @@
         </div>
       </div>
 
-      <!-- Producto Prestado -->
-      <div class="form-group" style="margin-bottom: 1rem;">
-        <label class="form-label" for="loanProductSelect">
-          <strong>Producto en Préstamo *</strong>
-          <span class="label-hint">Selecciona del catálogo o escribe código</span>
-        </label>
-        <select id="loanProductSelect" class="form-control" onchange="handleLoanProductSelect(this.value)">
-          <option value="">-- Seleccionar Producto del Catálogo --</option>
-          <!-- Populated dynamically -->
-        </select>
-      </div>
-
-      <!-- Cantidad y Valor Estimado -->
-      <div class="form-row" style="margin-bottom: 1rem;">
-        <div class="form-group">
-          <label class="form-label" for="loanQuantityInput">Cantidad (Unidades) *</label>
-          <input type="number" id="loanQuantityInput" class="form-control" value="1" min="1" step="1" oninput="updateLoanTotalCalc()" style="font-weight: 700; font-size: 1.05rem;">
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="loanUnitValueInput">Valor Unitario Ref. ($)</label>
-          <div class="currency-input-wrap">
-            <span class="currency-prefix">$</span>
-            <input type="number" id="loanUnitValueInput" class="form-control with-prefix" value="0.00" min="0" step="0.5" oninput="updateLoanTotalCalc()">
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Valor Total Estimado</label>
-          <div id="loanTotalValueDisplay" style="font-weight: 800; font-size: 1.15rem; color: #0284c7; padding: 8px 12px; background: #e0f2fe; border-radius: 6px; text-align: center;">$0.00</div>
-        </div>
-      </div>
-
       <!-- Fecha y Responsable -->
       <div class="form-row" style="margin-bottom: 1rem;">
         <div class="form-group">
@@ -3447,8 +3417,104 @@
           <input type="datetime-local" id="loanDateInput" class="form-control">
         </div>
         <div class="form-group">
-          <label class="form-label" for="loanResponsibleInput">Persona Responsable / Asesor</label>
+          <label class="form-label" for="loanResponsibleInput">Persona Responsable / Asesor *</label>
           <input type="text" id="loanResponsibleInput" class="form-control" placeholder="Ej: Juan Pérez / Carlos Encargado">
+        </div>
+      </div>
+
+      <!-- Bloque para Agregar Productos con Búsqueda por Código y Foto -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-bottom: 1.25rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <span style="font-weight: 800; font-size: 0.92rem; color: #1e293b;">📦 Agregar Productos al Préstamo</span>
+          <span style="font-size: 0.74rem; color: #64748b;">Escribe el código o selecciona del catálogo</span>
+        </div>
+
+        <div style="position: relative; margin-bottom: 10px;">
+          <label class="form-label" for="loanProductSearchInput">
+            <span>Buscar por Código o Descripción *</span>
+          </label>
+          <div style="position: relative;">
+            <input type="text" id="loanProductSearchInput" class="form-control" placeholder="Escribe código (ej: CTHR-1, CT-COF1, CT-AURA2) o nombre..." autocomplete="off">
+            <button type="button" id="clearLoanProductSearchBtn" class="clear-search-btn" onclick="clearLoanProductSearch()" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; display: none; font-size: 1.2rem; color: #94a3b8;">&times;</button>
+          </div>
+          <!-- Autocomplete Dropdown -->
+          <div class="autocomplete-dropdown" id="loanAutocompleteDropdown" style="max-height: 240px; overflow-y: auto; z-index: 9999;"></div>
+        </div>
+
+        <!-- Previsualización del Producto Seleccionado con Imagen -->
+        <div id="loanSelectedProductPreview" style="display: none; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <img id="loanPreviewImg" src="images/placeholder.png" alt="Foto Producto" style="width: 54px; height: 54px; object-fit: contain; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                <span id="loanPreviewCodeBadge" style="font-family: monospace; font-weight: 800; background: #eff6ff; color: #1d4ed8; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem;">CTHR-1</span>
+                <span id="loanPreviewCategoryBadge" style="font-size: 0.72rem; color: #64748b;">Categoría</span>
+              </div>
+              <div id="loanPreviewName" style="font-weight: 700; font-size: 0.88rem; color: #0f172a; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Nombre del producto</div>
+              <div style="font-size: 0.75rem; color: #059669; font-weight: 600; margin-top: 2px;">
+                PVP Ref: <span id="loanPreviewPriceDisplay">$0.00</span> • Stock disponible: <span id="loanPreviewStockDisplay">0</span> un
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fila de Cantidad, Valor Unitario y Botón Agregar -->
+        <div class="form-row" style="align-items: flex-end; gap: 10px;">
+          <div class="form-group" style="flex: 1;">
+            <label class="form-label" for="loanItemQtyInput" style="font-size: 0.78rem;">Cantidad (Unds) *</label>
+            <input type="number" id="loanItemQtyInput" class="form-control" value="1" min="1" step="1" style="font-weight: 700;">
+          </div>
+          <div class="form-group" style="flex: 1.2;">
+            <label class="form-label" for="loanItemValueInput" style="font-size: 0.78rem;">Valor Unitario Ref. ($)</label>
+            <div class="currency-input-wrap">
+              <span class="currency-prefix">$</span>
+              <input type="number" id="loanItemValueInput" class="form-control with-prefix" value="0.00" min="0" step="0.5">
+            </div>
+          </div>
+          <div class="form-group" style="flex: 1.4;">
+            <button type="button" class="btn btn-primary btn-block" onclick="handleAddProductToLoan()" style="padding: 9px 14px; font-weight: 700; background: linear-gradient(135deg, #0284c7, #0369a1); border: none;">
+              ➕ Agregar Producto
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabla de Productos Agregados al Préstamo -->
+      <div style="margin-bottom: 1.25rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <span style="font-weight: 700; font-size: 0.88rem; color: #1e293b;">📋 Lista de Artículos en este Préstamo</span>
+          <span id="loanItemsBadgeCount" style="font-size: 0.75rem; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; font-weight: 700;">0 productos</span>
+        </div>
+
+        <div class="table-responsive" style="border: 1px solid #e2e8f0; border-radius: 8px;">
+          <table class="loan-items-table">
+            <thead>
+              <tr>
+                <th style="width: 45%;">Producto / Código</th>
+                <th style="width: 15%; text-align: center;">Cant.</th>
+                <th style="width: 18%; text-align: right;">Precio Ref.</th>
+                <th style="width: 18%; text-align: right;">Subtotal</th>
+                <th style="width: 4%; text-align: center;"></th>
+              </tr>
+            </thead>
+            <tbody id="loanItemsDraftTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+          <div id="loanItemsDraftEmptyState" style="text-align: center; padding: 1.75rem 1rem; color: #94a3b8; font-size: 0.84rem;">
+            <div style="font-size: 1.6rem; margin-bottom: 4px;">📦</div>
+            <div>Aún no has agregado productos. Busca un código arriba y haz clic en <strong>"Agregar Producto"</strong>.</div>
+          </div>
+        </div>
+
+        <!-- Summary Totals Row -->
+        <div id="loanDraftSummaryRow" style="display: none; justify-content: space-between; align-items: center; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; margin-top: 8px; font-size: 0.86rem;">
+          <div>
+            Total Productos: <strong id="loanSummaryItemsCount" style="color: #1e293b;">0</strong> • Total Unidades: <strong id="loanSummaryUnitsCount" style="color: #0284c7;">0 unds</strong>
+          </div>
+          <div>
+            Valor Estimado Total: <strong id="loanSummaryTotalValue" style="color: #0284c7; font-size: 1rem;">$0.00</strong>
+          </div>
         </div>
       </div>
 
@@ -3467,35 +3533,89 @@
     </div>
   </div>
 
-  <!-- MODAL: Conciliar Mercancía en Préstamo -->
+  <!-- MODAL: Conciliar Mercancía en Préstamo (Completo o Parcial) -->
   <div class="modal-overlay" id="reconcileLoanModal">
-    <div class="modal-box" style="max-width: 580px; max-height: 90vh; overflow-y: auto;">
+    <div class="modal-box" style="max-width: 720px; max-height: 92vh; overflow-y: auto;">
       <button class="modal-close-btn" onclick="closeReconcileLoanModal()">&times;</button>
       <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.25rem;">
-        <span style="font-size: 1.3rem;">✅</span>
+        <span style="font-size: 1.35rem;">✅</span>
         <h3 style="font-size: 1.25rem; font-weight: 800; margin: 0;">Conciliar Préstamo de Mercancía</h3>
       </div>
-      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.15rem;">
-        Registra la resolución del préstamo (devolución física, liquidación por venta o compensación).
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1rem;">
+        Registra la resolución completa o parcial de las unidades prestadas (devolución física, liquidación por venta o compensación).
       </p>
 
       <input type="hidden" id="reconcileLoanId">
 
-      <!-- Loan Summary Card -->
-      <div id="reconcileLoanSummaryCard" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 1.15rem; font-size: 0.85rem;">
+      <!-- Loan Summary Header Card -->
+      <div id="reconcileLoanSummaryCard" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 1rem; font-size: 0.85rem;">
         <!-- Populated dynamically -->
       </div>
 
-      <!-- Forma de Conciliación -->
+      <!-- Modo de Conciliación: Total vs Parcial -->
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label">
+          <strong>Modalidad de Conciliación *</strong>
+        </label>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="loan-route-card selected" id="recModeTotalCard" onclick="setReconcileMode('total')">
+            <div style="font-size: 1.3rem;">⚡</div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.84rem; color: #047857;">Conciliar Todo (100%)</div>
+              <div style="font-size: 0.72rem; color: #64748b;">Liquidar todas las unidades pendientes</div>
+            </div>
+          </div>
+          <div class="loan-route-card" id="recModePartialCard" onclick="setReconcileMode('parcial')">
+            <div style="font-size: 1.3rem;">⚖️</div>
+            <div>
+              <div style="font-weight: 700; font-size: 0.84rem; color: #b45309;">Conciliación Parcial</div>
+              <div style="font-size: 0.72rem; color: #64748b;">Seleccionar cantidades por producto</div>
+            </div>
+          </div>
+        </div>
+        <input type="hidden" id="reconcileModeInput" value="total">
+      </div>
+
+      <!-- Tabla de Artículos a Conciliar (con inputs para conciliación parcial) -->
+      <div style="margin-bottom: 1.15rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label class="form-label" style="margin-bottom: 0;"><strong>Artículos y Cantidades a Conciliar:</strong></label>
+          <button type="button" class="btn btn-outline btn-xs" onclick="resetReconcileQuantitiesToMax()" style="font-size: 0.72rem;">Restablecer al Máximo</button>
+        </div>
+
+        <div class="table-responsive" style="border: 1px solid #e2e8f0; border-radius: 8px;">
+          <table class="loan-items-table">
+            <thead>
+              <tr>
+                <th style="width: 40%;">Producto</th>
+                <th style="width: 15%; text-align: center;">Prestado</th>
+                <th style="width: 15%; text-align: center;">Ya Concil.</th>
+                <th style="width: 15%; text-align: center;">Pendiente</th>
+                <th style="width: 15%; text-align: center;">Conciliar Ahora</th>
+              </tr>
+            </thead>
+            <tbody id="reconcileItemsTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Indicador de Resolución en Vivo -->
+        <div id="reconcileLiveStatusNotice" style="margin-top: 8px; padding: 8px 12px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; font-size: 0.82rem; color: #047857; font-weight: 700;">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Forma de Resolución -->
       <div class="form-group" style="margin-bottom: 1rem;">
         <label class="form-label" for="reconcileTypeSelect">
           <strong>Tipo de Resolución / Conciliación *</strong>
         </label>
         <select id="reconcileTypeSelect" class="form-control">
-          <option value="DEVUELTO">↩️ Mercancía Devuelta físicamente al almacén de origen</option>
-          <option value="VENDIDO_LIQUIDADO">💵 Mercancía Vendida y liquidada / pagada</option>
+          <option value="DEVUELTO">↩️ Mercancía Devuelta físicamente al almacén de origen (reingresa a inventario)</option>
+          <option value="VENDIDO_LIQUIDADO">💵 Mercancía Vendida y liquidada / pagada por almacén destino</option>
           <option value="COMPENSADO">🔄 Compensado con otro producto o crédito a favor</option>
-          <option value="AJUSTE_OTRO">⚙️ Ajuste especial / Otro</option>
+          <option value="AJUSTE_OTRO">⚙️ Ajuste especial / Auditoría</option>
         </select>
       </div>
 
@@ -3505,7 +3625,7 @@
           <input type="date" id="reconcileDateInput" class="form-control">
         </div>
         <div class="form-group">
-          <label class="form-label" for="reconcileResponsibleInput">Responsable de Conciliación</label>
+          <label class="form-label" for="reconcileResponsibleInput">Responsable de Conciliación *</label>
           <input type="text" id="reconcileResponsibleInput" class="form-control" placeholder="Ej: Gerente de Tienda / Ana">
         </div>
       </div>
@@ -3517,7 +3637,7 @@
 
       <div style="display: flex; gap: 10px; justify-content: flex-end;">
         <button type="button" class="btn btn-outline" onclick="closeReconcileLoanModal()">Cancelar</button>
-        <button type="button" class="btn btn-success" onclick="handleConfirmReconcileLoan()" style="padding: 10px 24px;">
+        <button type="button" class="btn btn-success" id="btnConfirmReconcile" onclick="handleConfirmReconcileLoan()" style="padding: 10px 24px;">
           ✅ Confirmar Conciliación
         </button>
       </div>
