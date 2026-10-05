@@ -212,6 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateInventoryBadges();
   initAiAgent();
   initAnalyticsDashboard();
+  initGoogleSheetsSync();
   setupAutocomplete();
   setupClientAutocomplete();
   setupLoanProductAutocomplete();
@@ -1746,6 +1747,11 @@ function handleRegisterSaleDirect() {
   // Generate / Synchronize CXP for Cashea, IVA, T-Mania, and custom commissions
   syncPayablesForSale(saleRecord);
 
+  // Auto-sync sale to Google Sheets
+  if (typeof autoSyncSaleToSheets === 'function') {
+    autoSyncSaleToSheets(saleRecord);
+  }
+
   renderTopStats();
   renderClients();
   renderOrdersTab();
@@ -2041,6 +2047,12 @@ function handleCheckoutCart() {
 
   // Generate / Synchronize CXP for Cashea, IVA, T-Mania, and custom commissions
   syncPayablesForSale(saleRecord);
+
+  // Auto-sync sale to Google Sheets
+  if (typeof autoSyncSaleToSheets === 'function') {
+    autoSyncSaleToSheets(saleRecord);
+  }
+
   clearCart();
 
   renderTopStats();
@@ -3705,6 +3717,12 @@ function handleSaveAbono() {
 
   saveSalesToStorage();
   closeAbonoModal();
+
+  // Auto-sync abono to Google Sheets
+  if (typeof autoSyncAbonoToSheets === 'function') {
+    autoSyncAbonoToSheets(sale, amount, method, note);
+  }
+
   showToast(`¡Abono de $${amount.toFixed(2)} registrado con éxito!`, 'success');
   renderHistory();
   renderCredits();
@@ -12975,4 +12993,1165 @@ function deleteExpense(id) {
   renderAnalyticsDashboard();
   showToast('Gasto eliminado', 'info');
 }
+
+// ==========================================================================
+// CUBITT POS - GOOGLE SHEETS LIVE BIDIRECTIONAL SYNC ENGINE
+// ==========================================================================
+
+const SHEETS_CONFIG = {
+  spreadsheetId: (window.CUBITT_CONFIG && window.CUBITT_CONFIG.GOOGLE_SHEETS_SPREADSHEET_ID) || '18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw',
+  sheetNameVentas: (window.CUBITT_CONFIG && window.CUBITT_CONFIG.GOOGLE_SHEETS_NAME_VENTAS) || 'ventas',
+  gidVentas: (window.CUBITT_CONFIG && window.CUBITT_CONFIG.GOOGLE_SHEETS_GID_VENTAS) || '1352847878',
+  storageKeyUrl: 'cubitt_sheets_webapp_url',
+  storageKeyAutoSync: 'cubitt_sheets_auto_sync',
+  storageKeyLastSync: 'cubitt_sheets_last_sync'
+};
+
+const GOOGLE_APPS_SCRIPT_SOURCE = `/**
+ * CUBITT POS - SCRIPT DE CONEXIÓN BIDIRECCIONAL CON GOOGLE SHEETS
+ * Base de Datos: 18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw (Hoja: ventas)
+ */
+
+const SPREADSHEET_ID = '18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw';
+const SHEET_NAME_VENTAS = 'ventas';
+const SHEET_NAME_GASTOS = 'gastos';
+
+function doGet(e) {
+  try {
+    const ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
+    if (!sheet) {
+      const sheets = ss.getSheets();
+      sheet = sheets.find(s => s.getName().toLowerCase().includes('venta')) || sheets[0];
+    }
+
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+
+    if (lastRow <= 1) {
+      return jsonResponse({ status: 'success', data: [], sales: [], message: 'La hoja no tiene registros de datos.' });
+    }
+
+    const headerRange = sheet.getRange(1, 1, 1, lastCol);
+    const headers = headerRange.getValues()[0].map(h => (h || '').toString().trim());
+
+    const dataRange = sheet.getRange(2, 1, lastRow - 1, lastCol);
+    const values = dataRange.getValues();
+    const notes = dataRange.getNotes();
+
+    const salesList = [];
+    const colFecha = findColIndex(headers, ['fecha', 'date', 'dia']);
+    const colCodigo = findColIndex(headers, ['codigo', 'código', 'code', 'sku']);
+    const colProducto = findColIndex(headers, ['producto', 'product', 'descripcion', 'artículo']);
+    const colImagen = findColIndex(headers, ['imagen', 'image', 'foto', 'photo']);
+    const colMonto = findColIndex(headers, ['monto', 'total', 'precio', 'amount', 'facturación']);
+    const colCobrado = findColIndex(headers, ['cobrado', 'pagado', 'paid', 'abono']);
+    const colPendiente = findColIndex(headers, ['pendiente', 'saldo', 'pending', 'resta']);
+    const colVendedor = findColIndex(headers, ['vendedor', 'seller', 'asesor']);
+    const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
+    const colAlmacen = findColIndex(headers, ['almacen', 'almacén', 'sede', 'warehouse']);
+
+    for (let r = 0; r < values.length; r++) {
+      const row = values[r];
+      const rowNotes = notes[r];
+      const rowNumber = r + 2;
+
+      const fechaRaw = colFecha >= 0 ? row[colFecha] : '';
+      const codigoRaw = colCodigo >= 0 ? row[colCodigo] : '';
+      const productoRaw = colProducto >= 0 ? row[colProducto] : '';
+      const imagenRaw = colImagen >= 0 ? row[colImagen] : '';
+      const montoRaw = colMonto >= 0 ? row[colMonto] : 0;
+      const cobradoRaw = colCobrado >= 0 ? row[colCobrado] : 0;
+      const pendienteRaw = colPendiente >= 0 ? row[colPendiente] : 0;
+      const vendedorRaw = colVendedor >= 0 ? row[colVendedor] : '';
+      const clienteRaw = colCliente >= 0 ? row[colCliente] : '';
+      const almacenRaw = colAlmacen >= 0 ? row[colAlmacen] : 'barquisimeto_trinitarias';
+
+      const montoNote = colMonto >= 0 ? (rowNotes[colMonto] || '') : '';
+      const paymentDates = parsePaymentDatesFromComment(montoNote);
+
+      if (!fechaRaw && !productoRaw && !montoRaw) continue;
+
+      const totalNum = parseFloat(montoRaw) || 0;
+      const cobradoNum = parseFloat(cobradoRaw) || 0;
+      const pendienteNum = pendienteRaw !== '' ? parseFloat(pendienteRaw) : Math.max(0, totalNum - cobradoNum);
+
+      salesList.push({
+        rowNumber: rowNumber,
+        date: formatDateOutput(fechaRaw),
+        productCode: (codigoRaw || '').toString().trim(),
+        productName: (productoRaw || '').toString().trim(),
+        image: (imagenRaw || '').toString().trim(),
+        totalAmount: totalNum,
+        collectedAmount: cobradoNum,
+        pendingAmount: pendienteNum,
+        seller: (vendedorRaw || '').toString().trim(),
+        client: (clienteRaw || '').toString().trim(),
+        warehouse: (almacenRaw || '').toString().trim(),
+        paymentDatesComment: montoNote,
+        installments: paymentDates,
+        status: pendienteNum > 0 ? 'pendiente' : 'pagado'
+      });
+    }
+
+    return jsonResponse({
+      status: 'success',
+      spreadsheetId: ss.getId(),
+      sheetName: sheet.getName(),
+      totalRecords: salesList.length,
+      lastSync: new Date().toISOString(),
+      sales: salesList
+    });
+  } catch (error) {
+    return jsonResponse({
+      status: 'error',
+      message: error.toString()
+    });
+  }
+}
+
+function doPost(e) {
+  try {
+    let payload = {};
+    if (e.postData && e.postData.contents) {
+      payload = JSON.parse(e.postData.contents);
+    } else if (e.parameter) {
+      payload = e.parameter;
+    }
+
+    const action = payload.action || 'add_sale';
+    const ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+
+    if (action === 'add_sale' || action === 'create_sale') {
+      return handleAddSale(ss, payload);
+    } else if (action === 'add_abono' || action === 'update_sale') {
+      return handleUpdateAbono(ss, payload);
+    } else if (action === 'add_expense') {
+      return handleAddExpense(ss, payload);
+    } else {
+      return jsonResponse({ status: 'error', message: 'Acción no reconocida: ' + action });
+    }
+  } catch (error) {
+    return jsonResponse({ status: 'error', message: error.toString() });
+  }
+}
+
+function handleAddSale(ss, payload) {
+  let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
+  if (!sheet) sheet = ss.getSheets()[0];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => (h || '').toString().trim());
+
+  const colFecha = findColIndex(headers, ['fecha', 'date', 'dia']);
+  const colCodigo = findColIndex(headers, ['codigo', 'código', 'code', 'sku']);
+  const colProducto = findColIndex(headers, ['producto', 'product', 'descripcion', 'artículo']);
+  const colImagen = findColIndex(headers, ['imagen', 'image', 'foto']);
+  const colMonto = findColIndex(headers, ['monto', 'total', 'precio', 'amount', 'facturación']);
+  const colCobrado = findColIndex(headers, ['cobrado', 'pagado', 'paid', 'abono']);
+  const colPendiente = findColIndex(headers, ['pendiente', 'saldo', 'pending']);
+  const colVendedor = findColIndex(headers, ['vendedor', 'seller', 'asesor']);
+  const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador']);
+
+  const nextRow = sheet.getLastRow() + 1;
+  const numCols = Math.max(sheet.getLastColumn(), 8);
+  const newRowValues = new Array(numCols).fill('');
+
+  const saleDate = payload.date || Utilities.formatDate(new Date(), 'GMT-4', 'yyyy-MM-dd');
+  const code = payload.productCode || '';
+  const desc = payload.productName || payload.description || '';
+  const img = payload.image || '';
+  const total = Number(payload.totalAmount) || 0;
+  const cobrado = Number(payload.collectedAmount) || Number(payload.creditPaid) || (payload.paymentType === 'contado' ? total : 0);
+  const pendiente = Number(payload.pendingAmount) || Math.max(0, total - cobrado);
+  const seller = payload.seller || '';
+  const client = payload.client || payload.clientName || '';
+
+  if (colFecha >= 0) newRowValues[colFecha] = saleDate;
+  if (colCodigo >= 0) newRowValues[colCodigo] = code;
+  if (colProducto >= 0) newRowValues[colProducto] = desc;
+  if (colImagen >= 0) newRowValues[colImagen] = img;
+  if (colMonto >= 0) newRowValues[colMonto] = total;
+  if (colCobrado >= 0) newRowValues[colCobrado] = cobrado;
+  if (colPendiente >= 0) newRowValues[colPendiente] = pendiente;
+  if (colVendedor >= 0) newRowValues[colVendedor] = seller;
+  if (colCliente >= 0) newRowValues[colCliente] = client;
+
+  sheet.getRange(nextRow, 1, 1, numCols).setValues([newRowValues]);
+
+  if (colMonto >= 0 && payload.paymentDatesComment) {
+    const montoCell = sheet.getRange(nextRow, colMonto + 1);
+    montoCell.setNote(payload.paymentDatesComment);
+  }
+
+  return jsonResponse({
+    status: 'success',
+    message: 'Venta registrada con éxito en Google Sheets',
+    row: nextRow,
+    saleId: payload.id || ('ROW-' + nextRow)
+  });
+}
+
+function handleUpdateAbono(ss, payload) {
+  let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
+  if (!sheet) sheet = ss.getSheets()[0];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => (h || '').toString().trim());
+  const colMonto = findColIndex(headers, ['monto', 'total', 'precio', 'amount']);
+  const colCobrado = findColIndex(headers, ['cobrado', 'pagado', 'paid', 'abono']);
+  const colPendiente = findColIndex(headers, ['pendiente', 'saldo', 'pending']);
+
+  const rowNumber = parseInt(payload.rowNumber);
+  if (rowNumber > 1 && rowNumber <= sheet.getLastRow()) {
+    if (colCobrado >= 0 && payload.newCollectedAmount !== undefined) {
+      sheet.getRange(rowNumber, colCobrado + 1).setValue(payload.newCollectedAmount);
+    }
+    if (colPendiente >= 0 && payload.newPendingAmount !== undefined) {
+      sheet.getRange(rowNumber, colPendiente + 1).setValue(payload.newPendingAmount);
+    }
+    if (colMonto >= 0 && payload.newPaymentComment) {
+      const cell = sheet.getRange(rowNumber, colMonto + 1);
+      const oldNote = cell.getNote() || '';
+      const updatedNote = oldNote ? (oldNote + '\\n' + payload.newPaymentComment) : payload.newPaymentComment;
+      cell.setNote(updatedNote);
+    }
+    return jsonResponse({ status: 'success', message: 'Abono registrado en Google Sheets fila ' + rowNumber });
+  }
+  return jsonResponse({ status: 'error', message: 'Fila no encontrada en la hoja' });
+}
+
+function handleAddExpense(ss, payload) {
+  let sheet = ss.getSheetByName(SHEET_NAME_GASTOS);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAME_GASTOS);
+    sheet.appendRow(['Fecha', 'Categoría', 'Descripción', 'Almacén', 'Beneficiario', 'Monto USD', 'Monto Bs', 'Referencia']);
+  }
+  sheet.appendRow([
+    payload.date || Utilities.formatDate(new Date(), 'GMT-4', 'yyyy-MM-dd'),
+    payload.category || 'otro',
+    payload.description || '',
+    payload.warehouse || 'general',
+    payload.beneficiary || '',
+    Number(payload.amountUsd) || 0,
+    Number(payload.amountBs) || 0,
+    payload.ref || ''
+  ]);
+  return jsonResponse({ status: 'success', message: 'Egreso guardado en Google Sheets' });
+}
+
+function findColIndex(headers, matchWords) {
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i].toLowerCase();
+    for (let w of matchWords) {
+      if (h.includes(w)) return i;
+    }
+  }
+  return -1;
+}
+
+function formatDateOutput(dateVal) {
+  if (!dateVal) return '';
+  if (dateVal instanceof Date) {
+    return Utilities.formatDate(dateVal, 'GMT-4', 'yyyy-MM-dd');
+  }
+  return dateVal.toString();
+}
+
+function parsePaymentDatesFromComment(commentText) {
+  if (!commentText || typeof commentText !== 'string') return [];
+  const lines = commentText.split(/\\r?\\n/);
+  const installments = [];
+  const dateRegex = /(\\d{1,2}[\\/\\-\\.]\\d{1,2}[\\/\\-\\.]\\d{2,4}|\\d{4}[\\/\\-\\.]\\d{1,2}[\\/\\-\\.]\\d{1,2})/;
+  const amountRegex = /\\$?\\s*(\\d+(?:[.,]\\d{1,2})?)/;
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const dateMatch = trimmed.match(dateRegex);
+    const amtMatch = trimmed.match(amountRegex);
+    installments.push({
+      index: index + 1,
+      rawText: trimmed,
+      date: dateMatch ? dateMatch[1] : null,
+      amount: amtMatch ? parseFloat(amtMatch[1].replace(',', '.')) : null
+    });
+  });
+  return installments;
+}
+
+function jsonResponse(data) {
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}`;
+
+// Initialize Google Sheets Sync System
+function initGoogleSheetsSync() {
+  const url = getSheetsWebAppUrl();
+  const autoSync = isSheetsAutoSyncEnabled();
+
+  const codeArea = document.getElementById('googleAppsScriptCodeArea');
+  if (codeArea && !codeArea.value) {
+    codeArea.value = GOOGLE_APPS_SCRIPT_SOURCE;
+  }
+
+  const urlInput = document.getElementById('sheetsWebAppUrlInput');
+  if (urlInput && url) {
+    urlInput.value = url;
+  }
+
+  const autoCheckbox = document.getElementById('sheetsAutoSyncCheckbox');
+  if (autoCheckbox) {
+    autoCheckbox.checked = autoSync;
+  }
+
+  updateSheetsUIStatus();
+
+  // If a URL is configured and autoSync is enabled, run a silent background pull
+  if (url && autoSync) {
+    setTimeout(() => {
+      syncFromGoogleSheets(false).catch(err => {
+        console.warn('Google Sheets background sync notice:', err);
+      });
+    }, 2500);
+  }
+}
+
+// Get saved Apps Script Web App URL
+function getSheetsWebAppUrl() {
+  return localStorage.getItem(SHEETS_CONFIG.storageKeyUrl) ||
+    (window.CUBITT_CONFIG && window.CUBITT_CONFIG.GOOGLE_APPS_SCRIPT_URL) || '';
+}
+
+// Check if automatic sync is active
+function isSheetsAutoSyncEnabled() {
+  return localStorage.getItem(SHEETS_CONFIG.storageKeyAutoSync) !== 'false';
+}
+
+// Update UI badges, header pill, and labels
+function updateSheetsUIStatus() {
+  const url = getSheetsWebAppUrl();
+  const headerStatus = document.getElementById('headerSheetsStatusVal');
+  const headerBtn = document.getElementById('headerSheetsSyncBtn');
+  const badge = document.getElementById('sheetsLiveStatusBadge');
+
+  if (url) {
+    if (headerStatus) headerStatus.textContent = '🟢 Enlazado';
+    if (headerBtn) headerBtn.style.borderColor = 'rgba(16, 185, 129, 0.7)';
+    if (badge) {
+      badge.innerHTML = `
+        <span class="badge" style="background: #10b981; color: #ffffff; padding: 6px 12px; border-radius: 20px; font-weight: 700;">
+          🟢 Enlace Activo
+        </span>
+      `;
+    }
+  } else {
+    if (headerStatus) headerStatus.textContent = 'Enlazar Base';
+    if (headerBtn) headerBtn.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+    if (badge) {
+      badge.innerHTML = `
+        <span class="badge" style="background: #f59e0b; color: #ffffff; padding: 6px 12px; border-radius: 20px; font-weight: 700;">
+          🟡 Configuración Pendiente
+        </span>
+      `;
+    }
+  }
+}
+
+// Open Google Sheets Sync Modal
+function openSheetsSyncModal() {
+  const modal = document.getElementById('sheetsSyncModal');
+  if (!modal) return;
+
+  const url = getSheetsWebAppUrl();
+  const urlInput = document.getElementById('sheetsWebAppUrlInput');
+  if (urlInput) urlInput.value = url;
+
+  const autoCheckbox = document.getElementById('sheetsAutoSyncCheckbox');
+  if (autoCheckbox) autoCheckbox.checked = isSheetsAutoSyncEnabled();
+
+  const codeArea = document.getElementById('googleAppsScriptCodeArea');
+  if (codeArea && !codeArea.value) {
+    codeArea.value = GOOGLE_APPS_SCRIPT_SOURCE;
+  }
+
+  updateSheetsUIStatus();
+  modal.style.display = 'flex';
+  modal.classList.add('active');
+
+  appendSheetsSyncLog('Panel de Google Sheets abierto. Base: 18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw (ventas).');
+}
+
+// Close Google Sheets Sync Modal
+function closeSheetsSyncModal() {
+  const modal = document.getElementById('sheetsSyncModal');
+  if (!modal) return;
+  modal.style.display = 'none';
+  modal.classList.remove('active');
+}
+
+// Switch Tabs inside Sheets Modal
+function switchSheetsModalTab(tabId) {
+  const tabLive = document.getElementById('sheetsModalTabLive');
+  const tabFile = document.getElementById('sheetsModalTabFile');
+  const tabGuide = document.getElementById('sheetsModalTabGuide');
+
+  const btnLive = document.getElementById('sheetsSubNavBtnLive');
+  const btnFile = document.getElementById('sheetsSubNavBtnFile');
+  const btnGuide = document.getElementById('sheetsSubNavBtnGuide');
+
+  if (tabLive) tabLive.style.display = tabId === 'live' ? 'block' : 'none';
+  if (tabFile) tabFile.style.display = tabId === 'file' ? 'block' : 'none';
+  if (tabGuide) tabGuide.style.display = tabId === 'guide' ? 'block' : 'none';
+
+  if (btnLive) btnLive.classList.toggle('active', tabId === 'live');
+  if (btnFile) btnFile.classList.toggle('active', tabId === 'file');
+  if (btnGuide) btnGuide.classList.toggle('active', tabId === 'guide');
+}
+
+// Save Web App URL
+function saveSheetsWebAppUrl() {
+  const input = document.getElementById('sheetsWebAppUrlInput');
+  const rawUrl = (input ? input.value : '').trim();
+
+  if (!rawUrl) {
+    localStorage.removeItem(SHEETS_CONFIG.storageKeyUrl);
+    updateSheetsUIStatus();
+    appendSheetsSyncLog('[Config] URL eliminada. La app operará en modo local.');
+    showToast('URL de Apps Script desvinculada', 'info');
+    return;
+  }
+
+  if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+    showToast('⚠️ Ingresa una URL válida que empiece por https://script.google.com/...', 'warning');
+    return;
+  }
+
+  localStorage.setItem(SHEETS_CONFIG.storageKeyUrl, rawUrl);
+  updateSheetsUIStatus();
+  appendSheetsSyncLog('[Config] URL guardada: ' + rawUrl.slice(0, 45) + '...');
+  showToast('✅ URL de Google Apps Script guardada', 'success');
+
+  testSheetsConnection();
+}
+
+// Test Connection with Google Apps Script Web App
+async function testSheetsConnection() {
+  const url = getSheetsWebAppUrl();
+  const badge = document.getElementById('sheetsLiveStatusBadge');
+
+  if (!url) {
+    showToast('⚠️ Por favor ingresa primero la URL de tu Google Apps Script', 'warning');
+    switchSheetsModalTab('guide');
+    return;
+  }
+
+  if (badge) {
+    badge.innerHTML = `
+      <span class="badge" style="background: #3b82f6; color: #ffffff; padding: 6px 12px; border-radius: 20px;">
+        ⏳ Probando conexión...
+      </span>
+    `;
+  }
+  appendSheetsSyncLog('[Prueba] Verificando comunicación con Google Apps Script...');
+
+  try {
+    const testUrl = url + (url.includes('?') ? '&' : '?') + 'action=ping&t=' + Date.now();
+    const res = await fetch(testUrl, { method: 'GET' });
+    const data = await res.json();
+
+    if (data && data.status === 'success') {
+      if (badge) {
+        badge.innerHTML = `
+          <span class="badge" style="background: #10b981; color: #ffffff; padding: 6px 12px; border-radius: 20px;">
+            🟢 Conectado con Google Sheets
+          </span>
+        `;
+      }
+      appendSheetsSyncLog('[Prueba] ✅ Conexión exitosa. Base de datos: ' + (data.sheetName || 'ventas') + ' (' + (data.totalRecords || 0) + ' registros detectados).');
+      showToast('✅ ¡Conexión con Google Sheets verificada con éxito!', 'success');
+      updateSheetsUIStatus();
+    } else {
+      throw new Error(data.message || 'Respuesta inesperada');
+    }
+  } catch (err) {
+    console.error('Error probando conexión Sheets:', err);
+    if (badge) {
+      badge.innerHTML = `
+        <span class="badge" style="background: #ef4444; color: #ffffff; padding: 6px 12px; border-radius: 20px;">
+          🔴 Error de Conexión
+        </span>
+      `;
+    }
+    appendSheetsSyncLog('[Prueba] ❌ Error al conectar: ' + err.message);
+    appendSheetsSyncLog('[Ayuda] Asegúrate de que la Web App en Google Apps Script tenga acceso: "Cualquier persona" (Anyone).');
+    showToast('⚠️ No se pudo conectar. Verifica que el script esté implementado como "Cualquier persona" (Anyone)', 'danger');
+  }
+}
+
+// Handle Auto Sync Toggle
+function handleToggleAutoSync(checked) {
+  localStorage.setItem(SHEETS_CONFIG.storageKeyAutoSync, checked ? 'true' : 'false');
+  appendSheetsSyncLog('[Auto-Sync] Sincronización automática ' + (checked ? 'ACTIVADA' : 'DESACTIVADA') + '.');
+  showToast('Sincronización automática ' + (checked ? 'activada' : 'desactivada'), 'info');
+}
+
+// Append log messages to Sheets console box
+function appendSheetsSyncLog(msg) {
+  const logBox = document.getElementById('sheetsSyncLogBox');
+  if (!logBox) return;
+
+  const now = new Date();
+  const timeStr = now.toTimeString().slice(0, 8);
+  const line = document.createElement('div');
+  line.style.marginBottom = '3px';
+  line.innerHTML = `<span style="color: #6ee7b7;">[${timeStr}]</span> ${escapeHtml(msg)}`;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+// Copy Apps Script code to clipboard
+function copyGoogleAppsScriptCode() {
+  const codeArea = document.getElementById('googleAppsScriptCodeArea');
+  const codeToCopy = (codeArea && codeArea.value) ? codeArea.value : GOOGLE_APPS_SCRIPT_SOURCE;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(codeToCopy).then(() => {
+      const btn = document.getElementById('btnCopyAppsScript');
+      if (btn) {
+        const orig = btn.innerHTML;
+        btn.innerHTML = '✅ ¡Código Copiado!';
+        btn.style.background = '#10b981';
+        btn.style.color = '#ffffff';
+        setTimeout(() => {
+          btn.innerHTML = orig;
+          btn.style.background = '';
+          btn.style.color = '';
+        }, 2500);
+      }
+      showToast('📋 Código de Google Apps Script copiado al portapapeles', 'success');
+      appendSheetsSyncLog('[Portapapeles] Código de Google Apps Script copiado con éxito.');
+    }).catch(err => {
+      console.error(err);
+      fallbackCopyCode(codeToCopy);
+    });
+  } else {
+    fallbackCopyCode(codeToCopy);
+  }
+}
+
+function fallbackCopyCode(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  showToast('📋 Código copiado al portapapeles', 'success');
+}
+
+// Client-side parser for installment dates located in the note/comment of the amount cell
+function parsePaymentDatesCommentClient(commentText) {
+  if (!commentText || typeof commentText !== 'string') return [];
+  const lines = commentText.split(/\r?\n/);
+  const installments = [];
+  const dateRegex = /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/;
+  const amountRegex = /\$?\s*(\d+(?:[.,]\d{1,2})?)/;
+
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const dateMatch = trimmed.match(dateRegex);
+    const amtMatch = trimmed.match(amountRegex);
+
+    installments.push({
+      index: index + 1,
+      rawText: trimmed,
+      date: dateMatch ? dateMatch[1] : null,
+      amount: amtMatch ? parseFloat(amtMatch[1].replace(',', '.')) : null
+    });
+  });
+  return installments;
+}
+
+// Format sale payment history into a cell comment string
+function formatSaleInstallmentsNote(sale) {
+  if (!sale) return '';
+  const lines = [];
+
+  if (sale.paymentsHistory && sale.paymentsHistory.length > 0) {
+    sale.paymentsHistory.forEach((p, idx) => {
+      const dt = p.date ? p.date.split(',')[0] : '';
+      const amt = Number(p.amount) || 0;
+      const desc = p.note || p.method || `Pago ${idx + 1}`;
+      lines.push(`${dt}: $${amt.toFixed(2)} (${desc})`);
+    });
+  }
+
+  const bal = Number(sale.creditBalance || sale.creditRemaining) || 0;
+  if (bal > 0) {
+    lines.push(`Saldo pendiente: $${bal.toFixed(2)}`);
+  }
+
+  if (sale.notes && !lines.some(l => l.includes(sale.notes))) {
+    lines.push(`Nota: ${sale.notes}`);
+  }
+
+  return lines.join('\n');
+}
+
+// Sincronizar desde Google Sheets (PULL)
+async function syncFromGoogleSheets(showToastNotification = true) {
+  const url = getSheetsWebAppUrl();
+  const btn = document.getElementById('btnSyncFromSheets');
+
+  if (!url) {
+    if (showToastNotification) {
+      showToast('⚠️ Configura la URL de Google Apps Script primero', 'warning');
+      switchSheetsModalTab('guide');
+    }
+    appendSheetsSyncLog('[Aviso] No hay URL configurada. Abre la pestaña "Guía Rápida" para configurarla.');
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳ Sincronizando...</span>';
+  }
+
+  appendSheetsSyncLog('[Descarga] Conectando con Google Sheets...');
+
+  try {
+    const fetchUrl = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+    const res = await fetch(fetchUrl, { method: 'GET' });
+    const data = await res.json();
+
+    if (!data || data.status !== 'success' || !Array.isArray(data.sales)) {
+      throw new Error((data && data.message) ? data.message : 'Estructura de respuesta inválida');
+    }
+
+    const fetchedSales = data.sales;
+    appendSheetsSyncLog(`[Descarga] Recibidas ${fetchedSales.length} ventas desde la hoja "${data.sheetName || 'ventas'}". Procesando...`);
+
+    // Ingest and map fetched sales
+    const importedSales = [];
+    const knownCodesMap = {};
+    (state.products || []).forEach(p => {
+      if (p.code) knownCodesMap[p.code.toUpperCase()] = p;
+    });
+
+    fetchedSales.forEach(item => {
+      const rowNum = item.rowNumber || '';
+      const saleDate = item.date || new Date().toISOString().slice(0, 10);
+      const code = (item.productCode || '').trim();
+      const name = (item.productName || '').trim() || (code ? `Producto ${code}` : 'Venta Cubitt');
+      const total = Number(item.totalAmount) || 0;
+      const collected = Number(item.collectedAmount) || 0;
+      const pending = Number(item.pendingAmount) !== undefined ? Number(item.pendingAmount) : Math.max(0, total - collected);
+      const isCredit = pending > 0;
+      const seller = (item.seller || '').trim() || 'General';
+      const client = (item.client || '').trim() || 'Cliente General';
+      const wh = (item.warehouse || '').trim() || 'barquisimeto_trinitarias';
+      const noteComment = item.paymentDatesComment || '';
+
+      // Match product metadata
+      const matchedProd = knownCodesMap[code.toUpperCase()] ||
+        (state.products || []).find(p => p.name && p.name.toLowerCase() === name.toLowerCase()) || null;
+
+      const prodImg = item.image || (matchedProd ? matchedProd.image : 'images/placeholder.png');
+      const prodCategory = matchedProd ? matchedProd.category : 'ACCESORIOS';
+      const prodMayor = matchedProd ? (matchedProd.mayor || (matchedProd.price * 0.55)) : (total * 0.53);
+
+      // Build parsed payments history from note comments (cuotas y fechas)
+      const parsedInstallments = item.installments || parsePaymentDatesCommentClient(noteComment);
+      let paymentsHist = [];
+      if (parsedInstallments && parsedInstallments.length > 0) {
+        paymentsHist = parsedInstallments.map((inst, idx) => ({
+          date: inst.date || saleDate,
+          amount: Number(inst.amount) || (idx === 0 ? collected : 0),
+          method: 'Cuota / Abono',
+          note: inst.rawText || `Cuota ${idx + 1}`
+        }));
+      } else if (collected > 0) {
+        paymentsHist = [{
+          date: saleDate,
+          amount: collected,
+          method: isCredit ? 'Inicial' : 'Contado',
+          note: isCredit ? 'Pago inicial registrado en Sheets' : 'Pago total contado'
+        }];
+      }
+
+      // Check if this sale already exists locally
+      const existingIdx = (state.sales || []).findIndex(s =>
+        s.rowNumber === rowNum ||
+        (s.id && s.id === `SHEETS-R${rowNum}`) ||
+        (s.seller === seller && s.totalAmount === total && (s.timestamp || s.date || '').slice(0, 10) === saleDate)
+      );
+
+      const saleId = existingIdx >= 0 ? state.sales[existingIdx].id : `SHEETS-R${rowNum}-${Date.now().toString().slice(-4)}`;
+
+      const saleObj = {
+        id: saleId,
+        rowNumber: rowNum,
+        timestamp: new Date(saleDate + 'T12:00:00Z').toISOString(),
+        date: saleDate,
+        displayDate: `${saleDate}, 12:00:00`,
+        items: [
+          {
+            code: code || 'CT-GEN',
+            description: name,
+            category: prodCategory,
+            image: prodImg,
+            quantity: 1,
+            unitPrice: total,
+            mayor: prodMayor,
+            subtotal: total
+          }
+        ],
+        productCode: code,
+        productName: name,
+        image: prodImg,
+        totalAmount: total,
+        total: total,
+        totalMayor: prodMayor,
+        totalProfit: Math.max(0, total - prodMayor),
+        paymentType: isCredit ? 'credito' : 'contado',
+        creditSubtype: seller === 'CASHEA' ? 'cashea_bull' : (isCredit ? 'jp' : null),
+        creditStatus: isCredit ? 'PENDIENTE' : 'PAGADO',
+        creditBalance: pending,
+        creditRemaining: pending,
+        creditAbono: collected,
+        creditPaid: collected,
+        seller: seller,
+        vendedor: seller,
+        client: client,
+        clientName: client,
+        almacen: wh,
+        warehouse: wh,
+        notes: noteComment,
+        paymentDatesComment: noteComment,
+        installments: parsedInstallments,
+        paymentsHistory: paymentsHist,
+        syncedWithSheets: true
+      };
+
+      importedSales.push(saleObj);
+    });
+
+    if (importedSales.length > 0) {
+      // Merge with state.sales (preserving any non-conflicting purely local sales)
+      const nonSheetsSales = (state.sales || []).filter(s => !s.rowNumber && !s.id.startsWith('SHEETS-'));
+      state.sales = [...importedSales, ...nonSheetsSales];
+      state.sales.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
+
+      // Register any new sellers in state.sellers
+      const knownSellerNames = new Set((state.sellers || []).map(s => s.name.toUpperCase()));
+      importedSales.forEach(s => {
+        if (s.seller && !knownSellerNames.has(s.seller.toUpperCase())) {
+          knownSellerNames.add(s.seller.toUpperCase());
+          state.sellers.push({
+            id: `SEL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            name: s.seller,
+            phone: '',
+            target: 1000
+          });
+        }
+      });
+
+      saveSalesToStorage();
+      if (typeof saveSellersToStorage === 'function') saveSellersToStorage();
+
+      renderTopStats();
+      renderCatalog();
+      renderHistory();
+      renderCredits();
+      renderClients();
+      renderSellersTab();
+      renderAnalyticsDashboard();
+
+      localStorage.setItem(SHEETS_CONFIG.storageKeyLastSync, new Date().toISOString());
+      appendSheetsSyncLog(`[Éxito] ✅ ${importedSales.length} ventas sincronizadas y actualizadas correctamente.`);
+
+      if (showToastNotification) {
+        showToast(`✅ ¡Base sincronizada! ${importedSales.length} ventas cargadas desde Google Sheets`, 'success');
+      }
+    } else {
+      appendSheetsSyncLog('[Aviso] La hoja no contenía filas con ventas procesables.');
+    }
+
+  } catch (err) {
+    console.error('Error sincronizando desde Sheets:', err);
+    appendSheetsSyncLog('[Error] ❌ Falló la descarga: ' + err.message);
+    if (showToastNotification) {
+      showToast('⚠️ No se pudo sincronizar desde Google Sheets: ' + err.message, 'danger');
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<span>⬇️ Sincronizar Ahora</span>';
+    }
+  }
+}
+
+// Subir Ventas a Google Sheets (PUSH)
+async function pushToGoogleSheets(customSale = null) {
+  const url = getSheetsWebAppUrl();
+  const btn = document.getElementById('btnPushToSheets');
+
+  if (!url) {
+    showToast('⚠️ Configura la URL de Google Apps Script para enviar datos', 'warning');
+    switchSheetsModalTab('guide');
+    return;
+  }
+
+  // If a single sale is passed, push it
+  if (customSale) {
+    return autoSyncSaleToSheets(customSale);
+  }
+
+  // Pushing local sales
+  const salesToPush = (state.sales || []).slice(0, 30);
+  if (salesToPush.length === 0) {
+    showToast('No hay ventas registradas para subir', 'info');
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳ Subiendo a Sheets...</span>';
+  }
+
+  appendSheetsSyncLog(`[Subida] Enviando ${salesToPush.length} ventas recientes a Google Sheets...`);
+  let successCount = 0;
+
+  for (const sale of salesToPush) {
+    try {
+      await autoSyncSaleToSheets(sale, false);
+      successCount++;
+    } catch (e) {
+      console.warn('Error subiendo venta individual:', sale.id, e);
+    }
+  }
+
+  appendSheetsSyncLog(`[Subida] ✅ Proceso completado: ${successCount} ventas procesadas en Google Sheets.`);
+  showToast(`✅ ${successCount} ventas sincronizadas con Google Sheets`, 'success');
+
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<span>⬆️ Subir a Google Sheets</span>';
+  }
+}
+
+// Push a single sale to Google Sheets automatically
+async function autoSyncSaleToSheets(saleRecord, logActivity = true) {
+  const url = getSheetsWebAppUrl();
+  if (!url || !isSheetsAutoSyncEnabled()) return;
+
+  const item = (saleRecord.items && saleRecord.items[0]) ? saleRecord.items[0] : {};
+  const code = (saleRecord.items && saleRecord.items.length)
+    ? saleRecord.items.map(i => i.code).join(', ')
+    : (saleRecord.productCode || '');
+  const desc = (saleRecord.items && saleRecord.items.length)
+    ? saleRecord.items.map(i => i.description || i.name).join(', ')
+    : (saleRecord.productName || 'Venta Cubitt');
+  const img = item.image || saleRecord.image || '';
+
+  const total = Number(saleRecord.totalAmount || saleRecord.total) || 0;
+  const collected = Number(saleRecord.creditAbono || saleRecord.creditPaid) || (saleRecord.paymentType === 'contado' ? total : 0);
+  const pending = Number(saleRecord.creditBalance || saleRecord.creditRemaining) || Math.max(0, total - collected);
+
+  const payload = {
+    action: 'add_sale',
+    id: saleRecord.id,
+    date: (saleRecord.timestamp || saleRecord.date || new Date().toISOString()).slice(0, 10),
+    productCode: code,
+    productName: desc,
+    image: img,
+    totalAmount: total,
+    collectedAmount: collected,
+    pendingAmount: pending,
+    seller: saleRecord.seller || saleRecord.vendedor || '',
+    client: saleRecord.clientName || saleRecord.client || '',
+    warehouse: saleRecord.almacen || saleRecord.warehouse || 'barquisimeto_trinitarias',
+    paymentDatesComment: formatSaleInstallmentsNote(saleRecord)
+  };
+
+  try {
+    // Send as text/plain to avoid CORS preflight restriction in Apps Script
+    fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload)
+    }).catch(e => console.warn('Background sync fetch dispatch:', e));
+
+    if (logActivity) {
+      appendSheetsSyncLog(`[Auto-Sync] Venta #${saleRecord.id} ($${total.toFixed(2)}) enviada a Google Sheets.`);
+    }
+  } catch (err) {
+    console.error('Error enviando venta a Google Sheets:', err);
+  }
+}
+
+// Push an abono/payment to Google Sheets automatically
+async function autoSyncAbonoToSheets(sale, amount, method, note) {
+  const url = getSheetsWebAppUrl();
+  if (!url || !isSheetsAutoSyncEnabled()) return;
+
+  const payload = {
+    action: 'add_abono',
+    rowNumber: sale.rowNumber || null,
+    saleId: sale.id,
+    newCollectedAmount: sale.creditAbono,
+    newPendingAmount: sale.creditBalance,
+    newPaymentComment: `${new Date().toLocaleDateString('es-VE')}: Abono $${Number(amount).toFixed(2)} (${method || 'Abono'}) - ${note || ''}`.trim()
+  };
+
+  try {
+    fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload)
+    }).catch(e => console.warn('Background abono sync dispatch:', e));
+
+    appendSheetsSyncLog(`[Auto-Sync] Abono de $${Number(amount).toFixed(2)} registrado para venta #${sale.id}.`);
+  } catch (err) {
+    console.error('Error enviando abono a Google Sheets:', err);
+  }
+}
+
+// Handle file upload fallback (.xlsx / .csv)
+function handleSheetsFileUpload(event) {
+  const file = event.target.files ? event.target.files[0] : null;
+  if (!file) return;
+
+  appendSheetsSyncLog(`[Archivo] Procesando archivo "${file.name}" (${(file.size / 1024).toFixed(1)} KB)...`);
+
+  const reader = new FileReader();
+  const isXlsx = file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
+
+  if (isXlsx && typeof XLSX !== 'undefined') {
+    reader.onload = function(e) {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array', cellDates: true, cellFormula: true, comments: true });
+
+        // Find sheet named 'ventas' or pick first sheet
+        let sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('venta')) || workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+
+        // Parse rows and cell comments
+        const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+        const headers = [];
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const cell = worksheet[XLSX.utils.encode_cell({ r: range.s.r, c: C })];
+          headers.push(cell ? (cell.v || '').toString().trim() : '');
+        }
+
+        const colFecha = headers.findIndex(h => /fecha|date|dia/i.test(h));
+        const colCodigo = headers.findIndex(h => /codigo|código|code|sku/i.test(h));
+        const colProd = headers.findIndex(h => /producto|product|descripcion/i.test(h));
+        const colMonto = headers.findIndex(h => /monto|total|precio/i.test(h));
+        const colCobrado = headers.findIndex(h => /cobrado|pagado|abono/i.test(h));
+        const colPendiente = headers.findIndex(h => /pendiente|saldo|resta/i.test(h));
+        const colVendedor = headers.findIndex(h => /vendedor|seller/i.test(h));
+        const colCliente = headers.findIndex(h => /cliente|client/i.test(h));
+
+        const parsedSales = [];
+        for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+          const getCellVal = (cIdx) => {
+            if (cIdx < 0) return '';
+            const cell = worksheet[XLSX.utils.encode_cell({ r: R, c: cIdx })];
+            return cell ? (cell.w || cell.v || '') : '';
+          };
+
+          const getCellComment = (cIdx) => {
+            if (cIdx < 0) return '';
+            const cell = worksheet[XLSX.utils.encode_cell({ r: R, c: cIdx })];
+            if (cell && cell.c && cell.c.length > 0) {
+              return cell.c.map(comm => comm.t || '').join('\n');
+            }
+            return '';
+          };
+
+          const fVal = getCellVal(colFecha);
+          const cVal = getCellVal(colCodigo);
+          const pVal = getCellVal(colProd);
+          const mVal = parseFloat(getCellVal(colMonto)) || 0;
+          const cobVal = parseFloat(getCellVal(colCobrado)) || 0;
+          const pendVal = colPendiente >= 0 ? (parseFloat(getCellVal(colPendiente)) || 0) : Math.max(0, mVal - cobVal);
+          const vendVal = getCellVal(colVendedor) || 'General';
+          const cliVal = getCellVal(colCliente) || 'Cliente General';
+          const commentNote = getCellComment(colMonto);
+
+          if (!fVal && !pVal && mVal <= 0) continue;
+
+          parsedSales.push({
+            rowNumber: R + 1,
+            date: fVal,
+            productCode: cVal,
+            productName: pVal,
+            totalAmount: mVal,
+            collectedAmount: cobVal,
+            pendingAmount: pendVal,
+            seller: vendVal,
+            client: cliVal,
+            warehouse: 'barquisimeto_trinitarias',
+            paymentDatesComment: commentNote,
+            installments: parsePaymentDatesCommentClient(commentNote)
+          });
+        }
+
+        ingestImportedSalesList(parsedSales, `Archivo Excel (${sheetName})`);
+      } catch (err) {
+        console.error('Error procesando XLSX:', err);
+        appendSheetsSyncLog('[Archivo] ❌ Error procesando Excel: ' + err.message);
+        showToast('Error al leer el archivo Excel', 'danger');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    // CSV Reader fallback
+    reader.onload = function(e) {
+      try {
+        const text = e.target.result;
+        const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+        if (lines.length <= 1) throw new Error('El archivo CSV no contiene registros');
+
+        const separator = lines[0].includes(';') ? ';' : (lines[0].includes('\t') ? '\t' : ',');
+        const headers = lines[0].split(separator).map(h => h.replace(/^["']|["']$/g, '').trim());
+
+        const colFecha = headers.findIndex(h => /fecha|date|dia/i.test(h));
+        const colCodigo = headers.findIndex(h => /codigo|código|code|sku/i.test(h));
+        const colProd = headers.findIndex(h => /producto|product|descripcion/i.test(h));
+        const colMonto = headers.findIndex(h => /monto|total|precio/i.test(h));
+        const colCobrado = headers.findIndex(h => /cobrado|pagado|abono/i.test(h));
+        const colPendiente = headers.findIndex(h => /pendiente|saldo|resta/i.test(h));
+        const colVendedor = headers.findIndex(h => /vendedor|seller/i.test(h));
+        const colCliente = headers.findIndex(h => /cliente|client/i.test(h));
+
+        const parsedSales = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(separator).map(c => c.replace(/^["']|["']$/g, '').trim());
+          const fVal = colFecha >= 0 ? cols[colFecha] : '';
+          const cVal = colCodigo >= 0 ? cols[colCodigo] : '';
+          const pVal = colProd >= 0 ? cols[colProd] : '';
+          const mVal = colMonto >= 0 ? (parseFloat(cols[colMonto].replace(',', '.')) || 0) : 0;
+          const cobVal = colCobrado >= 0 ? (parseFloat(cols[colCobrado].replace(',', '.')) || 0) : 0;
+          const pendVal = colPendiente >= 0 ? (parseFloat(cols[colPendiente].replace(',', '.')) || 0) : Math.max(0, mVal - cobVal);
+          const vendVal = colVendedor >= 0 ? cols[colVendedor] : 'General';
+          const cliVal = colCliente >= 0 ? cols[colCliente] : 'Cliente General';
+
+          if (!fVal && !pVal && mVal <= 0) continue;
+
+          parsedSales.push({
+            rowNumber: i + 1,
+            date: fVal,
+            productCode: cVal,
+            productName: pVal,
+            totalAmount: mVal,
+            collectedAmount: cobVal,
+            pendingAmount: pendVal,
+            seller: vendVal,
+            client: cliVal,
+            warehouse: 'barquisimeto_trinitarias',
+            paymentDatesComment: '',
+            installments: []
+          });
+        }
+
+        ingestImportedSalesList(parsedSales, 'Archivo CSV');
+      } catch (err) {
+        console.error('Error procesando CSV:', err);
+        appendSheetsSyncLog('[Archivo] ❌ Error procesando CSV: ' + err.message);
+        showToast('Error al leer el archivo CSV', 'danger');
+      }
+    };
+    reader.readAsText(file);
+  }
+}
+
+// Helper to ingest imported list of sales from file
+function ingestImportedSalesList(rawList, sourceName) {
+  if (!rawList || rawList.length === 0) {
+    showToast('No se encontraron registros de ventas válidos en el archivo', 'warning');
+    return;
+  }
+
+  const newSales = [];
+  const knownCodesMap = {};
+  (state.products || []).forEach(p => {
+    if (p.code) knownCodesMap[p.code.toUpperCase()] = p;
+  });
+
+  rawList.forEach(item => {
+    const total = Number(item.totalAmount) || 0;
+    const collected = Number(item.collectedAmount) || 0;
+    const pending = Number(item.pendingAmount) !== undefined ? Number(item.pendingAmount) : Math.max(0, total - collected);
+    const isCredit = pending > 0;
+    const code = (item.productCode || '').trim();
+    const name = (item.productName || '').trim() || (code ? `Producto ${code}` : 'Venta Cubitt');
+    const matched = knownCodesMap[code.toUpperCase()] || null;
+    const prodImg = item.image || (matched ? matched.image : 'images/placeholder.png');
+    const prodMayor = matched ? (matched.mayor || matched.price * 0.55) : (total * 0.53);
+
+    newSales.push({
+      id: `FILE-${item.rowNumber}-${Date.now().toString().slice(-4)}`,
+      rowNumber: item.rowNumber,
+      timestamp: new Date().toISOString(),
+      date: item.date || new Date().toISOString().slice(0, 10),
+      displayDate: item.date || new Date().toLocaleDateString('es-VE'),
+      items: [
+        {
+          code: code || 'CT-FILE',
+          description: name,
+          category: matched ? matched.category : 'ACCESORIOS',
+          image: prodImg,
+          quantity: 1,
+          unitPrice: total,
+          mayor: prodMayor,
+          subtotal: total
+        }
+      ],
+      productCode: code,
+      productName: name,
+      image: prodImg,
+      totalAmount: total,
+      total: total,
+      totalMayor: prodMayor,
+      totalProfit: Math.max(0, total - prodMayor),
+      paymentType: isCredit ? 'credito' : 'contado',
+      creditSubtype: item.seller === 'CASHEA' ? 'cashea_bull' : (isCredit ? 'jp' : null),
+      creditStatus: isCredit ? 'PENDIENTE' : 'PAGADO',
+      creditBalance: pending,
+      creditRemaining: pending,
+      creditAbono: collected,
+      creditPaid: collected,
+      seller: item.seller || 'General',
+      vendedor: item.seller || 'General',
+      client: item.client || 'Cliente General',
+      clientName: item.client || 'Cliente General',
+      almacen: item.warehouse || 'barquisimeto_trinitarias',
+      warehouse: item.warehouse || 'barquisimeto_trinitarias',
+      notes: item.paymentDatesComment || '',
+      installments: item.installments || [],
+      paymentsHistory: (item.installments && item.installments.length) ? item.installments.map(i => ({
+        date: i.date || item.date,
+        amount: Number(i.amount) || 0,
+        method: 'Cuota',
+        note: i.rawText || ''
+      })) : (collected > 0 ? [{ date: item.date, amount: collected, method: 'Abono', note: 'Abono importado' }] : [])
+    });
+  });
+
+  state.sales = [...newSales, ...(state.sales || [])];
+  state.sales.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
+
+  saveSalesToStorage();
+  renderTopStats();
+  renderHistory();
+  renderCredits();
+  renderClients();
+  renderSellersTab();
+  renderAnalyticsDashboard();
+
+  appendSheetsSyncLog(`[Archivo] ✅ ${newSales.length} ventas importadas exitosamente desde ${sourceName}.`);
+  showToast(`✅ ${newSales.length} ventas importadas exitosamente desde ${sourceName}`, 'success');
+}
+
 

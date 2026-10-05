@@ -10,6 +10,8 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <!-- Biblioteca de Gráficos Interactivos Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <!-- Parser de Excel y Google Sheets SheetJS -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -36,6 +38,14 @@
         <div class="header-stat-box">
           <div class="stat-label">CXP Por Pagar</div>
           <div class="stat-val" id="topPendingCXP" style="color: #f87171;">$0.00</div>
+        </div>
+        <!-- Google Sheets Sync Status Pill -->
+        <div class="header-stat-box header-sheets-btn" onclick="openSheetsSyncModal()" id="headerSheetsSyncBtn" title="Base de Datos Google Sheets (Enlace Bidireccional)" style="cursor: pointer; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 8px; padding: 4px 10px; transition: all 0.2s;">
+          <div class="stat-label" style="color: #34d399; display: flex; align-items: center; gap: 5px;">
+            <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px #10b981;"></span>
+            <span>Google Sheets</span>
+          </div>
+          <div class="stat-val" id="headerSheetsStatusVal" style="font-size: 0.74rem; color: #ffffff;">Enlazar Base</div>
         </div>
       </div>
 
@@ -192,6 +202,14 @@
               <div class="dropdown-item-subtitle">Permisos, roles y contraseñas (Gerencia)</div>
             </div>
             <span class="badge-count" id="badgeUsersCount">0</span>
+          </button>
+          <button type="button" class="nav-dropdown-item" id="navItemSheets" onclick="openSheetsSyncModal(); closeAllNavDropdowns();">
+            <div class="dropdown-item-icon" style="background: #ecfdf5; color: #047857;">📊</div>
+            <div class="dropdown-item-content">
+              <div class="dropdown-item-title">Base de Datos Google Sheets</div>
+              <div class="dropdown-item-subtitle">Sincronización en vivo bidireccional</div>
+            </div>
+            <span class="badge-count" style="background: #10b981; color: #fff;">Sync</span>
           </button>
         </div>
       </div>
@@ -4613,6 +4631,216 @@
         <button type="button" class="btn btn-outline" onclick="closeExpenseModal()">Cancelar</button>
         <button type="button" class="btn btn-success" id="btnSaveExpense" onclick="handleSaveExpense()" style="padding: 10px 24px;">
           💾 Guardar Egreso
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ENLACE Y SINCRONIZACIÓN CON GOOGLE SHEETS -->
+  <div class="modal-overlay" id="sheetsSyncModal">
+    <div class="modal-box" style="max-width: 820px; max-height: 90vh; overflow-y: auto;">
+      <!-- Header -->
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="width: 42px; height: 42px; border-radius: 12px; background: #ecfdf5; color: #047857; display: flex; align-items: center; justify-content: center; font-size: 1.4rem;">
+            📊
+          </div>
+          <div>
+            <h3 class="modal-title" style="margin: 0; font-size: 1.15rem; color: #0f172a;">
+              Base de Datos Principal en Google Sheets
+            </h3>
+            <p style="font-size: 0.78rem; color: #64748b; margin: 2px 0 0 0;">
+              Enlace bidireccional en vivo: lectura de ventas con comentarios de cuotas y escritura automática.
+            </p>
+          </div>
+        </div>
+        <button type="button" class="modal-close-btn" onclick="closeSheetsSyncModal()">&times;</button>
+      </div>
+
+      <!-- Sub-Tabs inside Modal -->
+      <div class="analytics-subnav-bar" style="margin-bottom: 1rem;">
+        <button type="button" class="analytics-subnav-btn active" id="sheetsSubNavBtnLive" onclick="switchSheetsModalTab('live')">
+          <span>🔄</span>
+          <span>Sincronización en Vivo</span>
+        </button>
+        <button type="button" class="analytics-subnav-btn" id="sheetsSubNavBtnFile" onclick="switchSheetsModalTab('file')">
+          <span>📥</span>
+          <span>Importar Archivo (.xlsx / .csv)</span>
+        </button>
+        <button type="button" class="analytics-subnav-btn" id="sheetsSubNavBtnGuide" onclick="switchSheetsModalTab('guide')">
+          <span>📋</span>
+          <span>Guía de Conexión en 30 Segundos</span>
+        </button>
+      </div>
+
+      <!-- TAB 1: Sincronización en Vivo -->
+      <div id="sheetsModalTabLive">
+        <!-- Target Sheet Reference Card -->
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; margin-bottom: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <div style="font-size: 0.76rem; font-weight: 700; color: #64748b; text-transform: uppercase;">Hoja de Cálculo Oficial</div>
+              <div style="font-size: 0.88rem; font-weight: 700; color: #0f172a;">
+                <a href="https://docs.google.com/spreadsheets/d/18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw/edit?gid=1352847878#gid=1352847878" target="_blank" style="color: #047857; text-decoration: underline;">
+                  Abrir Hoja de Google Sheets en nueva pestaña ↗
+                </a>
+              </div>
+              <div style="font-size: 0.74rem; color: #94a3b8;">ID: 18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw • Hoja: ventas (gid: 1352847878)</div>
+            </div>
+            <div id="sheetsLiveStatusBadge">
+              <span class="ai-status-pill" style="background: #ecfdf5; color: #047857; border-color: #a7f3d0;">
+                <span class="ai-pulse-dot"></span>
+                <span id="sheetsStatusLabel">Configuración Lista</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Web App URL Input -->
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+          <label class="form-label" for="sheetsWebAppUrlInput">
+            <strong>URL del Web App de Google Apps Script *</strong>
+            <span style="font-size: 0.72rem; color: #64748b; font-weight: normal;">(Permite leer y escribir en tu hoja privada sin bloqueos de permisos)</span>
+          </label>
+          <div style="display: flex; gap: 8px;">
+            <input type="url" id="sheetsWebAppUrlInput" class="form-control" placeholder="https://script.google.com/macros/s/AKfycb.../exec" style="font-size: 0.85rem;">
+            <button type="button" class="btn btn-primary" onclick="saveSheetsWebAppUrl()" style="white-space: nowrap;">
+              💾 Guardar URL
+            </button>
+            <button type="button" class="btn btn-outline" onclick="testSheetsConnection()" style="white-space: nowrap;">
+              🔌 Probar
+            </button>
+          </div>
+          <small style="font-size: 0.72rem; color: #64748b; display: block; margin-top: 4px;">
+            ¿No tienes esta URL aún? Ve a la pestaña <strong>«Guía de Conexión en 30 Segundos»</strong> arriba para generarla con 1 clic en tu hoja.
+          </small>
+        </div>
+
+        <!-- Sync Actions Row -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.25rem;">
+          <div class="app-card" style="padding: 1rem; border-color: #a7f3d0; background: #f0fdf4;">
+            <div style="font-weight: 800; font-size: 0.88rem; color: #065f46; margin-bottom: 4px;">
+              📥 Importar desde Google Sheets
+            </div>
+            <p style="font-size: 0.76rem; color: #047857; margin-bottom: 10px;">
+              Descarga todas las filas de la hoja `ventas`, extrae las fechas de pago desde los comentarios de cada celda y actualiza tus métricas.
+            </p>
+            <button type="button" class="btn btn-success btn-sm btn-block" onclick="syncFromGoogleSheets(true)" id="btnSyncFromSheets">
+              🔄 Sincronizar Ahora (Importar)
+            </button>
+          </div>
+
+          <div class="app-card" style="padding: 1rem; border-color: #bfdbfe; background: #eff6ff;">
+            <div style="font-weight: 800; font-size: 0.88rem; color: #1e40af; margin-bottom: 4px;">
+              ⬆️ Subir Ventas Locales a Sheets
+            </div>
+            <p style="font-size: 0.76rem; color: #1d4ed8; margin-bottom: 10px;">
+              Envía a tu hoja de cálculo las ventas, abonos o egresos generados en este dispositivo para mantener tu Drive al día.
+            </p>
+            <button type="button" class="btn btn-primary btn-sm btn-block" onclick="pushToGoogleSheets()" id="btnPushToSheets" style="background: #2563eb;">
+              ⬆️ Subir a Google Sheets
+            </button>
+          </div>
+        </div>
+
+        <!-- Automatic Background Sync Checkbox -->
+        <div style="margin-bottom: 1rem; padding: 10px 14px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; font-size: 0.84rem; color: #0f172a;">Sincronización Automática en Segundo Plano</div>
+            <div style="font-size: 0.72rem; color: #64748b;">Envía automáticamente cada venta y pago registrado a Google Sheets</div>
+          </div>
+          <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px; margin: 0;">
+            <input type="checkbox" id="sheetsAutoSyncCheckbox" checked onchange="handleToggleAutoSync(this.checked)">
+            <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #10b981; border-radius: 24px;"></span>
+          </label>
+        </div>
+
+        <!-- Live Sync Activity Log -->
+        <div>
+          <label class="form-label" style="font-size: 0.74rem; font-weight: 700;">Registro de Actividad de Sincronización:</label>
+          <div id="sheetsSyncLogBox" style="background: #09090b; color: #34d399; font-family: monospace; font-size: 0.74rem; padding: 12px; border-radius: 8px; height: 140px; overflow-y: auto; line-height: 1.45;">
+            [Sistema] Conector de Google Sheets inicializado.<br>
+            [Sheets] Hoja objetivo: 18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw (ventas).<br>
+            [Sheets] Estado: Listo para sincronizar en vivo.
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: Importar Archivo de Respaldo -->
+      <div id="sheetsModalTabFile" style="display: none;">
+        <div style="text-align: center; padding: 2rem 1.5rem; background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; margin-bottom: 1rem;">
+          <div style="font-size: 2.8rem; margin-bottom: 8px;">📂</div>
+          <div style="font-weight: 800; font-size: 1rem; color: #0f172a; margin-bottom: 4px;">
+            Selecciona o arrastra tu archivo de Google Sheets (.xlsx / .csv)
+          </div>
+          <p style="font-size: 0.8rem; color: #64748b; max-width: 480px; margin: 0 auto 1rem auto;">
+            Si descargaste tu hoja desde Google Sheets (`Archivo ➔ Descargar ➔ Microsoft Excel .xlsx`), puedes importarla directamente aquí para actualizar todas tus ventas al instante.
+          </p>
+          <input type="file" id="sheetsFileInput" accept=".xlsx,.csv" style="display: none;" onchange="handleSheetsFileUpload(event)">
+          <button type="button" class="btn btn-primary" onclick="document.getElementById('sheetsFileInput').click()">
+            📁 Seleccionar Archivo desde la Computadora
+          </button>
+        </div>
+
+        <div class="app-card" style="background: #f0fdf4; border-color: #bbf7d0;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-weight: 700; font-size: 0.88rem; color: #065f46;">¿Deseas restaurar la copia de respaldo de tu Drive ($18,330.23)?</div>
+              <div style="font-size: 0.74rem; color: #047857;">Incluye las 443 ventas históricas, todos los 15 vendedores y el desglose de egresos.</div>
+            </div>
+            <button type="button" class="btn btn-success btn-sm" onclick="syncDriveHistoricalData(true)">
+              📥 Restaurar Copia Drive
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: Guía Rápida de Conexión en 30 Segundos -->
+      <div id="sheetsModalTabGuide" style="display: none;">
+        <div style="font-size: 0.86rem; color: #334155; line-height: 1.6; margin-bottom: 1rem;">
+          <ol style="padding-left: 20px;">
+            <li style="margin-bottom: 8px;">
+              Abre tu hoja de cálculo en Google Sheets:
+              <a href="https://docs.google.com/spreadsheets/d/18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw/edit?gid=1352847878#gid=1352847878" target="_blank" style="color: #047857; font-weight: 700;">
+                Hacer clic aquí para abrir tu Google Sheet ↗
+              </a>
+            </li>
+            <li style="margin-bottom: 8px;">
+              En el menú superior de Google Sheets, ve a: <strong>Extensiones ➔ Apps Script</strong>.
+            </li>
+            <li style="margin-bottom: 8px;">
+              Borra el código que aparezca y pega el script que tienes abajo (haz clic en el botón <strong>«Copiar Código»</strong>).
+            </li>
+            <li style="margin-bottom: 8px;">
+              Arriba a la derecha, haz clic en el botón azul <strong>«Implementar» ➔ «Nueva implementación»</strong>.
+            </li>
+            <li style="margin-bottom: 8px;">
+              En el ícono de engranaje ⚙️ selecciona <strong>«Aplicación web»</strong>:
+              <br>• En <em>Quién tiene acceso</em>, selecciona: <strong>«Cualquier persona»</strong> (Anyone).
+            </li>
+            <li style="margin-bottom: 8px;">
+              Haz clic en <strong>Implementar</strong>, autoriza los permisos y <strong>copia la URL generada</strong> (termina en <code>/exec</code>).
+            </li>
+            <li style="margin-bottom: 8px;">
+              Pega esa URL en la pestaña <strong>«Sincronización en Vivo»</strong> de esta ventana y ¡listo!
+            </li>
+          </ol>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label class="form-label" style="font-size: 0.74rem; font-weight: 700; margin: 0;">Código Oficial de Google Apps Script:</label>
+          <button type="button" class="btn btn-outline btn-xs" onclick="copyGoogleAppsScriptCode()" id="btnCopyAppsScript">
+            📋 Copiar Código al Portapapeles
+          </button>
+        </div>
+
+        <textarea id="googleAppsScriptCodeArea" class="form-control" rows="8" readonly style="font-family: monospace; font-size: 0.74rem; background: #09090b; color: #34d399;"></textarea>
+      </div>
+
+      <!-- Modal Footer -->
+      <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 1.25rem; padding-top: 10px; border-top: 1px solid #e2e8f0;">
+        <button type="button" class="btn btn-primary" onclick="closeSheetsSyncModal()">
+          Entendido / Cerrar
         </button>
       </div>
     </div>
