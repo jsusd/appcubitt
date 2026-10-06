@@ -12,5 +12,5 @@ window.CUBITT_CONFIG = {
   GOOGLE_SHEETS_GID_VENTAS: '1352847878',
   GOOGLE_SHEETS_NAME_VENTAS: 'ventas',
   // URL del Web App de Google Apps Script (configurable en la UI)
-  GOOGLE_APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbxDwLbsDM-sFYNHRpmmfUkQpOWE6PEWTMaxxWJ04z6GG5Ewhe0_hZiW77P6DOw8SYI/exec'
+  GOOGLE_APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzQWHbnOjWfjTO3aICO_lFzH6QLUoPU9LAjjsEW2DKA_B5sy4phINcZi1boga0i2t3w/exec'
 };

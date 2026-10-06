@@ -77,6 +77,7 @@ function doGet(e) {
     const dataRange = sheet.getRange(2, 1, lastRow - 1, lastCol);
     const values = dataRange.getValues();
     const notes = dataRange.getNotes(); // Contiene las notas/comentarios de cada celda
+    const formulas = dataRange.getFormulas(); // Identifica fórmulas como =SUM(...)
 
     const salesList = [];
 
@@ -101,8 +102,14 @@ function doGet(e) {
       const rowNotes = notes[r];
       const rowNumber = r + 2;
 
-      // Omitir fila de total general y tablas auxiliares de gráficos/pareto
-      if (rowNumber === 450 || (rowNumber > 450 && rowNumber <= 485)) continue;
+      const montoFormula = (colMonto >= 0 && formulas[r]) ? (formulas[r][colMonto] || '').toString() : '';
+      const fechaVal = colFecha >= 0 ? (row[colFecha] || '').toString().trim() : '';
+      const prodVal = colProducto >= 0 ? (row[colProducto] || '').toString().trim().toUpperCase() : '';
+      const codVal = colCodigo >= 0 ? (row[colCodigo] || '').toString().trim().toUpperCase() : '';
+
+      // Omitir dinámicamente fila de total general y tablas auxiliares de Pareto/gráficas
+      if (montoFormula.toUpperCase().includes('SUM') || prodVal.includes('TOTAL') || codVal.includes('TOTAL') || fechaVal.toUpperCase().includes('TOTAL')) continue;
+      if (prodVal.includes('PARETO') || codVal === '$' || prodVal === 'PRODUCTO') continue;
 
       // Extraer datos básicos
       const fechaRaw = colFecha >= 0 ? row[colFecha] : '';
@@ -267,7 +274,27 @@ function handleAddSale(ss, payload) {
   const colVendedor = findColIndex(headers, ['vendedor', 'seller', 'asesor']);
   const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador']);
 
-  const nextRow = sheet.getLastRow() + 1;
+  const colMontoIndex = colMonto >= 0 ? (colMonto + 1) : 5;
+  const lastRow = sheet.getLastRow();
+
+  // Encontrar la fila de totales (donde colMonto tiene fórmula =SUM(...) o fila 450)
+  let insertRow = lastRow + 1;
+  for (let r = 2; r <= Math.min(lastRow, 500); r++) {
+    const f = sheet.getRange(r, colMontoIndex).getFormula();
+    const cellVal = (sheet.getRange(r, 1).getValue() || '').toString().trim().toUpperCase();
+    if (r === 450 || (f && f.toUpperCase().includes('SUM')) || cellVal.includes('TOTAL')) {
+      insertRow = r;
+      break;
+    }
+  }
+
+  // Insertar fila justo antes de los totales para expandir automáticamente el rango de la suma en Google Sheets
+  if (insertRow <= lastRow) {
+    sheet.insertRowBefore(insertRow);
+  } else {
+    insertRow = lastRow + 1;
+  }
+
   const numCols = Math.max(sheet.getLastColumn(), 8);
   const newRowValues = new Array(numCols).fill('');
 
@@ -292,19 +319,19 @@ function handleAddSale(ss, payload) {
   if (colCliente >= 0) newRowValues[colCliente] = client;
 
   // Escribir fila en la hoja
-  sheet.getRange(nextRow, 1, 1, numCols).setValues([newRowValues]);
+  sheet.getRange(insertRow, 1, 1, numCols).setValues([newRowValues]);
 
   // Si tiene fechas de pago o cuotas, guardarlas como NOTA en la celda del monto
   if (colMonto >= 0 && payload.paymentDatesComment) {
-    const montoCell = sheet.getRange(nextRow, colMonto + 1);
+    const montoCell = sheet.getRange(insertRow, colMonto + 1);
     montoCell.setNote(payload.paymentDatesComment);
   }
 
   return jsonResponse({
     status: 'success',
     message: 'Venta registrada con éxito en Google Sheets',
-    row: nextRow,
-    saleId: payload.id || `ROW-${nextRow}`
+    row: insertRow,
+    saleId: payload.id || `ROW-${insertRow}`
   });
 }
 

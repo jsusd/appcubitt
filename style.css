@@ -66,6 +66,14 @@ body {
   gap: 12px;
 }
 
+.brand-logo-img {
+  height: 34px;
+  width: auto;
+  max-width: 140px;
+  object-fit: contain;
+  display: inline-block;
+}
+
 .brand-logo-text {
   font-size: 1.6rem;
   font-weight: 900;

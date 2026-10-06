@@ -2867,31 +2867,52 @@ function renderEditSaleItems() {
   const tbody = document.getElementById('editSaleItemsTableBody');
   if (!tbody || !currentEditingSale) return;
 
-  tbody.innerHTML = currentEditingSale.items.map((item, idx) => `
+  tbody.innerHTML = currentEditingSale.items.map((item, idx) => {
+    const prod = (state.products || []).find(p => p.code && p.code.toLowerCase() === (item.code || '').trim().toLowerCase()) 
+              || (typeof PRODUCTS_DATABASE !== 'undefined' ? PRODUCTS_DATABASE.find(p => p.code && p.code.toLowerCase() === (item.code || '').trim().toLowerCase()) : null)
+              || {};
+    const imgUrl = item.image || prod.image || 'images/placeholder.png';
+    const description = item.description || prod.description || prod.name || item.code || '';
+    const category = item.category || prod.category || '';
+    const safeUnitPrice = Number(item.unitPrice) || 0;
+
+    return `
     <tr>
       <td>
-        <div style="font-weight: 700;">${escapeHtml(item.code)}</div>
-        <div style="font-size: 0.75rem; color: #64748b;">${escapeHtml(item.category || '')}</div>
-      </td>
-      <td>
-        <input type="number" class="form-control" style="padding: 4px 6px; font-size: 0.85rem;" value="${item.quantity}" min="1" onchange="handleEditItemQtyChange(${idx}, this.value)">
-      </td>
-      <td>
-        <div class="currency-input-wrap">
-          <span class="currency-prefix">$</span>
-          <input type="number" class="form-control with-prefix" style="padding: 4px 6px; font-size: 0.85rem;" value="${item.unitPrice.toFixed(2)}" step="0.5" min="0" onchange="handleEditItemPriceChange(${idx}, this.value)">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img src="${imgUrl}" alt="${escapeHtml(item.code)}"
+               style="width: 42px; height: 42px; object-fit: contain; border-radius: 6px; background: #f8fafc; border: 1px solid #e2e8f0; flex-shrink: 0;"
+               onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'42\\' height=\\'42\\' fill=\\'%23f1f5f9\\' viewBox=\\'0 0 24 24\\'><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' font-size=\\'7\\'>Cubitt</text></svg>'">
+          <div style="min-width: 0;">
+            <div style="font-weight: 700; font-size: 0.85rem; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;" title="${escapeHtml(description)}">
+              ${escapeHtml(description)}
+            </div>
+            <div style="font-size: 0.73rem; color: #64748b; font-family: monospace;">
+              ${escapeHtml(item.code)}${category ? ` • ${escapeHtml(category)}` : ''}
+            </div>
+          </div>
         </div>
       </td>
-      <td>
-        <strong id="editItemSubtotal-${idx}">$${(item.quantity * item.unitPrice).toFixed(2)}</strong>
+      <td style="width: 90px; text-align: center;">
+        <input type="number" class="form-control" style="padding: 5px 8px; font-size: 0.85rem; width: 75px; text-align: center; margin: 0 auto;" value="${item.quantity}" min="1" onchange="handleEditItemQtyChange(${idx}, this.value)">
       </td>
-      <td>
+      <td style="width: 125px;">
+        <div class="currency-input-wrap" style="position: relative; display: block; width: 105px;">
+          <span class="currency-prefix" style="position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-weight: 700; color: #64748b; font-size: 0.85rem; pointer-events: none; z-index: 1;">$</span>
+          <input type="number" class="form-control" style="padding: 5px 8px 5px 22px; font-size: 0.85rem; width: 100%; box-sizing: border-box;" value="${safeUnitPrice.toFixed(2)}" step="0.5" min="0" onchange="handleEditItemPriceChange(${idx}, this.value)">
+        </div>
+      </td>
+      <td style="text-align: right; white-space: nowrap;">
+        <strong id="editItemSubtotal-${idx}" style="font-size: 0.9rem; color: #0f172a;">$${(item.quantity * safeUnitPrice).toFixed(2)}</strong>
+      </td>
+      <td style="text-align: center; width: 45px;">
         ${currentEditingSale.items.length > 1 ? `
-          <button type="button" class="btn btn-outline btn-sm" onclick="removeEditItem(${idx})" style="color: #ef4444; border-color: #fee2e2; padding: 2px 6px;" title="Eliminar">&times;</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="removeEditItem(${idx})" style="color: #ef4444; border-color: #fee2e2; padding: 3px 7px; line-height: 1;" title="Eliminar">&times;</button>
         ` : ''}
       </td>
     </tr>
-  `).join('');
+    `;
+  }).join('');
 }
 
 function handleEditItemQtyChange(idx, val) {
@@ -12211,25 +12232,79 @@ function getFilteredAnalyticsData() {
   const warehouse = state.analyticsWarehouse || 'all';
   const channel = state.analyticsChannel || 'all';
 
-  // Base dataset from Drive or real sales
-  let salesTotal = DRIVE_HISTORICAL_DATASET.totalSales;
-  let collectedTotal = DRIVE_HISTORICAL_DATASET.totalCollected;
-  let pendingTotal = DRIVE_HISTORICAL_DATASET.totalPending;
+  const accessibleSales = typeof getAccessibleSales === 'function' ? getAccessibleSales() : (state.sales || []);
+  let filteredSales = accessibleSales;
 
-  // Let's filter sales if user changed period/warehouse/channel
+  // Period filtering
+  if (period !== 'all' && period !== '2026') {
+    filteredSales = accessibleSales.filter(s => {
+      const d = s.timestamp ? new Date(s.timestamp) : (s.date ? new Date(s.date) : null);
+      if (!d || isNaN(d.getTime())) return false;
+      const m = d.toLocaleString('es-ES', { month: 'short' }).toLowerCase();
+      return m.startsWith(period.slice(0, 3).toLowerCase()) || (s.date || '').slice(0, 7) === period;
+    });
+  }
+
+  // Calculate live sales metrics
+  let salesTotal = 0;
+  let collectedTotal = 0;
+  let pendingTotal = 0;
+  let totalUnits = 0;
+
+  if (filteredSales && filteredSales.length > 0) {
+    salesTotal = filteredSales.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
+    pendingTotal = filteredSales
+      .filter(s => s.paymentType === 'credito' && (s.creditStatus || '').toUpperCase() === 'PENDIENTE')
+      .reduce((acc, s) => acc + (Number(s.creditBalance) || 0), 0);
+    collectedTotal = Math.max(0, salesTotal - pendingTotal);
+    totalUnits = filteredSales.reduce((acc, s) => {
+      if (s.items && s.items.length) {
+        return acc + s.items.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+      }
+      return acc + (Number(s.quantity) || 1);
+    }, 0);
+  } else {
+    salesTotal = DRIVE_HISTORICAL_DATASET.totalSales;
+    collectedTotal = DRIVE_HISTORICAL_DATASET.totalCollected;
+    pendingTotal = DRIVE_HISTORICAL_DATASET.totalPending;
+    totalUnits = 443;
+  }
+
   let monthlyData = JSON.parse(JSON.stringify(DRIVE_HISTORICAL_DATASET.monthly));
   let sellersData = JSON.parse(JSON.stringify(DRIVE_HISTORICAL_DATASET.sellers));
   let productsData = JSON.parse(JSON.stringify(DRIVE_HISTORICAL_DATASET.products));
   let expensesData = (state.expenses || []).slice();
 
-  // Period filtering
-  if (period !== 'all' && period !== '2026') {
-    const targetMonth = monthlyData.find(m => m.month === period);
-    if (targetMonth) {
-      salesTotal = targetMonth.salesAmount;
-      // Pro-rate collection rate for selected month
-      collectedTotal = salesTotal * (DRIVE_HISTORICAL_DATASET.collectionRate / 100);
-      pendingTotal = salesTotal - collectedTotal;
+  // If live sales exist, aggregate sellers dynamically
+  if (filteredSales && filteredSales.length > 0) {
+    const sellersMap = new Map();
+    filteredSales.forEach(s => {
+      const sName = (s.seller || s.vendedor || 'General').toUpperCase().trim();
+      if (!sName) return;
+      if (!sellersMap.has(sName)) {
+        sellersMap.set(sName, { name: sName, units: 0, sales: 0, collected: 0, pending: 0, rate: 0 });
+      }
+      const rec = sellersMap.get(sName);
+      const sUnits = (s.items && s.items.length) ? s.items.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0) : (Number(s.quantity) || 1);
+      const sTotal = Number(s.totalAmount) || 0;
+      const isCreditPending = s.paymentType === 'credito' && (s.creditStatus || '').toUpperCase() === 'PENDIENTE';
+      const sPending = isCreditPending ? (Number(s.creditBalance) || 0) : 0;
+      const sCollected = Math.max(0, sTotal - sPending);
+
+      rec.units += sUnits;
+      rec.sales += sTotal;
+      rec.collected += sCollected;
+      rec.pending += sPending;
+    });
+
+    if (sellersMap.size > 0) {
+      sellersData = Array.from(sellersMap.values()).map(sel => ({
+        ...sel,
+        sales: Math.round(sel.sales * 100) / 100,
+        collected: Math.round(sel.collected * 100) / 100,
+        pending: Math.round(sel.pending * 100) / 100,
+        rate: sel.sales > 0 ? Math.round((sel.collected / sel.sales) * 10000) / 100 : 0
+      })).sort((a, b) => b.sales - a.sales);
     }
   }
 
@@ -12248,9 +12323,6 @@ function getFilteredAnalyticsData() {
   const netProfit = salesTotal - totalExpenses;
   const netMarginPct = salesTotal > 0 ? ((netProfit / salesTotal) * 100) : 0;
   const collectionRate = salesTotal > 0 ? ((collectedTotal / salesTotal) * 100) : 0;
-
-  // Total physical units
-  const totalUnits = monthlyData.reduce((acc, m) => acc + (m.salesUnits || 0), 0);
   const avgTicket = totalUnits > 0 ? (salesTotal / totalUnits) : 0;
 
   return {
@@ -13566,7 +13638,27 @@ function handleAddSale(ss, payload) {
   const colVendedor = findColIndex(headers, ['vendedor', 'seller', 'asesor']);
   const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador']);
 
-  const nextRow = sheet.getLastRow() + 1;
+  const colMontoIndex = colMonto >= 0 ? (colMonto + 1) : 5;
+  const lastRow = sheet.getLastRow();
+
+  // Encontrar la fila de totales (donde colMonto tiene fórmula =SUM(...) o fila 450)
+  let insertRow = lastRow + 1;
+  for (let r = 2; r <= Math.min(lastRow, 500); r++) {
+    const f = sheet.getRange(r, colMontoIndex).getFormula();
+    const cellVal = (sheet.getRange(r, 1).getValue() || '').toString().trim().toUpperCase();
+    if (r === 450 || (f && f.toUpperCase().includes('SUM')) || cellVal.includes('TOTAL')) {
+      insertRow = r;
+      break;
+    }
+  }
+
+  // Insertar fila justo antes de los totales para expandir automáticamente el rango de la suma en Google Sheets
+  if (insertRow <= lastRow) {
+    sheet.insertRowBefore(insertRow);
+  } else {
+    insertRow = lastRow + 1;
+  }
+
   const numCols = Math.max(sheet.getLastColumn(), 8);
   const newRowValues = new Array(numCols).fill('');
 
@@ -13590,18 +13682,18 @@ function handleAddSale(ss, payload) {
   if (colVendedor >= 0) newRowValues[colVendedor] = seller;
   if (colCliente >= 0) newRowValues[colCliente] = client;
 
-  sheet.getRange(nextRow, 1, 1, numCols).setValues([newRowValues]);
+  sheet.getRange(insertRow, 1, 1, numCols).setValues([newRowValues]);
 
   if (colMonto >= 0 && payload.paymentDatesComment) {
-    const montoCell = sheet.getRange(nextRow, colMonto + 1);
+    const montoCell = sheet.getRange(insertRow, colMonto + 1);
     montoCell.setNote(payload.paymentDatesComment);
   }
 
   return jsonResponse({
     status: 'success',
     message: 'Venta registrada con éxito en Google Sheets',
-    row: nextRow,
-    saleId: payload.id || ('ROW-' + nextRow)
+    row: insertRow,
+    saleId: payload.id || ('ROW-' + insertRow)
   });
 }
 
@@ -13728,12 +13820,39 @@ function initGoogleSheetsSync() {
       });
     }, 2500);
   }
+
+  // Live Bidirectional Sync: Sincronización automática al regresar a la pestaña (focus)
+  if (!window._sheetsFocusListenerAttached) {
+    window._sheetsFocusListenerAttached = true;
+    window.addEventListener('focus', () => {
+      const currentUrl = getSheetsWebAppUrl();
+      if (currentUrl && isSheetsAutoSyncEnabled()) {
+        const lastSyncStr = localStorage.getItem(SHEETS_CONFIG.storageKeyLastSync);
+        const lastSyncTime = lastSyncStr ? new Date(lastSyncStr).getTime() : 0;
+        // Debounce: pull sólo si pasaron al menos 15 segundos desde la última sincronización
+        if (Date.now() - lastSyncTime > 15000) {
+          syncFromGoogleSheets(false).catch(e => console.warn('Focus auto-sync notice:', e));
+        }
+      }
+    });
+  }
+
+  // Polling automático periódico en segundo plano mientras la ventana esté activa
+  if (!window._sheetsPollingInterval) {
+    window._sheetsPollingInterval = setInterval(() => {
+      const currentUrl = getSheetsWebAppUrl();
+      if (currentUrl && isSheetsAutoSyncEnabled() && !document.hidden) {
+        syncFromGoogleSheets(false).catch(e => console.warn('Polling auto-sync notice:', e));
+      }
+    }, 45000);
+  }
 }
 
 // Get saved Apps Script Web App URL
 function getSheetsWebAppUrl() {
-  return localStorage.getItem(SHEETS_CONFIG.storageKeyUrl) ||
-    (window.CUBITT_CONFIG && window.CUBITT_CONFIG.GOOGLE_APPS_SCRIPT_URL) || '';
+  const saved = localStorage.getItem(SHEETS_CONFIG.storageKeyUrl);
+  if (saved && !saved.includes('AKfycbxDwLbsDM')) return saved;
+  return (window.CUBITT_CONFIG && window.CUBITT_CONFIG.GOOGLE_APPS_SCRIPT_URL) || saved || '';
 }
 
 // Check if automatic sync is active
@@ -14277,16 +14396,14 @@ async function syncFromGoogleSheets(showToastNotification = true) {
 
     fetchedSales.forEach(item => {
       const rowNum = item.rowNumber || '';
-      const rowNumInt = parseInt(rowNum, 10);
-      // Omitir fila de total general (450) y tablas auxiliares/gráficas (451-485)
-      if (!isNaN(rowNumInt) && (rowNumInt === 450 || (rowNumInt > 450 && rowNumInt <= 485))) return;
-
       const total = Number(item.totalAmount) || 0;
       const code = (item.productCode || '').trim();
       const rawName = (item.productName || '').trim();
+      const rawNameUpper = rawName.toUpperCase();
+      const codeUpper = code.toUpperCase();
 
-      // Filtrar filas de subtotales, cabeceras repetidas, Pareto o anómalas
-      if (total >= 5000 || total <= 0 || code === '$' || rawName.toUpperCase() === 'PRODUCTO' || rawName.toUpperCase().includes('PARETO') || rawName.toUpperCase().includes('TOTAL')) return;
+      // Filtrar dinámicamente filas de totales generales, subtotales, Pareto o vacías
+      if (total >= 5000 || total <= 0 || code === '$' || rawNameUpper.includes('TOTAL') || codeUpper.includes('TOTAL') || rawNameUpper === 'PRODUCTO' || rawNameUpper.includes('PARETO')) return;
 
       // Propagar fecha válida si está vacía o inválida (1900-...)
       let saleDate = (item.date || '').trim();
@@ -14423,15 +14540,28 @@ async function syncFromGoogleSheets(showToastNotification = true) {
     });
 
     if (importedSales.length > 0) {
-      // Merge with state.sales (preserving only real local manual POS sales)
+      // Merge with state.sales (preserving only real local manual sales and avoiding duplication)
+      const importedRowNumbers = new Set(importedSales.map(s => s.rowNumber).filter(Boolean));
+      const importedIds = new Set(importedSales.map(s => s.id));
       const nonSheetsSales = (state.sales || [])
         .filter(s => {
           if (!s || !s.id) return false;
-          if (s.rowNumber || s.id.startsWith('SHEETS-')) return false;
+          if (s.rowNumber && importedRowNumbers.has(s.rowNumber)) return false;
+          if (importedIds.has(s.id)) return false;
+          if (s.id.startsWith('SHEETS-')) return false;
           if (s.id.startsWith('CUB-DRIVE-') || s.id.startsWith('DRIVE-')) return false;
           if (s.id === 'CUB-1001' || s.id === 'CUB-1002' || s.id === 'CUB-1003') return false;
           if (s.items && s.items[0] && s.items[0].code === 'CT-DRIVE-LOTE') return false;
-          return s.id.startsWith('POS-');
+          
+          // Verificar si ya fue importada desde Sheets para evitar duplicados
+          const isAlreadyImported = importedSales.some(imp =>
+            imp.totalAmount === s.totalAmount &&
+            (imp.date === (s.date || (s.timestamp || '').slice(0, 10))) &&
+            ((imp.client && s.clientName && imp.client.toLowerCase() === s.clientName.toLowerCase()) ||
+             (imp.seller && s.vendedor && imp.seller.toLowerCase() === s.vendedor.toLowerCase()))
+          );
+          if (isAlreadyImported) return false;
+          return true; // Preservar venta creada localmente en la App
         })
         .map(sanitizeSaleRecord);
       state.sales = [...importedSales, ...nonSheetsSales].map(sanitizeSaleRecord);
