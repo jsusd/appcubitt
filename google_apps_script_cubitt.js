@@ -120,7 +120,8 @@ function doGet(e) {
 
       const totalNum = parseFloat(montoRaw) || 0;
       const cobradoNum = parseFloat(cobradoRaw) || 0;
-      const pendienteNum = pendienteRaw !== '' ? parseFloat(pendienteRaw) : Math.max(0, totalNum - cobradoNum);
+      const parsedPend = parseFloat(pendienteRaw);
+      const pendienteNum = (!isNaN(parsedPend) && pendienteRaw !== '') ? parsedPend : Math.max(0, totalNum - cobradoNum);
 
       salesList.push({
         rowNumber: rowNumber,

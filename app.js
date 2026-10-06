@@ -254,15 +254,106 @@ function getSelectedSaleDate() {
   return new Date();
 }
 
+// Sanitizer to guarantee robust numeric and structural properties on any sale record
+function sanitizeSaleRecord(sale) {
+  if (!sale || typeof sale !== 'object') return sale;
+
+  const total = Number(sale.totalAmount ?? sale.total ?? 0) || 0;
+  sale.totalAmount = total;
+  sale.total = total;
+  sale.totalMayor = Number(sale.totalMayor ?? (total * 0.53)) || 0;
+  sale.totalProfit = Number(sale.totalProfit ?? (total - sale.totalMayor)) || 0;
+
+  // Credit & balances
+  const creditBal = Number(sale.creditBalance ?? sale.creditRemaining ?? sale.creditAmount ?? 0);
+  sale.creditBalance = isNaN(creditBal) ? 0 : Math.max(0, creditBal);
+  sale.creditRemaining = sale.creditBalance;
+
+  const creditAbono = Number(sale.creditAbono ?? sale.creditPaid ?? 0);
+  sale.creditAbono = isNaN(creditAbono) ? 0 : Math.max(0, creditAbono);
+  sale.creditPaid = sale.creditAbono;
+
+  // Modality & status
+  sale.paymentType = (sale.paymentType || 'contado').toLowerCase();
+  const rawStatus = (sale.creditStatus || '').toUpperCase();
+  if (sale.paymentType === 'credito') {
+    if (sale.creditBalance <= 0 || rawStatus === 'PAGADO' || rawStatus === 'SALDADO') {
+      sale.creditStatus = 'PAGADO';
+    } else {
+      sale.creditStatus = 'PENDIENTE';
+    }
+  } else {
+    sale.creditStatus = 'PAGADO';
+  }
+
+  // Seller, client & warehouse
+  sale.vendedor = sale.vendedor || sale.seller || 'General';
+  sale.seller = sale.vendedor;
+  sale.clientName = sale.clientName || sale.client || 'Cliente General';
+  sale.client = sale.clientName;
+  sale.almacen = sale.almacen || sale.warehouse || 'barquisimeto_trinitarias';
+  sale.warehouse = sale.almacen;
+
+  // Dates
+  if (!sale.date && sale.timestamp) {
+    sale.date = sale.timestamp.slice(0, 10);
+  }
+  if (!sale.displayDate) {
+    sale.displayDate = sale.date ? `${sale.date}, 12:00:00` : new Date().toLocaleString('es-VE');
+  }
+
+  // Items
+  if (!Array.isArray(sale.items) || sale.items.length === 0) {
+    sale.items = [{
+      code: sale.productCode || 'CT-GEN',
+      description: sale.productName || 'Producto Cubitt',
+      category: 'ACCESORIOS',
+      image: sale.image || 'images/placeholder.png',
+      quantity: 1,
+      unitPrice: total,
+      mayor: sale.totalMayor,
+      subtotal: total
+    }];
+  } else {
+    sale.items = sale.items.map(item => ({
+      ...item,
+      quantity: Number(item.quantity) || 1,
+      unitPrice: Number(item.unitPrice) || 0,
+      mayor: Number(item.mayor) || 0,
+      subtotal: Number(item.subtotal ?? (Number(item.quantity || 1) * Number(item.unitPrice || 0))) || 0,
+      image: item.image || 'images/placeholder.png',
+      code: item.code || 'CT-GEN',
+      description: item.description || item.name || 'Producto Cubitt',
+      category: item.category || 'ACCESORIOS'
+    }));
+  }
+
+  // Payments History
+  if (!Array.isArray(sale.paymentsHistory)) {
+    sale.paymentsHistory = [];
+  } else {
+    sale.paymentsHistory = sale.paymentsHistory.map(p => ({
+      ...p,
+      amount: Number(p.amount) || 0,
+      date: p.date || sale.date || new Date().toISOString().slice(0, 10),
+      method: p.method || 'Cuota / Abono',
+      note: p.note || ''
+    }));
+  }
+
+  return sale;
+}
+
 // Storage Management - Sales
 function loadSalesFromStorage() {
   try {
     const saved = localStorage.getItem('cubitt_sales_v2');
     if (saved) {
       state.sales = JSON.parse(saved);
-      state.sales.forEach(s => {
+      state.sales = state.sales.map(s => {
         if (s.isBajoPedido === undefined) s.isBajoPedido = false;
         if (!s.orderStatus) s.orderStatus = s.isBajoPedido ? 'PENDIENTE_COMPRA' : 'ENTREGADO';
+        return sanitizeSaleRecord(s);
       });
     } else {
       // Pre-seed with realistic demo sales
@@ -405,6 +496,7 @@ function loadSalesFromStorage() {
 
 function saveSalesToStorage() {
   try {
+    state.sales = (state.sales || []).map(sanitizeSaleRecord);
     localStorage.setItem('cubitt_sales_v2', JSON.stringify(state.sales));
     renderTopStats();
   } catch (e) {
@@ -602,16 +694,16 @@ function renderTopStats() {
   const accessiblePayables = getAccessiblePayables();
 
   const totalSalesCount = accessibleSales.length;
-  const totalMoney = accessibleSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+  const totalMoney = accessibleSales.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
   const pendingCredit = accessibleSales
-    .filter(s => s.paymentType === 'credito' && s.creditStatus === 'PENDIENTE')
-    .reduce((acc, s) => acc + (s.creditBalance || 0), 0);
+    .filter(s => s.paymentType === 'credito' && (s.creditStatus || '').toUpperCase() === 'PENDIENTE')
+    .reduce((acc, s) => acc + (Number(s.creditBalance) || 0), 0);
 
   const pendingCXP = accessiblePayables
-    .filter(p => p.status === 'PENDIENTE')
-    .reduce((acc, p) => acc + (p.amount || 0), 0);
+    .filter(p => (p.status || '').toUpperCase() === 'PENDIENTE')
+    .reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
 
-  const pendingCXPCount = accessiblePayables.filter(p => p.status === 'PENDIENTE').length;
+  const pendingCXPCount = accessiblePayables.filter(p => (p.status || '').toUpperCase() === 'PENDIENTE').length;
 
   const elSalesCount = document.getElementById('topTotalSalesCount');
   const elTotalMoney = document.getElementById('topTotalMoney');
@@ -619,9 +711,9 @@ function renderTopStats() {
   const elPendingCXP = document.getElementById('topPendingCXP');
 
   if (elSalesCount) elSalesCount.textContent = totalSalesCount;
-  if (elTotalMoney) elTotalMoney.textContent = `$${totalMoney.toFixed(2)}`;
-  if (elPendingCredit) elPendingCredit.textContent = `$${pendingCredit.toFixed(2)}`;
-  if (elPendingCXP) elPendingCXP.textContent = `$${pendingCXP.toFixed(2)}`;
+  if (elTotalMoney) elTotalMoney.textContent = `$${(Number(totalMoney) || 0).toFixed(2)}`;
+  if (elPendingCredit) elPendingCredit.textContent = `$${(Number(pendingCredit) || 0).toFixed(2)}`;
+  if (elPendingCXP) elPendingCXP.textContent = `$${(Number(pendingCXP) || 0).toFixed(2)}`;
 
   // Update badge counters in nav
   const historyCount = document.getElementById('badgeHistoryCount');
@@ -632,7 +724,7 @@ function renderTopStats() {
   const bajoPedidoBadge = document.getElementById('badgeBajoPedidoCount');
 
   if (historyCount) historyCount.textContent = totalSalesCount;
-  const pCount = accessibleSales.filter(s => s.paymentType === 'credito' && s.creditStatus === 'PENDIENTE').length;
+  const pCount = accessibleSales.filter(s => s.paymentType === 'credito' && (s.creditStatus || '').toUpperCase() === 'PENDIENTE').length;
   if (creditCount) creditCount.textContent = pCount;
   if (payablesCount) payablesCount.textContent = pendingCXPCount;
   if (cuentasTotalBadge) cuentasTotalBadge.textContent = pCount + pendingCXPCount;
@@ -2205,16 +2297,16 @@ function renderHistory() {
           <div style="font-size: 0.72rem; color: #64748b; margin-top: 2px;">${escapeHtml(sale.paymentMethod || '')}</div>
           ${isCredit ? `
             <div style="font-size: 0.74rem; margin-top: 2px;">
-              ${isPaid ? '<span style="color: #10b981; font-weight: 700;">● Saldado</span>' : `<span style="color: #ef4444; font-weight: 700;">● Debe: $${sale.creditBalance.toFixed(2)}</span>`}
+              ${isPaid ? '<span style="color: #10b981; font-weight: 700;">● Saldado</span>' : `<span style="color: #ef4444; font-weight: 700;">● Debe: $${(Number(sale.creditBalance) || 0).toFixed(2)}</span>`}
             </div>
           ` : ''}
         </td>
         <td>
-          <div style="font-weight: 800; font-size: 1rem; color: #0f172a;">$${sale.totalAmount.toFixed(2)}</div>
-          <div style="font-size: 0.72rem; color: #059669; font-weight: 600;">Ganancia Real: +$${(sale.totalProfit || 0).toFixed(2)}</div>
-          ${tmComm > 0 ? `<div style="font-size: 0.7rem; color: #7e22ce; font-weight: 600;">CXP T-Mania: -$${tmComm.toFixed(2)}</div>` : ''}
-          ${mlComm > 0 ? `<div style="font-size: 0.7rem; color: #b45309; font-weight: 600;">CXP MercadoLibre: -$${mlComm.toFixed(2)}</div>` : ''}
-          ${sale.additionalCommissionsTotal > 0 ? `<div style="font-size: 0.7rem; color: #b91c1c;">CXP Comis: -$${sale.additionalCommissionsTotal.toFixed(2)}</div>` : ''}
+          <div style="font-weight: 800; font-size: 1rem; color: #0f172a;">$${(Number(sale.totalAmount) || 0).toFixed(2)}</div>
+          <div style="font-size: 0.72rem; color: #059669; font-weight: 600;">Ganancia Real: +$${(Number(sale.totalProfit) || 0).toFixed(2)}</div>
+          ${tmComm > 0 ? `<div style="font-size: 0.7rem; color: #7e22ce; font-weight: 600;">CXP T-Mania: -$${(Number(tmComm) || 0).toFixed(2)}</div>` : ''}
+          ${mlComm > 0 ? `<div style="font-size: 0.7rem; color: #b45309; font-weight: 600;">CXP MercadoLibre: -$${(Number(mlComm) || 0).toFixed(2)}</div>` : ''}
+          ${(Number(sale.additionalCommissionsTotal) || 0) > 0 ? `<div style="font-size: 0.7rem; color: #b91c1c;">CXP Comis: -$${(Number(sale.additionalCommissionsTotal) || 0).toFixed(2)}</div>` : ''}
         </td>
         <td>
           <div style="display: flex; gap: 6px;">
@@ -2232,25 +2324,25 @@ function renderHistory() {
 }
 
 function renderHistoryMetrics(salesList) {
-  const totalAmount = salesList.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
-  const totalProfit = salesList.reduce((acc, s) => acc + (s.totalProfit || 0), 0);
-  const totalContado = salesList.filter(s => s.paymentType === 'contado' || s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre').reduce((acc, s) => acc + s.totalAmount, 0);
-  const totalCreditoPendiente = salesList.filter(s => s.paymentType === 'credito' && s.creditStatus === 'PENDIENTE').reduce((acc, s) => acc + s.creditBalance, 0);
+  const totalAmount = salesList.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
+  const totalProfit = salesList.reduce((acc, s) => acc + (Number(s.totalProfit) || 0), 0);
+  const totalContado = salesList.filter(s => s.paymentType === 'contado' || s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre').reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
+  const totalCreditoPendiente = salesList.filter(s => s.paymentType === 'credito' && (s.creditStatus || '').toUpperCase() === 'PENDIENTE').reduce((acc, s) => acc + (Number(s.creditBalance) || 0), 0);
 
   // Online Platforms Metrics
   const onlineSales = salesList.filter(s => {
     const p = s.plataforma || (s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre' ? 'mercadolibre' : 'ninguna');
     return p === 'mercadolibre' || p === 'facebook_marketplace' || p === 'facebook';
   });
-  const totalOnline = onlineSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+  const totalOnline = onlineSales.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
   const totalML = salesList.filter(s => {
     const p = s.plataforma || (s.paymentType === 'contado_mercadolibre' || s.paymentMethod === 'Contado - MercadoLibre' ? 'mercadolibre' : 'ninguna');
     return p === 'mercadolibre';
-  }).reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+  }).reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
   const totalFB = salesList.filter(s => {
     const p = s.plataforma || '';
     return p === 'facebook_marketplace' || p === 'facebook';
-  }).reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+  }).reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
 
   const elTotal = document.getElementById('histMetricTotal');
   const elProfit = document.getElementById('histMetricProfit');
@@ -2259,12 +2351,12 @@ function renderHistoryMetrics(salesList) {
   const elOnline = document.getElementById('histMetricOnlinePlatforms');
   const elBreakdown = document.getElementById('histMetricOnlineBreakdown');
 
-  if (elTotal) elTotal.textContent = `$${totalAmount.toFixed(2)}`;
-  if (elProfit) elProfit.textContent = `$${totalProfit.toFixed(2)}`;
-  if (elContado) elContado.textContent = `$${totalContado.toFixed(2)}`;
-  if (elCredito) elCredito.textContent = `$${totalCreditoPendiente.toFixed(2)}`;
-  if (elOnline) elOnline.textContent = `$${totalOnline.toFixed(2)}`;
-  if (elBreakdown) elBreakdown.textContent = `ML: $${totalML.toFixed(2)} • FB: $${totalFB.toFixed(2)}`;
+  if (elTotal) elTotal.textContent = `$${(Number(totalAmount) || 0).toFixed(2)}`;
+  if (elProfit) elProfit.textContent = `$${(Number(totalProfit) || 0).toFixed(2)}`;
+  if (elContado) elContado.textContent = `$${(Number(totalContado) || 0).toFixed(2)}`;
+  if (elCredito) elCredito.textContent = `$${(Number(totalCreditoPendiente) || 0).toFixed(2)}`;
+  if (elOnline) elOnline.textContent = `$${(Number(totalOnline) || 0).toFixed(2)}`;
+  if (elBreakdown) elBreakdown.textContent = `ML: $${(Number(totalML) || 0).toFixed(2)} • FB: $${(Number(totalFB) || 0).toFixed(2)}`;
 }
 
 // Render Credits (Cuentas por Cobrar)
@@ -2284,10 +2376,10 @@ function renderCredits() {
   if (emptyState) emptyState.style.display = 'none';
 
   container.innerHTML = creditSales.map(sale => {
-    const isPaid = sale.creditStatus === 'PAGADO';
+    const isPaid = (sale.creditStatus || '').toUpperCase() === 'PAGADO' || (Number(sale.creditBalance) || 0) <= 0;
     const isOverdue = sale.creditDueDate && new Date(sale.creditDueDate) < new Date() && !isPaid;
     const cleanPhone = (sale.clientPhone || '').replace(/[^0-9]/g, '');
-    const waMsg = encodeURIComponent(`Hola ${sale.clientName}, un saludo cordial de Cubitt. Le recordamos su saldo pendiente de $${sale.creditBalance?.toFixed(2)} de su compra #${sale.id}. ¡Gracias!`);
+    const waMsg = encodeURIComponent(`Hola ${sale.clientName || 'Cliente'}, un saludo cordial de Cubitt. Le recordamos su saldo pendiente de $${(Number(sale.creditBalance) || 0).toFixed(2)} de su compra #${sale.id}. ¡Gracias!`);
 
     let badgeColor = '#2563eb';
     let typeName = sale.creditSubtypeLabel || 'Crédito';
@@ -2299,7 +2391,7 @@ function renderCredits() {
         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
           <div>
             <div style="display: flex; align-items: center; gap: 8px;">
-              <h3 style="font-size: 1.1rem; font-weight: 800;">${escapeHtml(sale.clientName)}</h3>
+              <h3 style="font-size: 1.1rem; font-weight: 800;">${escapeHtml(sale.clientName || 'Cliente')}</h3>
               <span class="status-badge" style="background: #f1f5f9; color: ${badgeColor}; border: 1px solid ${badgeColor};">
                 ${typeName}
               </span>
@@ -2308,7 +2400,7 @@ function renderCredits() {
               </span>
             </div>
             <div style="font-size: 0.82rem; color: #64748b; margin-top: 4px;">
-              Venta <strong>#${sale.id}</strong> del ${sale.displayDate}
+              Venta <strong>#${sale.id}</strong> del ${sale.displayDate || sale.date || ''}
               ${sale.vendedor ? ` | Vendedor: <strong>${escapeHtml(sale.vendedor)}</strong>` : ''}
               ${sale.creditDueDate ? ` | Vence: <strong>${sale.creditDueDate}</strong>` : ''}
             </div>
@@ -2316,21 +2408,21 @@ function renderCredits() {
           <div style="text-align: right;">
             <div style="font-size: 0.8rem; color: #64748b;">Saldo por Cobrar:</div>
             <div style="font-size: 1.4rem; font-weight: 900; color: ${isPaid ? '#10b981' : '#ef4444'};">
-              $${(sale.creditBalance || 0).toFixed(2)}
+              $${(Number(sale.creditBalance) || 0).toFixed(2)}
             </div>
-            <div style="font-size: 0.75rem; color: #64748b;">Total: $${sale.totalAmount.toFixed(2)} | Inicial: $${(sale.creditAbono || 0).toFixed(2)}</div>
+            <div style="font-size: 0.75rem; color: #64748b;">Total: $${(Number(sale.totalAmount) || 0).toFixed(2)} | Inicial: $${(Number(sale.creditAbono) || 0).toFixed(2)}</div>
           </div>
         </div>
 
         <div style="margin: 12px 0; padding: 10px; background: #f8fafc; border-radius: 8px; font-size: 0.85rem;">
-          <strong>Artículos:</strong> ${sale.items.map(i => `${escapeHtml(i.code)} (x${i.quantity})`).join(', ')}
+          <strong>Artículos:</strong> ${(sale.items || []).map(i => `${escapeHtml(i.code || '')} (x${i.quantity || 1})`).join(', ')}
         </div>
 
         ${sale.paymentsHistory && sale.paymentsHistory.length > 0 ? `
           <div style="margin-bottom: 12px; font-size: 0.8rem; color: #475569;">
             <strong>Historial de Pagos / Abonos:</strong>
             <ul style="margin-left: 20px; margin-top: 4px;">
-              ${sale.paymentsHistory.map(p => `<li>${p.date}: <strong>+$${p.amount.toFixed(2)}</strong> (${p.method || 'Abono'}) - ${p.note || ''}</li>`).join('')}
+              ${sale.paymentsHistory.map(p => `<li>${p.date || ''}: <strong>+$${(Number(p.amount) || 0).toFixed(2)}</strong> (${escapeHtml(p.method || 'Abono')}) - ${escapeHtml(p.note || '')}</li>`).join('')}
             </ul>
           </div>
         ` : ''}
@@ -2424,10 +2516,10 @@ function renderPayables() {
             ${catBadge}
             <span style="font-weight: 600;">${escapeHtml(item.concept)}</span>
           </div>
-          <div style="font-size: 0.75rem; color: #64748b;">Monto Fijo: $${item.amount.toFixed(2)}</div>
+          <div style="font-size: 0.75rem; color: #64748b;">Monto Fijo: $${(Number(item.amount) || 0).toFixed(2)}</div>
         </td>
         <td>
-          <div style="font-weight: 800; font-size: 1.05rem; color: #b91c1c;">$${item.amount.toFixed(2)}</div>
+          <div style="font-weight: 800; font-size: 1.05rem; color: #b91c1c;">$${(Number(item.amount) || 0).toFixed(2)}</div>
         </td>
         <td>
           <span class="cxp-badge ${isPaid ? 'conciliado' : 'pendiente'}">
@@ -2462,19 +2554,19 @@ function renderPayables() {
 
 function renderPayablesMetrics() {
   const accessible = getAccessiblePayables();
-  const pending = accessible.filter(p => p.status === 'PENDIENTE').reduce((acc, p) => acc + p.amount, 0);
-  const paid = accessible.filter(p => p.status === 'CONCILIADO').reduce((acc, p) => acc + p.amount, 0);
-  const total = accessible.reduce((acc, p) => acc + p.amount, 0);
-  const pendingCount = accessible.filter(p => p.status === 'PENDIENTE').length;
+  const pending = accessible.filter(p => (p.status || '').toUpperCase() === 'PENDIENTE').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  const paid = accessible.filter(p => (p.status || '').toUpperCase() === 'CONCILIADO').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  const total = accessible.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  const pendingCount = accessible.filter(p => (p.status || '').toUpperCase() === 'PENDIENTE').length;
 
   const elPending = document.getElementById('cxpMetricPending');
   const elPaid = document.getElementById('cxpMetricPaid');
   const elTotal = document.getElementById('cxpMetricTotal');
   const elCount = document.getElementById('cxpMetricPendingCount');
 
-  if (elPending) elPending.textContent = `$${pending.toFixed(2)}`;
-  if (elPaid) elPaid.textContent = `$${paid.toFixed(2)}`;
-  if (elTotal) elTotal.textContent = `$${total.toFixed(2)}`;
+  if (elPending) elPending.textContent = `$${(Number(pending) || 0).toFixed(2)}`;
+  if (elPaid) elPaid.textContent = `$${(Number(paid) || 0).toFixed(2)}`;
+  if (elTotal) elTotal.textContent = `$${(Number(total) || 0).toFixed(2)}`;
   if (elCount) elCount.textContent = pendingCount;
 }
 
@@ -2487,10 +2579,10 @@ function openConciliarModal(cxpId) {
 
   currentConciliarId = cxpId;
   const modal = document.getElementById('conciliarModal');
-  document.getElementById('conciliarBeneficiary').textContent = item.beneficiary;
-  document.getElementById('conciliarConcept').textContent = item.concept;
-  document.getElementById('conciliarSaleId').textContent = item.saleId;
-  document.getElementById('conciliarAmount').textContent = `$${item.amount.toFixed(2)}`;
+  document.getElementById('conciliarBeneficiary').textContent = item.beneficiary || '';
+  document.getElementById('conciliarConcept').textContent = item.concept || '';
+  document.getElementById('conciliarSaleId').textContent = item.saleId || '';
+  document.getElementById('conciliarAmount').textContent = `$${(Number(item.amount) || 0).toFixed(2)}`;
   document.getElementById('conciliarDateInput').value = new Date().toISOString().split('T')[0];
   document.getElementById('conciliarRefInput').value = '';
 
@@ -2567,7 +2659,7 @@ function exportPayablesToCSV() {
     `"${p.category || 'ADICIONAL'}"`,
     `"${p.beneficiary || ''}"`,
     `"${p.concept || ''}"`,
-    p.amount.toFixed(2),
+    (Number(p.amount) || 0).toFixed(2),
     `"${p.status}"`,
     `"${p.paidDisplayDate || ''}"`,
     `"${p.paidMethod || ''}"`,
@@ -3671,11 +3763,12 @@ function openAbonoModal(saleId) {
 
   currentAbonoSaleId = saleId;
   const modal = document.getElementById('abonoModal');
-  document.getElementById('abonoClientName').textContent = sale.clientName;
-  document.getElementById('abonoSaleId').textContent = sale.id;
-  document.getElementById('abonoBalanceDue').textContent = `$${sale.creditBalance.toFixed(2)}`;
-  document.getElementById('abonoAmountInput').value = sale.creditBalance.toFixed(2);
-  document.getElementById('abonoAmountInput').max = sale.creditBalance;
+  document.getElementById('abonoClientName').textContent = sale.clientName || 'Cliente';
+  document.getElementById('abonoSaleId').textContent = sale.id || '';
+  const abonoBal = Number(sale.creditBalance ?? sale.creditRemaining ?? 0) || 0;
+  document.getElementById('abonoBalanceDue').textContent = `$${abonoBal.toFixed(2)}`;
+  document.getElementById('abonoAmountInput').value = abonoBal.toFixed(2);
+  document.getElementById('abonoAmountInput').max = abonoBal;
   document.getElementById('abonoNotesInput').value = '';
 
   modal.classList.add('active');
@@ -3789,14 +3882,14 @@ function showSaleTicketModal(sale) {
       <div class="ticket-divider"></div>
 
       <div style="font-size: 0.8rem; font-weight: bold; margin-bottom: 6px;">PRODUCTOS:</div>
-      ${sale.items.map(item => `
+      ${(sale.items || []).map(item => `
         <div style="margin-bottom: 6px;">
           <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 0.85rem;">
             <span>${escapeHtml(item.description || item.code)}</span>
-            <span>$${item.subtotal.toFixed(2)}</span>
+            <span>$${(Number(item.subtotal ?? (Number(item.quantity || 1) * Number(item.unitPrice || 0))) || 0).toFixed(2)}</span>
           </div>
           <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #555;">
-            <span>${item.quantity} und x $${item.unitPrice.toFixed(2)} (${escapeHtml(item.code)})</span>
+            <span>${item.quantity || 1} und x $${(Number(item.unitPrice) || 0).toFixed(2)} (${escapeHtml(item.code || '')})</span>
             <span>${escapeHtml(item.category || '')}</span>
           </div>
         </div>
@@ -3806,7 +3899,7 @@ function showSaleTicketModal(sale) {
 
       <div class="ticket-row ticket-total">
         <span>TOTAL PVP:</span>
-        <span>$${sale.totalAmount.toFixed(2)}</span>
+        <span>$${(Number(sale.totalAmount) || 0).toFixed(2)}</span>
       </div>
 
       ${(sale.plataforma && sale.plataforma !== 'ninguna') || isML ? `
@@ -3829,11 +3922,11 @@ function showSaleTicketModal(sale) {
       ${(sale.comisionMercadoLibre > 0 || isML) ? `
         <div class="ticket-row" style="font-size: 0.75rem; color: #555;">
           <span>Comisión MercadoLibre (12%):</span>
-          <span>$${((sale.comisionMercadoLibre !== undefined ? sale.comisionMercadoLibre : (sale.totalAmount * 0.12))).toFixed(2)}</span>
+          <span>$${(Number(sale.comisionMercadoLibre !== undefined ? sale.comisionMercadoLibre : ((Number(sale.totalAmount) || 0) * 0.12)) || 0).toFixed(2)}</span>
         </div>
         <div class="ticket-row" style="font-size: 0.75rem; color: #15803d; font-weight: 600;">
           <span>Neto Liquidado Tienda (88%):</span>
-          <span>$${((sale.netoTienda !== undefined ? sale.netoTienda : (sale.totalAmount * 0.88))).toFixed(2)}</span>
+          <span>$${(Number(sale.netoTienda !== undefined ? sale.netoTienda : ((Number(sale.totalAmount) || 0) * 0.88)) || 0).toFixed(2)}</span>
         </div>
       ` : ''}
 
@@ -3841,32 +3934,32 @@ function showSaleTicketModal(sale) {
         ${sale.creditSubtype === 'cashea_bull' ? `
           <div class="ticket-row" style="font-size: 0.75rem; color: #555;">
             <span>IVA 16% (Facturado en PVP):</span>
-            <span>$${(sale.montoIVA || 0).toFixed(2)}</span>
+            <span>$${(Number(sale.montoIVA) || 0).toFixed(2)}</span>
           </div>
           <div class="ticket-row" style="font-size: 0.75rem; color: #555;">
             <span>Comisión Cashea (3%):</span>
-            <span>$${(sale.comisionCashea || 0).toFixed(2)}</span>
+            <span>$${(Number(sale.comisionCashea) || 0).toFixed(2)}</span>
           </div>
         ` : ''}
 
         ${sale.creditSubtype === 'cashea_tmania' ? `
           <div class="ticket-row" style="font-size: 0.75rem; color: #555;">
             <span>Comisión Cashea (8%):</span>
-            <span>$${(sale.comisionCashea || 0).toFixed(2)}</span>
+            <span>$${(Number(sale.comisionCashea) || 0).toFixed(2)}</span>
           </div>
           <div class="ticket-row" style="font-size: 0.75rem; color: #555;">
             <span>Comisión T-Mania (10%):</span>
-            <span>$${(sale.comisionTMania || 0).toFixed(2)}</span>
+            <span>$${(Number(sale.comisionTMania) || 0).toFixed(2)}</span>
           </div>
         ` : ''}
 
         <div class="ticket-row">
           <span>Abono / Inicial:</span>
-          <span>$${(sale.creditAbono || 0).toFixed(2)}</span>
+          <span>$${(Number(sale.creditAbono) || 0).toFixed(2)}</span>
         </div>
         <div class="ticket-row" style="font-weight: bold; color: ${isPaid ? '#008000' : '#d00'};">
           <span>Saldo Restante:</span>
-          <span>$${(sale.creditBalance || 0).toFixed(2)}</span>
+          <span>$${(Number(sale.creditBalance) || 0).toFixed(2)}</span>
         </div>
         ${sale.creditDueDate ? `
           <div class="ticket-row" style="font-size: 0.78rem;">
@@ -3880,7 +3973,7 @@ function showSaleTicketModal(sale) {
         <div class="ticket-divider"></div>
         <div style="font-size: 0.75rem; color: #555;">
           <strong>Comisiones Asignadas (CXP):</strong>
-          ${sale.additionalCommissions.map(c => `<div>• ${escapeHtml(c.concept)}: $${c.amount.toFixed(2)} (${escapeHtml(c.beneficiary)})</div>`).join('')}
+          ${(sale.additionalCommissions || []).map(c => `<div>• ${escapeHtml(c.concept || '')}: $${(Number(c.amount) || 0).toFixed(2)} (${escapeHtml(c.beneficiary || '')})</div>`).join('')}
         </div>
       ` : ''}
 
@@ -4787,7 +4880,7 @@ function renderOrdersTab() {
             <span class="order-qty-pill">${item.quantity} und${item.quantity > 1 ? 's' : ''}</span>
             <strong style="color: #0f172a; font-size: 0.88rem;">${escapeHtml(item.description || item.code)}</strong>
           </div>
-          <div style="font-size: 0.72rem; color: #64748b;">${escapeHtml(item.code)} • ${escapeHtml(item.category || '')} • $${item.unitPrice.toFixed(2)} c/u</div>
+          <div style="font-size: 0.72rem; color: #64748b;">${escapeHtml(item.code || '')} • ${escapeHtml(item.category || '')} • $${(Number(item.unitPrice) || 0).toFixed(2)} c/u</div>
         </div>
       </div>
     `).join('');
@@ -4797,8 +4890,9 @@ function renderOrdersTab() {
     if (sale.paymentType === 'contado') {
       paymentBadge = `<span class="debt-badge clear" style="font-size: 0.72rem; padding: 2px 6px;">Pagado Contado</span>`;
     } else {
-      if (sale.creditBalance > 0) {
-        paymentBadge = `<span class="debt-badge debt" style="font-size: 0.72rem; padding: 2px 6px;">Resta $${sale.creditBalance.toFixed(2)}</span>`;
+      const credBal = Number(sale.creditBalance ?? sale.creditRemaining ?? 0) || 0;
+      if (credBal > 0) {
+        paymentBadge = `<span class="debt-badge debt" style="font-size: 0.72rem; padding: 2px 6px;">Resta $${credBal.toFixed(2)}</span>`;
       } else {
         paymentBadge = `<span class="debt-badge clear" style="font-size: 0.72rem; padding: 2px 6px;">Crédito Pagado</span>`;
       }
@@ -4891,14 +4985,15 @@ function openDeliverOrderModal(saleId) {
 
   const payInfo = document.getElementById('deliverPaymentInfo');
   if (payInfo) {
-    if (sale.creditBalance > 0) {
+    const credBal = Number(sale.creditBalance ?? sale.creditRemaining ?? 0) || 0;
+    if (credBal > 0) {
       payInfo.innerHTML = `
-        <div style="color: #ef4444; font-weight: 700; font-size: 0.85rem;">⚠️ El cliente tiene un saldo pendiente de $${sale.creditBalance.toFixed(2)}</div>
+        <div style="color: #ef4444; font-weight: 700; font-size: 0.85rem;">⚠️ El cliente tiene un saldo pendiente de $${credBal.toFixed(2)}</div>
         <div style="font-size: 0.74rem; color: #64748b;">Recuerda cobrar o registrar el abono al entregar.</div>
       `;
     } else {
       payInfo.innerHTML = `
-        <div style="color: #16a34a; font-weight: 700; font-size: 0.85rem;">✅ Pago Completado ($${sale.totalAmount.toFixed(2)})</div>
+        <div style="color: #16a34a; font-weight: 700; font-size: 0.85rem;">✅ Pago Completado ($${(Number(sale.totalAmount) || 0).toFixed(2)})</div>
       `;
     }
   }
@@ -11908,9 +12003,11 @@ function syncDriveHistoricalData(showFeedback = true) {
         totalProfit: totalAmount * 0.47,
         paymentType: pending > 0 ? 'credito' : 'contado',
         creditSubtype: pending > 0 ? 'cashea_bull' : null,
-        creditStatus: pending > 0 ? 'pendiente' : 'pagado',
-        creditAmount: pending,
+        creditStatus: pending > 0 ? 'PENDIENTE' : 'PAGADO',
+        creditBalance: pending,
         creditRemaining: pending,
+        creditAmount: pending,
+        creditAbono: collected,
         creditPaid: collected,
         seller: s.name,
         clientName: `Cliente de ${s.name}`,
@@ -11919,7 +12016,7 @@ function syncDriveHistoricalData(showFeedback = true) {
       });
     });
 
-    state.sales = genSales;
+    state.sales = genSales.map(sanitizeSaleRecord);
     saveSalesToStorage();
   }
 
@@ -13100,7 +13197,8 @@ function doGet(e) {
 
       const totalNum = parseFloat(montoRaw) || 0;
       const cobradoNum = parseFloat(cobradoRaw) || 0;
-      const pendienteNum = pendienteRaw !== '' ? parseFloat(pendienteRaw) : Math.max(0, totalNum - cobradoNum);
+      const parsedPend = parseFloat(pendienteRaw);
+      const pendienteNum = (!isNaN(parsedPend) && pendienteRaw !== '') ? parsedPend : Math.max(0, totalNum - cobradoNum);
 
       salesList.push({
         rowNumber: rowNumber,
@@ -13868,8 +13966,11 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       const name = (item.productName || '').trim() || (code ? `Producto ${code}` : 'Venta Cubitt');
       const total = Number(item.totalAmount) || 0;
       const collected = Number(item.collectedAmount) || 0;
-      const pending = Number(item.pendingAmount) !== undefined ? Number(item.pendingAmount) : Math.max(0, total - collected);
-      const isCredit = pending > 0;
+      let pending = Number(item.pendingAmount);
+      if (isNaN(pending) || item.pendingAmount === null || item.pendingAmount === undefined) {
+        pending = Math.max(0, total - collected);
+      }
+      const isCredit = pending > 0.009;
       const seller = (item.seller || '').trim() || 'General';
       const client = (item.client || '').trim() || 'Cliente General';
       const wh = (item.warehouse || '').trim() || 'barquisimeto_trinitarias';
@@ -13911,7 +14012,7 @@ async function syncFromGoogleSheets(showToastNotification = true) {
 
       const saleId = existingIdx >= 0 ? state.sales[existingIdx].id : `SHEETS-R${rowNum}-${Date.now().toString().slice(-4)}`;
 
-      const saleObj = {
+      const saleObj = sanitizeSaleRecord({
         id: saleId,
         rowNumber: rowNum,
         timestamp: new Date(saleDate + 'T12:00:00Z').toISOString(),
@@ -13954,15 +14055,17 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         installments: parsedInstallments,
         paymentsHistory: paymentsHist,
         syncedWithSheets: true
-      };
+      });
 
       importedSales.push(saleObj);
     });
 
     if (importedSales.length > 0) {
       // Merge with state.sales (preserving any non-conflicting purely local sales)
-      const nonSheetsSales = (state.sales || []).filter(s => !s.rowNumber && !s.id.startsWith('SHEETS-'));
-      state.sales = [...importedSales, ...nonSheetsSales];
+      const nonSheetsSales = (state.sales || [])
+        .filter(s => !s.rowNumber && !s.id?.startsWith('SHEETS-'))
+        .map(sanitizeSaleRecord);
+      state.sales = [...importedSales, ...nonSheetsSales].map(sanitizeSaleRecord);
       state.sales.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
 
       // Register any new sellers in state.sellers
@@ -13982,13 +14085,13 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       saveSalesToStorage();
       if (typeof saveSellersToStorage === 'function') saveSellersToStorage();
 
-      renderTopStats();
-      renderCatalog();
-      renderHistory();
-      renderCredits();
-      renderClients();
-      renderSellersTab();
-      renderAnalyticsDashboard();
+      try { renderTopStats(); } catch (e) { console.warn('renderTopStats:', e); }
+      try { renderCatalog(); } catch (e) { console.warn('renderCatalog:', e); }
+      try { renderHistory(); } catch (e) { console.warn('renderHistory:', e); }
+      try { renderCredits(); } catch (e) { console.warn('renderCredits:', e); }
+      try { renderClients(); } catch (e) { console.warn('renderClients:', e); }
+      try { renderSellersTab(); } catch (e) { console.warn('renderSellersTab:', e); }
+      try { renderAnalyticsDashboard(); } catch (e) { console.warn('renderAnalyticsDashboard:', e); }
 
       localStorage.setItem(SHEETS_CONFIG.storageKeyLastSync, new Date().toISOString());
       appendSheetsSyncLog(`[Éxito] ✅ ${importedSales.length} ventas sincronizadas y actualizadas correctamente.`);
