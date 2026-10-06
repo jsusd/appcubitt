@@ -344,6 +344,27 @@ function sanitizeSaleRecord(sale) {
   return sale;
 }
 
+// Purga ventas simuladas o duplicadas generadas por herramientas de Drive/demo
+function sanitizeSalesState() {
+  if (!state.sales || !Array.isArray(state.sales)) return;
+  const hasRealSales = state.sales.some(s => s && (s.rowNumber || s.id?.startsWith('SHEETS-')));
+  if (hasRealSales) {
+    const prevCount = state.sales.length;
+    state.sales = state.sales.filter(s => {
+      if (!s || !s.id) return false;
+      // Eliminar ventas simuladas de Drive o demos si ya tenemos ventas reales de Google Sheets
+      if (s.id.startsWith('CUB-DRIVE-') || s.id.startsWith('DRIVE-')) return false;
+      if (s.id === 'CUB-1001' || s.id === 'CUB-1002' || s.id === 'CUB-1003') return false;
+      if (s.items && s.items[0] && s.items[0].code === 'CT-DRIVE-LOTE') return false;
+      return true;
+    });
+    if (state.sales.length !== prevCount) {
+      localStorage.setItem('cubitt_sales_v2', JSON.stringify(state.sales));
+      console.log(`[Sanitize] Purgadas ${prevCount - state.sales.length} ventas simuladas duplicadas.`);
+    }
+  }
+}
+
 // Storage Management - Sales
 function loadSalesFromStorage() {
   try {
@@ -355,6 +376,7 @@ function loadSalesFromStorage() {
         if (!s.orderStatus) s.orderStatus = s.isBajoPedido ? 'PENDIENTE_COMPRA' : 'ENTREGADO';
         return sanitizeSaleRecord(s);
       });
+      sanitizeSalesState();
     } else {
       // Pre-seed with realistic demo sales
       state.sales = [
@@ -12061,8 +12083,11 @@ function syncDriveHistoricalData(showFeedback = true) {
   saveSellersToStorage();
   populateSellerSelects();
 
-  // 2. Pre-seed or merge historical sales if needed
-  if (!state.sales || state.sales.length < 5) {
+  // 2. Pre-seed or merge historical sales if needed (only if no real Google Sheets sales exist)
+  const hasRealSales = (state.sales || []).some(s => s && (s.rowNumber || s.id?.startsWith('SHEETS-')));
+  if (hasRealSales) {
+    sanitizeSalesState();
+  } else if (!state.sales || state.sales.length < 5) {
     // Generate realistic historical sales matching the Drive monthly & seller distribution
     const genSales = [];
     let saleCounter = 1001;
@@ -12129,12 +12154,7 @@ function syncDriveHistoricalData(showFeedback = true) {
 // Initialize Analytics Dashboard
 function initAnalyticsDashboard() {
   loadExpensesFromStorage();
-
-  // Ensure default state has drive data ready if empty
-  if (!state.sales || state.sales.length < 5) {
-    syncDriveHistoricalData(false);
-  }
-
+  sanitizeSalesState();
   renderAnalyticsDashboard();
 }
 
@@ -14403,9 +14423,16 @@ async function syncFromGoogleSheets(showToastNotification = true) {
     });
 
     if (importedSales.length > 0) {
-      // Merge with state.sales (preserving any non-conflicting purely local sales)
+      // Merge with state.sales (preserving only real local manual POS sales)
       const nonSheetsSales = (state.sales || [])
-        .filter(s => !s.rowNumber && !s.id?.startsWith('SHEETS-'))
+        .filter(s => {
+          if (!s || !s.id) return false;
+          if (s.rowNumber || s.id.startsWith('SHEETS-')) return false;
+          if (s.id.startsWith('CUB-DRIVE-') || s.id.startsWith('DRIVE-')) return false;
+          if (s.id === 'CUB-1001' || s.id === 'CUB-1002' || s.id === 'CUB-1003') return false;
+          if (s.items && s.items[0] && s.items[0].code === 'CT-DRIVE-LOTE') return false;
+          return s.id.startsWith('POS-');
+        })
         .map(sanitizeSaleRecord);
       state.sales = [...importedSales, ...nonSheetsSales].map(sanitizeSaleRecord);
       state.sales.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
