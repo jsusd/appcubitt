@@ -24,7 +24,7 @@
       </div>
       <div class="header-stats">
         <div class="header-stat-box">
-          <div class="stat-label">Ventas Hoy</div>
+          <div class="stat-label">Total Ventas</div>
           <div class="stat-val" id="topTotalSalesCount">0</div>
         </div>
         <div class="header-stat-box">
@@ -2284,6 +2284,10 @@
           <span>💰</span>
           <span>Ingresos vs Egresos (P&L y Gastos)</span>
         </button>
+        <button type="button" class="analytics-subnav-btn" id="anaSubNavBtnModels" onclick="switchAnalyticsSubTab('models')">
+          <span>🎨</span>
+          <span>Por Modelo & Colores (SKU)</span>
+        </button>
       </div>
 
       <!-- ============================================================== -->
@@ -2682,6 +2686,77 @@
                 </tr>
               </thead>
               <tbody id="anaExpensesTableBody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SUB-TAB 7: REPORTE POR MODELO Y COLORES (SKU - Foto 2)         -->
+      <!-- ============================================================== -->
+      <div id="analyticsViewModels" style="display: none;">
+        <!-- Header Selector & Summary -->
+        <div class="app-card" style="margin-bottom: 1.25rem; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: #fff; padding: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <label for="analyticsModelFamilySelect" style="font-weight: 800; font-size: 1rem; letter-spacing: 0.5px; text-transform: uppercase; color: #94a3b8;">
+                PRODUCTO:
+              </label>
+              <select id="analyticsModelFamilySelect" onchange="renderModelVariantsReport()" style="background: #ffffff; color: #0f172a; font-weight: 800; font-size: 0.95rem; padding: 8px 16px; border-radius: 6px; border: 2px solid #3b82f6; outline: none; cursor: pointer; min-width: 220px;">
+                <option value="HYDRO" selected>HYDRO</option>
+                <option value="COFFEE MUG">COFFEE MUG</option>
+                <option value="TUMBLER">TUMBLER</option>
+                <option value="BACKPACK">BACKPACK</option>
+                <option value="BELT BAG">BELT BAG</option>
+                <option value="EARBUDS">EARBUDS PRO</option>
+                <option value="AURA">AURA 2 / SMARTWATCH</option>
+                <option value="VIVA">VIVA 2</option>
+                <option value="GORRA">GORRA</option>
+                <option value="SCRUNCHIES">SCRUNCHIES</option>
+                <option value="PROTECTOR">PROTECTOR SILICONA / ACCESORIOS</option>
+                <option value="ALL">TODOS LOS PRODUCTOS</option>
+              </select>
+            </div>
+            <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+              <div style="text-align: right;">
+                <div style="font-size: 0.72rem; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Total Facturado</div>
+                <div id="anaModelTotalRevenue" style="font-size: 1.35rem; font-weight: 900; color: #38bdf8;">$0.00</div>
+              </div>
+              <div style="text-align: right; border-left: 1px solid #334155; padding-left: 16px;">
+                <div style="font-size: 0.72rem; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Unidades Vendidas</div>
+                <div id="anaModelTotalUnits" style="font-size: 1.35rem; font-weight: 900; color: #4ade80;">0</div>
+              </div>
+              <div style="text-align: right; border-left: 1px solid #334155; padding-left: 16px;">
+                <div style="font-size: 0.72rem; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Ticket Promedio</div>
+                <div id="anaModelAvgTicket" style="font-size: 1.35rem; font-weight: 900; color: #facc15;">$0.00</div>
+              </div>
+              <div style="text-align: right; border-left: 1px solid #334155; padding-left: 16px;">
+                <div style="font-size: 0.72rem; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Modelos / SKUs</div>
+                <div id="anaModelTotalSkus" style="font-size: 1.35rem; font-weight: 900; color: #e2e8f0;">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table Matching Screenshot 2 -->
+        <div class="app-card" style="padding: 0; overflow: hidden; border-radius: 8px;">
+          <div class="table-responsive">
+            <table class="data-table" style="margin: 0; width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr style="background: #3b5998; color: #ffffff;">
+                  <th style="padding: 12px 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px;">SKU</th>
+                  <th style="padding: 12px 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px;">MODELO</th>
+                  <th style="padding: 12px 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; text-align: center;">FOTO</th>
+                  <th style="padding: 12px 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; text-align: right;">UNIDADES VENDIDAS</th>
+                  <th style="padding: 12px 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; text-align: right;">TOTAL FACTURADO</th>
+                  <th style="padding: 12px 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; text-align: right;">TICKET PROMEDIO</th>
+                  <th style="padding: 12px 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; text-align: right;">% FACTURACIÓN</th>
+                  <th style="padding: 12px 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; text-align: right;">% UNIDADES</th>
+                </tr>
+              </thead>
+              <tbody id="analyticsModelVariantsTableBody">
                 <!-- Dynamically populated -->
               </tbody>
             </table>
@@ -3108,13 +3183,13 @@
         <div><strong>Notas:</strong> <span id="profileNotes">-</span></div>
       </div>
 
-      <!-- Historial de Transacciones del Cliente -->
-      <div style="margin-bottom: 1rem;">
+      <!-- Historial de Compras del Cliente -->
+      <div style="margin-bottom: 1.25rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <h4 style="font-weight: 800; font-size: 1rem; margin: 0; color: #0f172a;">Historial de Transacciones del Cliente</h4>
+          <h4 style="font-weight: 800; font-size: 1rem; margin: 0; color: #0f172a;">🛍️ Historial de Compras</h4>
           <span id="profileTxCount" style="font-size: 0.82rem; color: #64748b; font-weight: 600;">0 ventas</span>
         </div>
-        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
+        <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
           <table class="data-table" style="font-size: 0.82rem;">
             <thead>
               <tr>
@@ -3128,6 +3203,32 @@
               </tr>
             </thead>
             <tbody id="profileSalesTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Historial de Abonos y Pagos del Cliente -->
+      <div style="margin-bottom: 1.25rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h4 style="font-weight: 800; font-size: 1rem; margin: 0; color: #0f172a;">💳 Historial de Abonos y Cobros</h4>
+          <button type="button" id="profilePayDebtBtn" class="btn btn-success btn-sm" style="display: none; padding: 4px 12px; font-size: 0.78rem;">
+            💵 Registrar Nuevo Abono
+          </button>
+        </div>
+        <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+          <table class="data-table" style="font-size: 0.82rem;">
+            <thead>
+              <tr>
+                <th>Fecha de Pago</th>
+                <th>Monto Abonado ($)</th>
+                <th>Tipo / Concepto</th>
+                <th>Venta Asociada</th>
+                <th>Detalle / Nota</th>
+              </tr>
+            </thead>
+            <tbody id="profileAbonosTableBody">
               <!-- Dynamically populated -->
             </tbody>
           </table>

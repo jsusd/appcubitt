@@ -2285,7 +2285,9 @@ function renderHistory() {
           </div>
         </td>
         <td>
-          <div style="font-weight: 600;">${escapeHtml(sale.clientName || 'General')}</div>
+          <a href="javascript:void(0)" onclick="openClientProfileByName('${escapeHtml(sale.clientName || 'General')}')" style="font-weight: 700; color: #2563eb; text-decoration: underline; cursor: pointer;" title="Ver Ficha del Cliente">
+            ${escapeHtml(sale.clientName || 'General')}
+          </a>
           ${sale.vendedor ? `<div style="font-size: 0.75rem; color: #059669;">👤 Vend: ${escapeHtml(sale.vendedor)}</div>` : ''}
           ${sale.clientPhone ? `<div style="font-size: 0.75rem; color: #2563eb;">📱 ${escapeHtml(sale.clientPhone)}</div>` : ''}
         </td>
@@ -2391,7 +2393,7 @@ function renderCredits() {
         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
           <div>
             <div style="display: flex; align-items: center; gap: 8px;">
-              <h3 style="font-size: 1.1rem; font-weight: 800;">${escapeHtml(sale.clientName || 'Cliente')}</h3>
+              <h3 style="font-size: 1.1rem; font-weight: 800; cursor: pointer; color: #1e40af; text-decoration: underline;" onclick="openClientProfileByName('${escapeHtml(sale.clientName || 'Cliente')}')" title="Ver Ficha del Cliente">${escapeHtml(sale.clientName || 'Cliente')}</h3>
               <span class="status-badge" style="background: #f1f5f9; color: ${badgeColor}; border: 1px solid ${badgeColor};">
                 ${typeName}
               </span>
@@ -2428,6 +2430,7 @@ function renderCredits() {
         ` : ''}
 
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;">
+          <button class="btn btn-outline btn-sm" onclick="openClientProfileByName('${escapeHtml(sale.clientName || 'Cliente')}')" title="Ver Ficha del Cliente">👤 Ficha</button>
           <button class="btn btn-outline btn-sm" onclick="openEditSaleModal('${sale.id}')" title="Modificar Venta">✏️ Editar Venta</button>
           ${!isPaid ? `
             <button class="btn btn-success btn-sm" onclick="openAbonoModal('${sale.id}')">💵 Registrar Abono / Saldo</button>
@@ -5714,7 +5717,98 @@ function openClientProfileModal(clientId) {
     }
   }
 
+  // Populate Abonos and Payments History Table
+  const abonosTbody = document.getElementById('profileAbonosTableBody');
+  if (abonosTbody) {
+    const allClientPayments = [];
+    metrics.salesList.forEach(s => {
+      if (s.paymentsHistory && Array.isArray(s.paymentsHistory)) {
+        s.paymentsHistory.forEach(p => {
+          allClientPayments.push({
+            saleId: s.id,
+            saleItem: (s.items && s.items[0]) ? (s.items[0].description || s.items[0].code) : (s.productName || s.productCode || 'Venta'),
+            date: p.date || s.date || '',
+            amount: Number(p.amount) || 0,
+            method: p.method || 'Abono',
+            note: p.note || ''
+          });
+        });
+      }
+    });
+
+    // Sort by date descending
+    allClientPayments.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+    if (allClientPayments.length === 0) {
+      abonosTbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 1.5rem;">No se registran abonos o pagos individuales para este cliente.</td></tr>`;
+    } else {
+      abonosTbody.innerHTML = allClientPayments.map(p => `
+        <tr>
+          <td>
+            <div style="font-weight: 700; color: #0f172a;">📅 ${escapeHtml(p.date || '-')}</div>
+          </td>
+          <td>
+            <span style="font-weight: 800; color: #16a34a; font-size: 0.95rem;">+$${p.amount.toFixed(2)}</span>
+          </td>
+          <td>
+            <span class="status-badge" style="background: #f0fdf4; color: #15803d; font-size: 0.75rem;">
+              ${escapeHtml(p.method)}
+            </span>
+          </td>
+          <td>
+            <div style="font-weight: 600; font-size: 0.8rem; color: #334155;">#${escapeHtml(p.saleId)}</div>
+            <div style="font-size: 0.72rem; color: #64748b;">${escapeHtml(p.saleItem)}</div>
+          </td>
+          <td>
+            <div style="font-size: 0.78rem; color: #475569;">${escapeHtml(p.note || '-')}</div>
+          </td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  // Update profile debt action button
+  const debtActionBtn = document.getElementById('profilePayDebtBtn');
+  if (debtActionBtn) {
+    if (metrics.totalDebt > 0.01) {
+      debtActionBtn.style.display = 'inline-flex';
+      const firstPendingSale = metrics.salesList.find(s => s.paymentType === 'credito' && (s.creditBalance && s.creditBalance > 0.01));
+      if (firstPendingSale) {
+        debtActionBtn.onclick = () => {
+          closeClientProfileModal();
+          openAbonoModal(firstPendingSale.id);
+        };
+      }
+    } else {
+      debtActionBtn.style.display = 'none';
+    }
+  }
+
   modal.classList.add('active');
+}
+
+function openClientProfileByName(clientName) {
+  if (!clientName) return;
+  const norm = clientName.trim().toLowerCase();
+  let client = (state.clients || []).find(c => c && c.name && c.name.trim().toLowerCase() === norm);
+  if (!client) {
+    // If not in state.clients yet, find from sales or create
+    const saleMatch = (state.sales || []).find(s => s && (s.clientName || s.client || '').trim().toLowerCase() === norm);
+    client = {
+      id: `CLI-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      name: clientName.trim(),
+      phone: saleMatch?.clientPhone || '',
+      email: '',
+      idCard: '',
+      vendedor: saleMatch?.vendedor || saleMatch?.seller || 'General',
+      address: '',
+      notes: ''
+    };
+    if (!state.clients) state.clients = [];
+    state.clients.push(client);
+    saveClientsToStorage();
+  }
+  openClientProfileModal(client.id);
 }
 
 function closeClientProfileModal() {
@@ -12048,7 +12142,7 @@ function initAnalyticsDashboard() {
 function switchAnalyticsSubTab(subTab) {
   state.analyticsSubTab = subTab;
 
-  const tabs = ['general', 'pareto', 'products', 'monthly', 'sellers', 'financial'];
+  const tabs = ['general', 'pareto', 'products', 'models', 'monthly', 'sellers', 'financial'];
   tabs.forEach(t => {
     const btn = document.getElementById(`anaSubNavBtn${t.charAt(0).toUpperCase() + t.slice(1)}`);
     const view = document.getElementById(`analyticsView${t.charAt(0).toUpperCase() + t.slice(1)}`);
@@ -12217,6 +12311,10 @@ function renderAnalyticsSubTabView(subTab) {
     case 'products':
       renderAllProductsCharts(data.productsData);
       renderAnalyticsProductTable();
+      break;
+
+    case 'models':
+      renderModelVariantsReport();
       break;
 
     case 'monthly':
@@ -12664,6 +12762,179 @@ function renderAnalyticsProductTable() {
         <td style="text-align: right; font-weight: 700; color: #2563eb;">$${profit.toFixed(2)}</td>
         <td style="text-align: right; font-weight: 700;">${marginPct}%</td>
         <td style="text-align: center;"><span class="badge-count ${stockVal > 0 ? 'badge-in-stock' : 'badge-out-of-stock'}">${stockVal} un.</span></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ==========================================================================
+// REPORTE POR MODELO Y COLORES (SKU) - MATCHING FOTO 2
+// ==========================================================================
+function extractColorFromDescription(desc, family) {
+  if (!desc) return '';
+  let str = desc;
+  str = str.replace(/^(Hydro Bottle|Hydro|Tumbler Spill-Free|Tumbler|Smartwatch|Belt Bag|Backpack|Earbuds Pro|Open-Ear Earbuds|Coffee Mug|Gorra|Scrunchies|Reloj)\s*/i, '');
+  str = str.replace(/\bCubitt\b/gi, '');
+  str = str.replace(/\b\d+oz\b/gi, '');
+  return str.trim() || desc;
+}
+
+function renderModelVariantsReport() {
+  const tableContainer = document.getElementById('analyticsModelVariantsTableBody');
+  const familySelect = document.getElementById('analyticsModelFamilySelect');
+  if (!tableContainer) return;
+
+  const selectedFamily = familySelect ? familySelect.value : 'HYDRO';
+
+  const sales = getAccessibleSales().filter(s => {
+    const total = Number(s.totalAmount) || 0;
+    return total > 0 && total < 5000;
+  });
+
+  const isAll = selectedFamily === 'ALL';
+  const familyKey = selectedFamily.toUpperCase();
+
+  const matchingSales = sales.filter(s => {
+    if (isAll) return true;
+    const pName = (s.productName || '').toUpperCase();
+    const pCode = (s.productCode || (s.items && s.items[0] && s.items[0].code) || '').toUpperCase();
+    const itemDesc = (s.items && s.items[0] && s.items[0].description ? s.items[0].description : '').toUpperCase();
+
+    if (familyKey === 'HYDRO') {
+      return pName.includes('HYDRO') || pCode.startsWith('CTHB') || itemDesc.includes('HYDRO');
+    }
+    if (familyKey === 'COFFEE MUG' || familyKey === 'COFFEE') {
+      return pName.includes('COFFEE') || pCode.includes('COF') || itemDesc.includes('COFFEE');
+    }
+    if (familyKey === 'TUMBLER' || familyKey === 'TUMB') {
+      return pName.includes('TUMB') || pCode.includes('TUMB') || itemDesc.includes('TUMB');
+    }
+    if (familyKey === 'BACKPACK') {
+      return pName.includes('BACKPACK') || pCode.includes('BPK') || itemDesc.includes('BACKPACK');
+    }
+    if (familyKey === 'BELT BAG') {
+      return pName.includes('BELT') || pCode.includes('BLT') || itemDesc.includes('BELT');
+    }
+    if (familyKey === 'EARBUDS' || familyKey === 'EARBUDS PRO') {
+      return pName.includes('EARBUD') || pCode.includes('PWEP') || itemDesc.includes('EARBUD');
+    }
+    if (familyKey === 'AURA' || familyKey === 'AURA 2') {
+      return pName.includes('AURA') || pCode.includes('AURA') || itemDesc.includes('AURA');
+    }
+    if (familyKey === 'VIVA' || familyKey === 'VIVA 2') {
+      return pName.includes('VIVA') || pCode.includes('VIVA') || itemDesc.includes('VIVA');
+    }
+    if (familyKey === 'GORRA') {
+      return pName.includes('GORRA') || pCode.includes('CAP') || itemDesc.includes('GORRA');
+    }
+    if (familyKey === 'SCRUNCHIES') {
+      return pName.includes('SCRUNCH') || pCode.includes('SC-') || itemDesc.includes('SCRUNCH');
+    }
+    if (familyKey === 'PROTECTOR') {
+      return pName.includes('PROTECTOR') || pCode.includes('SP-') || pCode.includes('BASE') || itemDesc.includes('PROTECTOR');
+    }
+    return pName.includes(familyKey) || pCode.includes(familyKey) || itemDesc.includes(familyKey);
+  });
+
+  const totalFamilyRevenue = matchingSales.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
+  const totalFamilyUnits = matchingSales.reduce((acc, s) => {
+    const qty = (s.items && s.items[0] && s.items[0].quantity) ? Number(s.items[0].quantity) : 1;
+    return acc + (qty || 1);
+  }, 0);
+
+  const skuMap = new Map();
+
+  matchingSales.forEach(s => {
+    const rawSku = (s.productCode || (s.items && s.items[0] && s.items[0].code) || '').trim();
+    const skuKey = rawSku ? rawSku.toUpperCase() : 'SIN-SKU';
+    const amount = Number(s.totalAmount) || 0;
+    const qty = (s.items && s.items[0] && s.items[0].quantity) ? Number(s.items[0].quantity) : 1;
+
+    let itemData = skuMap.get(skuKey);
+    if (!itemData) {
+      let catalogItem = (state.products || []).find(p => p.code && p.code.toUpperCase() === skuKey);
+      if (!catalogItem && window.CUBITT_PRODUCTS) {
+        catalogItem = window.CUBITT_PRODUCTS.find(p => p.code && p.code.toUpperCase() === skuKey);
+      }
+
+      let modelColor = '';
+      if (catalogItem && catalogItem.description) {
+        modelColor = extractColorFromDescription(catalogItem.description, selectedFamily);
+      } else if (s.productName && s.productName !== selectedFamily) {
+        modelColor = s.productName;
+      } else {
+        modelColor = skuKey;
+      }
+
+      let img = catalogItem ? (catalogItem.image || (catalogItem.images && catalogItem.images[0])) : null;
+      if (!img || img === 'CellImage') {
+        img = s.image && s.image !== 'CellImage' ? s.image : 'images/placeholder.png';
+      }
+
+      itemData = {
+        sku: rawSku || 'SIN-SKU',
+        model: modelColor.toUpperCase(),
+        image: img,
+        units: 0,
+        revenue: 0
+      };
+      skuMap.set(skuKey, itemData);
+    }
+
+    itemData.units += (qty || 1);
+    itemData.revenue += amount;
+  });
+
+  const variantsList = Array.from(skuMap.values());
+  variantsList.sort((a, b) => b.revenue - a.revenue || b.units - a.units);
+
+  const elRev = document.getElementById('anaModelTotalRevenue');
+  const elUnits = document.getElementById('anaModelTotalUnits');
+  const elAvg = document.getElementById('anaModelAvgTicket');
+  const elSkus = document.getElementById('anaModelTotalSkus');
+
+  const avgTicket = totalFamilyUnits > 0 ? (totalFamilyRevenue / totalFamilyUnits) : 0;
+  if (elRev) elRev.textContent = `$${totalFamilyRevenue.toFixed(2)}`;
+  if (elUnits) elUnits.textContent = totalFamilyUnits;
+  if (elAvg) elAvg.textContent = `$${avgTicket.toFixed(2)}`;
+  if (elSkus) elSkus.textContent = variantsList.length;
+
+  if (variantsList.length === 0) {
+    tableContainer.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #94a3b8; padding: 2.5rem;">No se encontraron ventas registradas para la línea "${escapeHtml(selectedFamily)}".</td></tr>`;
+    return;
+  }
+
+  tableContainer.innerHTML = variantsList.map(v => {
+    const vTicket = v.units > 0 ? (v.revenue / v.units) : 0;
+    const pctRev = totalFamilyRevenue > 0 ? ((v.revenue / totalFamilyRevenue) * 100).toFixed(1) : '0.0';
+    const pctUnits = totalFamilyUnits > 0 ? ((v.units / totalFamilyUnits) * 100).toFixed(1) : '0.0';
+
+    return `
+      <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.15s ease;">
+        <td style="font-weight: 700; color: #1e293b; font-family: monospace; font-size: 0.88rem; padding: 10px 14px;">
+          ${escapeHtml(v.sku)}
+        </td>
+        <td style="font-weight: 700; color: #334155; font-size: 0.88rem; padding: 10px 14px;">
+          ${escapeHtml(v.model)}
+        </td>
+        <td style="text-align: center; width: 70px; padding: 6px 10px;">
+          <img src="${escapeHtml(v.image)}" alt="${escapeHtml(v.model)}" style="width: 44px; height: 44px; object-fit: contain; border-radius: 6px; background: #f8fafc; border: 1px solid #e2e8f0; padding: 2px;" onerror="this.src='images/placeholder.png'">
+        </td>
+        <td style="text-align: right; font-weight: 700; color: #0f172a; font-size: 0.95rem; padding: 10px 14px;">
+          ${v.units}
+        </td>
+        <td style="text-align: right; font-weight: 800; color: #0f172a; font-size: 0.95rem; padding: 10px 14px;">
+          $${v.revenue.toFixed(2)}
+        </td>
+        <td style="text-align: right; font-weight: 600; color: #475569; font-size: 0.9rem; padding: 10px 14px;">
+          $${vTicket.toFixed(2)}
+        </td>
+        <td style="text-align: right; font-weight: 700; color: #2563eb; font-size: 0.9rem; padding: 10px 14px;">
+          ${pctRev}%
+        </td>
+        <td style="text-align: right; font-weight: 700; color: #059669; font-size: 0.9rem; padding: 10px 14px;">
+          ${pctUnits}%
+        </td>
       </tr>
     `;
   }).join('');
@@ -13858,6 +14129,27 @@ function fallbackCopyCode(text) {
   showToast('📋 Código copiado al portapapeles', 'success');
 }
 
+// Normalizar strings de fechas a formato YYYY-MM-DD estándar
+function normalizeDateString(dateStr, fallbackYear = '2026') {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  const str = dateStr.trim();
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(str)) {
+    const parts = str.split('-');
+    return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+  }
+  const dmyMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
+  if (dmyMatch) {
+    let year = dmyMatch[3];
+    if (year.length === 2) year = '20' + year;
+    return `${year}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
+  }
+  const dmMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})$/);
+  if (dmMatch) {
+    return `${fallbackYear}-${dmMatch[2].padStart(2, '0')}-${dmMatch[1].padStart(2, '0')}`;
+  }
+  return str;
+}
+
 // Client-side parser for installment dates located in the note/comment of the amount cell
 function parsePaymentDatesCommentClient(commentText) {
   if (!commentText || typeof commentText !== 'string') return [];
@@ -13959,20 +14251,70 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       if (p.code) knownCodesMap[p.code.toUpperCase()] = p;
     });
 
+    let lastValidDate = '';
+    let lastValidClient = '';
+    let lastValidSeller = '';
+
     fetchedSales.forEach(item => {
       const rowNum = item.rowNumber || '';
-      const saleDate = item.date || new Date().toISOString().slice(0, 10);
-      const code = (item.productCode || '').trim();
-      const name = (item.productName || '').trim() || (code ? `Producto ${code}` : 'Venta Cubitt');
+      const rowNumInt = parseInt(rowNum, 10);
+      // Omitir fila de total general (450) y tablas auxiliares/gráficas (451-485)
+      if (!isNaN(rowNumInt) && (rowNumInt === 450 || (rowNumInt > 450 && rowNumInt <= 485))) return;
+
       const total = Number(item.totalAmount) || 0;
+      const code = (item.productCode || '').trim();
+      const rawName = (item.productName || '').trim();
+
+      // Filtrar filas de subtotales, cabeceras repetidas, Pareto o anómalas
+      if (total >= 5000 || total <= 0 || code === '$' || rawName.toUpperCase() === 'PRODUCTO' || rawName.toUpperCase().includes('PARETO') || rawName.toUpperCase().includes('TOTAL')) return;
+
+      // Propagar fecha válida si está vacía o inválida (1900-...)
+      let saleDate = (item.date || '').trim();
+      if (!saleDate || saleDate.startsWith('1900') || saleDate === '1900-01-00') {
+        saleDate = lastValidDate || new Date().toISOString().slice(0, 10);
+      } else {
+        lastValidDate = saleDate;
+      }
+
+      // Manejo inteligente de Cliente y Vendedor (incluyendo Cashea y Bull)
+      let rawClient = (item.client || '').trim();
+      let rawSeller = (item.seller || '').trim();
+      let client = rawClient;
+      let seller = rawSeller;
+      let isCasheaSale = false;
+      let isBullSale = false;
+
+      const upperClient = rawClient.toUpperCase();
+      if (upperClient.includes('CASHEA')) {
+        isCasheaSale = true;
+        let worker = rawClient.replace(/cashea/gi, '').replace(/bull/gi, '').trim();
+        seller = worker || rawSeller || 'CASHEA';
+        client = 'Cliente Cashea';
+      } else if (upperClient.includes('BULL')) {
+        isBullSale = true;
+        let worker = rawClient.replace(/bull/gi, '').trim();
+        seller = worker || rawSeller || 'BULL';
+        client = 'Cliente Bull';
+      } else {
+        if (!client) {
+          client = lastValidClient || 'Cliente General';
+        } else {
+          lastValidClient = client;
+        }
+        if (!seller) {
+          seller = lastValidSeller || 'General';
+        } else {
+          lastValidSeller = seller;
+        }
+      }
+
+      const name = rawName || (code ? `Producto ${code}` : 'Venta Cubitt');
       const collected = Number(item.collectedAmount) || 0;
       let pending = Number(item.pendingAmount);
       if (isNaN(pending) || item.pendingAmount === null || item.pendingAmount === undefined) {
         pending = Math.max(0, total - collected);
       }
-      const isCredit = pending > 0.009;
-      const seller = (item.seller || '').trim() || 'General';
-      const client = (item.client || '').trim() || 'Cliente General';
+      const isCredit = isCasheaSale || pending > 0.009;
       const wh = (item.warehouse || '').trim() || 'barquisimeto_trinitarias';
       const noteComment = item.paymentDatesComment || '';
 
@@ -13980,18 +14322,18 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       const matchedProd = knownCodesMap[code.toUpperCase()] ||
         (state.products || []).find(p => p.name && p.name.toLowerCase() === name.toLowerCase()) || null;
 
-      const prodImg = item.image || (matchedProd ? matchedProd.image : 'images/placeholder.png');
+      const prodImg = (item.image && item.image !== 'CellImage') ? item.image : (matchedProd ? matchedProd.image : 'images/placeholder.png');
       const prodCategory = matchedProd ? matchedProd.category : 'ACCESORIOS';
       const prodMayor = matchedProd ? (matchedProd.mayor || (matchedProd.price * 0.55)) : (total * 0.53);
 
-      // Build parsed payments history from note comments (cuotas y fechas)
+      // Build parsed payments history from note comments (cuotas y fechas) con normalización
       const parsedInstallments = item.installments || parsePaymentDatesCommentClient(noteComment);
       let paymentsHist = [];
       if (parsedInstallments && parsedInstallments.length > 0) {
         paymentsHist = parsedInstallments.map((inst, idx) => ({
-          date: inst.date || saleDate,
+          date: normalizeDateString(inst.date, saleDate.slice(0, 4)),
           amount: Number(inst.amount) || (idx === 0 ? collected : 0),
-          method: 'Cuota / Abono',
+          method: isCasheaSale ? 'Cuota Cashea' : 'Cuota / Abono',
           note: inst.rawText || `Cuota ${idx + 1}`
         }));
       } else if (collected > 0) {
@@ -14038,7 +14380,7 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         totalMayor: prodMayor,
         totalProfit: Math.max(0, total - prodMayor),
         paymentType: isCredit ? 'credito' : 'contado',
-        creditSubtype: seller === 'CASHEA' ? 'cashea_bull' : (isCredit ? 'jp' : null),
+        creditSubtype: isCasheaSale ? 'cashea_bull' : (seller === 'CASHEA' ? 'cashea_bull' : (isCredit ? 'jp' : null)),
         creditStatus: isCredit ? 'PENDIENTE' : 'PAGADO',
         creditBalance: pending,
         creditRemaining: pending,
@@ -14067,6 +14409,37 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         .map(sanitizeSaleRecord);
       state.sales = [...importedSales, ...nonSheetsSales].map(sanitizeSaleRecord);
       state.sales.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
+
+      // Sincronizar todos los clientes únicos en state.clients y enlazar s.clientId
+      const clientMap = new Map();
+      (state.clients || []).forEach(c => {
+        if (c && c.name) clientMap.set(c.name.trim().toLowerCase(), c);
+      });
+
+      importedSales.forEach(s => {
+        const cName = (s.clientName || s.client || '').trim();
+        if (!cName) return;
+        const key = cName.toLowerCase();
+        let clientObj = clientMap.get(key);
+        if (!clientObj) {
+          clientObj = {
+            id: `CLI-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+            name: cName,
+            phone: '',
+            email: '',
+            idCard: '',
+            address: '',
+            notes: '',
+            vendedor: s.seller || s.vendedor || 'General',
+            createdAt: s.date || new Date().toISOString()
+          };
+          clientMap.set(key, clientObj);
+        }
+        s.clientId = clientObj.id;
+      });
+
+      state.clients = Array.from(clientMap.values());
+      saveClientsToStorage();
 
       // Register any new sellers in state.sellers
       const knownSellerNames = new Set((state.sellers || []).map(s => s.name.toUpperCase()));

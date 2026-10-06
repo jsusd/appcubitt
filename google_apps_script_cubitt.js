@@ -92,10 +92,17 @@ function doGet(e) {
     const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
     const colAlmacen = findColIndex(headers, ['almacen', 'almacén', 'sede', 'warehouse']);
 
+    let lastValidDate = '';
+    let lastValidClient = '';
+    let lastValidSeller = '';
+
     for (let r = 0; r < values.length; r++) {
       const row = values[r];
       const rowNotes = notes[r];
       const rowNumber = r + 2;
+
+      // Omitir fila de total general y tablas auxiliares de gráficos/pareto
+      if (rowNumber === 450 || (rowNumber > 450 && rowNumber <= 485)) continue;
 
       // Extraer datos básicos
       const fechaRaw = colFecha >= 0 ? row[colFecha] : '';
@@ -109,33 +116,83 @@ function doGet(e) {
       const clienteRaw = colCliente >= 0 ? row[colCliente] : '';
       const almacenRaw = colAlmacen >= 0 ? row[colAlmacen] : 'barquisimeto_trinitarias';
 
-      // NOTA / COMENTARIO DE LA CELDA DEL MONTO (Fechas de pago / cuotas)
-      const montoNote = colMonto >= 0 ? (rowNotes[colMonto] || '') : '';
-      
-      // Parsear las fechas de pago del comentario
-      const paymentDates = parsePaymentDatesFromComment(montoNote);
-
       // Si la fila está vacía, la omitimos
       if (!fechaRaw && !productoRaw && !montoRaw) continue;
 
       const totalNum = parseFloat(montoRaw) || 0;
+      const codStr = (codigoRaw || '').toString().trim();
+      const prodStr = (productoRaw || '').toString().trim();
+
+      // Filtrar filas de subtotales, cabeceras repetidas o números anómalos de gráficos
+      if (totalNum >= 5000 || totalNum <= 0 || codStr === '$' || prodStr.toUpperCase() === 'PRODUCTO' || prodStr.toUpperCase().includes('PARETO')) continue;
+
       const cobradoNum = parseFloat(cobradoRaw) || 0;
       const parsedPend = parseFloat(pendienteRaw);
       const pendienteNum = (!isNaN(parsedPend) && pendienteRaw !== '') ? parsedPend : Math.max(0, totalNum - cobradoNum);
 
+      // Propagar fecha válida si está vacía o inválida (1900-...)
+      let formattedDate = formatDateOutput(fechaRaw);
+      if (!formattedDate || formattedDate.startsWith('1900') || formattedDate === '1900-01-00') {
+        formattedDate = lastValidDate || '';
+      } else {
+        lastValidDate = formattedDate;
+      }
+
+      // Búsqueda de nota/comentario en la celda del monto o en cualquier celda de la fila
+      let cellNote = (colMonto >= 0 && rowNotes[colMonto]) ? rowNotes[colMonto].toString().trim() : '';
+      if (!cellNote && rowNotes) {
+        for (let c = 0; c < rowNotes.length; c++) {
+          if (rowNotes[c] && rowNotes[c].toString().trim().length > 0) {
+            cellNote = rowNotes[c].toString().trim();
+            break;
+          }
+        }
+      }
+
+      // Parsear las fechas de pago del comentario
+      const paymentDates = parsePaymentDatesFromComment(cellNote);
+
+      // Manejo de Cliente y Vendedor (incluyendo Cashea y Bull)
+      let rawClient = (clienteRaw || '').toString().trim();
+      let rawSeller = (vendedorRaw || '').toString().trim();
+      let finalClient = rawClient;
+      let finalSeller = rawSeller;
+
+      const upperClient = rawClient.toUpperCase();
+      if (upperClient.includes('CASHEA')) {
+        let worker = rawClient.replace(/cashea/gi, '').replace(/bull/gi, '').trim();
+        finalSeller = worker || rawSeller || 'CASHEA';
+        finalClient = 'Cliente Cashea';
+      } else if (upperClient.includes('BULL')) {
+        let worker = rawClient.replace(/bull/gi, '').trim();
+        finalSeller = worker || rawSeller || 'BULL';
+        finalClient = 'Cliente Bull';
+      } else {
+        if (!finalClient) {
+          finalClient = lastValidClient || 'Cliente General';
+        } else {
+          lastValidClient = finalClient;
+        }
+        if (!finalSeller) {
+          finalSeller = lastValidSeller || 'General';
+        } else {
+          lastValidSeller = finalSeller;
+        }
+      }
+
       salesList.push({
         rowNumber: rowNumber,
-        date: formatDateOutput(fechaRaw),
-        productCode: (codigoRaw || '').toString().trim(),
-        productName: (productoRaw || '').toString().trim(),
+        date: formattedDate,
+        productCode: codStr,
+        productName: prodStr,
         image: (imagenRaw || '').toString().trim(),
         totalAmount: totalNum,
         collectedAmount: cobradoNum,
         pendingAmount: pendienteNum,
-        seller: (vendedorRaw || '').toString().trim(),
-        client: (clienteRaw || '').toString().trim(),
+        seller: finalSeller,
+        client: finalClient,
         warehouse: (almacenRaw || '').toString().trim(),
-        paymentDatesComment: montoNote,
+        paymentDatesComment: cellNote,
         installments: paymentDates,
         status: pendienteNum > 0 ? 'pendiente' : 'pagado'
       });
@@ -146,6 +203,7 @@ function doGet(e) {
       spreadsheetId: ss.getId(),
       sheetName: sheet.getName(),
       totalRecords: salesList.length,
+      headers: headers,
       lastSync: new Date().toISOString(),
       sales: salesList
     }, e);
