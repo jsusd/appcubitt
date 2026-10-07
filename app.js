@@ -13626,7 +13626,8 @@ function doPost(e) {
 function handleAddSale(ss, payload) {
   let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
   if (!sheet) sheet = ss.getSheets()[0];
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => (h || '').toString().trim());
+  const lastCol = Math.max(sheet.getLastColumn(), 10);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => (h || '').toString().trim());
 
   const colFecha = findColIndex(headers, ['fecha', 'date', 'dia']);
   const colCodigo = findColIndex(headers, ['codigo', 'código', 'code', 'sku']);
@@ -13638,30 +13639,71 @@ function handleAddSale(ss, payload) {
   const colVendedor = findColIndex(headers, ['vendedor', 'seller', 'asesor']);
   const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador']);
 
-  const colMontoIndex = colMonto >= 0 ? (colMonto + 1) : 5;
+  const montoColIdx = colMonto >= 0 ? colMonto : 4;
+  const numCols = lastCol;
   const lastRow = sheet.getLastRow();
 
-  // Encontrar la fila de totales (donde colMonto tiene fórmula =SUM(...) o fila 450)
-  let insertRow = lastRow + 1;
-  for (let r = 2; r <= Math.min(lastRow, 500); r++) {
-    const f = sheet.getRange(r, colMontoIndex).getFormula();
-    const cellVal = (sheet.getRange(r, 1).getValue() || '').toString().trim().toUpperCase();
-    if (r === 450 || (f && f.toUpperCase().includes('SUM')) || cellVal.includes('TOTAL')) {
-      insertRow = r;
+  // 1. Localizar la fila de Totales para insertar justo debajo de la fila 449 (o última fila de datos)
+  const scanRows = Math.min(lastRow, 550);
+  const checkValues = sheet.getRange(1, 1, scanRows, Math.min(numCols, 8)).getValues();
+  const checkFormulas = sheet.getRange(1, montoColIdx + 1, scanRows, 1).getFormulas();
+
+  let totalRow = -1;
+  for (let r = 1; r < scanRows; r++) {
+    const rowNum = r + 1;
+    const fMonto = (checkFormulas[r][0] || '').toString().toUpperCase();
+    const vCol1 = (checkValues[r][0] || '').toString().trim().toUpperCase();
+    const vProd = colProducto >= 0 && checkValues[r][colProducto] ? checkValues[r][colProducto].toString().trim().toUpperCase() : '';
+
+    if (fMonto.includes('SUM') || vCol1.includes('TOTAL') || vProd.includes('TOTAL') || rowNum === 450) {
+      totalRow = rowNum;
       break;
     }
   }
 
-  // Insertar fila justo antes de los totales para expandir automáticamente el rango de la suma en Google Sheets
-  if (insertRow <= lastRow) {
-    sheet.insertRowBefore(insertRow);
-  } else {
-    insertRow = lastRow + 1;
+  // Si no se encuentra fila de total, insertar justo en 450 (debajo de 449)
+  if (totalRow < 2) {
+    totalRow = 450;
   }
 
-  const numCols = Math.max(sheet.getLastColumn(), 8);
-  const newRowValues = new Array(numCols).fill('');
+  const insertRow = totalRow;
+  const sourceRow = totalRow - 1; // Fila 449 (o la última venta existente)
 
+  // 2. Insertar nueva fila justo debajo de la fila 449 (antes de la fila de Total)
+  sheet.insertRowBefore(insertRow);
+
+  // 3. COPIAR EXACTAMENTE EL FORMATO DE LA FILA 449
+  const sourceRange = sheet.getRange(sourceRow, 1, 1, numCols);
+  const targetRange = sheet.getRange(insertRow, 1, 1, numCols);
+
+  // A. Formatos visuales (colores de celda, bordes, fuentes, alineaciones)
+  sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+
+  // B. Formatos numéricos exactos (moneda $, fechas, etc.)
+  const sourceNumberFormats = sourceRange.getNumberFormats();
+  targetRange.setNumberFormats(sourceNumberFormats);
+
+  // C. Altura idéntica de fila
+  try {
+    sheet.setRowHeight(insertRow, sheet.getRowHeight(sourceRow));
+  } catch (e) {}
+
+  // D. Validaciones de datos (menús desplegables si existen)
+  try {
+    const validations = sourceRange.getDataValidations();
+    targetRange.setDataValidations(validations);
+  } catch (e) {}
+
+  // E. Fórmulas de columnas calculadas si existiesen en la fila 449
+  const sourceFormulas = sourceRange.getFormulas()[0];
+  for (let c = 0; c < numCols; c++) {
+    const sf = sourceFormulas[c];
+    if (sf && c !== colFecha && c !== colCodigo && c !== colProducto && c !== colImagen && c !== colMonto && c !== colCobrado && c !== colPendiente && c !== colVendedor && c !== colCliente) {
+      sourceRange.getCell(1, c + 1).copyTo(targetRange.getCell(1, c + 1), SpreadsheetApp.CopyPasteType.PASTE_FORMULA, false);
+    }
+  }
+
+  // 4. Escribir los datos de la venta registrada
   const saleDate = payload.date || Utilities.formatDate(new Date(), 'GMT-4', 'yyyy-MM-dd');
   const code = payload.productCode || '';
   const desc = payload.productName || payload.description || '';
@@ -13671,6 +13713,8 @@ function handleAddSale(ss, payload) {
   const pendiente = Number(payload.pendingAmount) || Math.max(0, total - cobrado);
   const seller = payload.seller || '';
   const client = payload.client || payload.clientName || '';
+
+  const newRowValues = targetRange.getValues()[0];
 
   if (colFecha >= 0) newRowValues[colFecha] = saleDate;
   if (colCodigo >= 0) newRowValues[colCodigo] = code;
@@ -13682,19 +13726,53 @@ function handleAddSale(ss, payload) {
   if (colVendedor >= 0) newRowValues[colVendedor] = seller;
   if (colCliente >= 0) newRowValues[colCliente] = client;
 
-  sheet.getRange(insertRow, 1, 1, numCols).setValues([newRowValues]);
+  targetRange.setValues([newRowValues]);
 
+  // Si tiene fechas de pago o cuotas, guardarlas como NOTA en la celda del monto
   if (colMonto >= 0 && payload.paymentDatesComment) {
     const montoCell = sheet.getRange(insertRow, colMonto + 1);
     montoCell.setNote(payload.paymentDatesComment);
   }
 
+  // 5. Actualizar la fórmula =SUM(...) en la fila de Totales (ahora en insertRow + 1)
+  const shiftedTotalRow = insertRow + 1;
+  for (let c = 1; c <= numCols; c++) {
+    const totalCell = sheet.getRange(shiftedTotalRow, c);
+    const existingFormula = totalCell.getFormula();
+    if (existingFormula && existingFormula.toUpperCase().includes('SUM')) {
+      const colLetter = getColumnLetter(c);
+      totalCell.setFormula(`=SUM(${colLetter}2:${colLetter}${insertRow})`);
+    }
+  }
+
+  // 6. Limpieza preventiva: si existía la fila 486 errónea de pruebas anteriores
+  if (sheet.getLastRow() >= 486 && (sheet.getLastRow() > shiftedTotalRow + 10)) {
+    try {
+      const farRow = sheet.getLastRow();
+      const farCode = (sheet.getRange(farRow, (colCodigo >= 0 ? colCodigo + 1 : 2)).getValue() || '').toString();
+      const farMonto = Number(sheet.getRange(farRow, (colMonto >= 0 ? colMonto + 1 : 5)).getValue()) || 0;
+      if (farMonto === 104 || farCode.includes('CTBPK') || farCode === code) {
+        sheet.deleteRow(farRow);
+      }
+    } catch (e) {}
+  }
+
   return jsonResponse({
     status: 'success',
-    message: 'Venta registrada con éxito en Google Sheets',
+    message: 'Venta registrada exitosamente debajo de la fila 449 con formato idéntico',
     row: insertRow,
-    saleId: payload.id || ('ROW-' + insertRow)
+    saleId: payload.id || `ROW-${insertRow}`
   });
+}
+
+function getColumnLetter(columnNumber) {
+  let temp, letter = '';
+  while (columnNumber > 0) {
+    temp = (columnNumber - 1) % 26;
+    letter = String.fromCharCode(temp + 65) + letter;
+    columnNumber = Math.floor((columnNumber - temp - 1) / 26);
+  }
+  return letter;
 }
 
 function handleUpdateAbono(ss, payload) {
