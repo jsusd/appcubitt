@@ -2837,6 +2837,63 @@ body {
   border: 1px solid #e2e8f0;
 }
 
+/* Product Reference Layout for Tables (Images 1, 2, 3 based on Image 4) */
+.product-cell-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 190px;
+  max-width: 290px;
+}
+
+.product-cell-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.product-cell-thumb {
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  max-width: 38px;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  padding: 2px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.product-cell-thumb:hover {
+  transform: scale(1.08);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
+}
+
+.product-cell-title {
+  font-weight: 700;
+  font-size: 0.83rem;
+  color: #0f172a;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 230px;
+}
+
+.product-cell-subtitle {
+  font-size: 0.71rem;
+  color: #64748b;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 230px;
+}
+
 .pos-item-stepper-btn {
   width: 24px;
   height: 24px;

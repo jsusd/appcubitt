@@ -2182,6 +2182,178 @@ function handleCheckoutCart() {
   resetPOSForm();
 }
 
+// --------------------------------------------------------------------------
+// Helper: Resolve & format product items with Image, Name, and Code
+// Reference: Image 4 design (applied to Images 1, 2, and 3)
+// --------------------------------------------------------------------------
+function getSaleDisplayItems(sale) {
+  let rawItems = [];
+  if (sale && sale.items && Array.isArray(sale.items) && sale.items.length > 0) {
+    rawItems = sale.items;
+  } else if (sale && (sale.productCode || sale.productName)) {
+    rawItems = [{
+      code: sale.productCode || '',
+      description: sale.productName || '',
+      image: sale.image || '',
+      quantity: 1
+    }];
+  }
+
+  const result = [];
+  const productsList = (typeof state !== 'undefined' && state.products && state.products.length > 0)
+    ? state.products
+    : (typeof CUBITT_PRODUCTS !== 'undefined' ? CUBITT_PRODUCTS : []);
+
+  function findInCatalog(code, name) {
+    if (!code && !name) return null;
+    const cleanCode = (code || '').trim().toUpperCase();
+    if (cleanCode) {
+      // 1. Exact match
+      let found = productsList.find(p => p.code && p.code.trim().toUpperCase() === cleanCode);
+      if (found) return found;
+
+      // 2. Stripped match (without symbols)
+      const strippedCode = cleanCode.replace(/[^A-Z0-9-]/g, '');
+      found = productsList.find(p => p.code && p.code.replace(/[^A-Z0-9-]/g, '').toUpperCase() === strippedCode);
+      if (found) return found;
+
+      // 3. Substring match
+      if (cleanCode.length >= 4) {
+        found = productsList.find(p => p.code && (p.code.toUpperCase().includes(cleanCode) || cleanCode.includes(p.code.toUpperCase())));
+        if (found) return found;
+      }
+    }
+
+    if (name) {
+      const cleanName = name.trim().toLowerCase();
+      if (!cleanName.startsWith('producto ') && cleanName !== 'venta cubitt') {
+        const found = productsList.find(p => p.description && p.description.trim().toLowerCase() === cleanName);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  rawItems.forEach(item => {
+    let itemCode = (item.code || item.productCode || '').trim();
+    let itemDesc = (item.description || item.name || item.productName || '').trim();
+    let itemImg = item.image || '';
+    let itemQty = Number(item.quantity) || 1;
+    let itemCat = item.category || '';
+
+    // If comma-separated sub-codes (e.g. "CTBPK-9, CTHB2400M-33")
+    if (itemCode.includes(',')) {
+      const parts = itemCode.split(',').map(p => p.trim()).filter(Boolean);
+      parts.forEach(subCode => {
+        let qty = 1;
+        let cClean = subCode;
+        const qtyMatch = subCode.match(/\(x(\d+)\)/i);
+        if (qtyMatch) {
+          qty = parseInt(qtyMatch[1], 10) || 1;
+          cClean = subCode.replace(/\(x\d+\)/i, '').trim();
+        }
+        const matched = findInCatalog(cClean, '');
+        result.push({
+          code: matched ? matched.code : cClean,
+          name: matched ? (matched.description || matched.name) : (cClean.startsWith('CT') ? ('Cubitt ' + cClean) : cClean),
+          category: matched ? (matched.category || 'CUBITT') : (itemCat || 'CUBITT'),
+          image: (matched && matched.image) ? matched.image : (itemImg && itemImg !== 'CellImage' ? itemImg : 'images/placeholder.png'),
+          quantity: qty
+        });
+      });
+      return;
+    }
+
+    let cClean = itemCode;
+    let qty = itemQty;
+    const qtyMatch = itemCode.match(/\(x(\d+)\)/i);
+    if (qtyMatch) {
+      qty = parseInt(qtyMatch[1], 10) || itemQty;
+      cClean = itemCode.replace(/\(x\d+\)/i, '').trim();
+    }
+
+    const matched = findInCatalog(cClean, itemDesc);
+    const resolvedName = matched
+      ? (matched.description || matched.name)
+      : (itemDesc && !itemDesc.startsWith('Producto ') && itemDesc !== itemCode
+          ? itemDesc
+          : (cClean ? (cClean.startsWith('CT') ? ('Cubitt ' + cClean) : cClean) : 'Producto Cubitt'));
+
+    const resolvedImg = (matched && matched.image)
+      ? matched.image
+      : (itemImg && itemImg !== 'CellImage' ? itemImg : 'images/placeholder.png');
+
+    const resolvedCat = (matched && matched.category)
+      ? matched.category
+      : (itemCat || 'CUBITT');
+
+    result.push({
+      code: matched ? matched.code : cClean,
+      name: resolvedName,
+      category: resolvedCat,
+      image: resolvedImg,
+      quantity: qty
+    });
+  });
+
+  return result.length > 0 ? result : [{
+    code: 'CT-GEN',
+    name: 'Venta Cubitt',
+    category: 'CUBITT',
+    image: 'images/placeholder.png',
+    quantity: 1
+  }];
+}
+
+function renderSaleProductsCellHtml(sale, options = {}) {
+  const items = getSaleDisplayItems(sale);
+  const maxShow = options.maxShow || 2;
+  const visibleItems = items.slice(0, maxShow);
+  const remainingCount = items.length - maxShow;
+
+  const fallbackSvg = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' fill='%23f1f5f9' viewBox='0 0 24 24'><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='7' fill='%2364748b'>Cubitt</text></svg>";
+
+  const itemsHtml = visibleItems.map(item => {
+    const imgUrl = item.image || 'images/placeholder.png';
+    const clickHandler = item.image ? `onclick="if(typeof openLightbox==='function'){openLightbox('${escapeHtml(item.image)}','${escapeHtml(item.name)}');}"` : '';
+    const cursorStyle = item.image ? 'cursor: pointer;' : '';
+
+    return `
+      <div class="product-cell-item" style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+        <img src="${escapeHtml(imgUrl)}" 
+             class="product-cell-thumb" 
+             style="width: 38px; height: 38px; min-width: 38px; max-width: 38px; border-radius: 8px; object-fit: contain; background: #ffffff; border: 1px solid #e2e8f0; padding: 2px; flex-shrink: 0; box-shadow: 0 1px 2px rgba(0,0,0,0.04); ${cursorStyle}" 
+             alt="${escapeHtml(item.name)}" 
+             title="${escapeHtml(item.name)} (Clic para ampliar)" 
+             ${clickHandler} 
+             onerror="this.onerror=null; this.src='${fallbackSvg}';">
+        <div style="min-width: 0; flex: 1;">
+          <div class="product-cell-title" style="font-weight: 700; font-size: 0.83rem; color: #0f172a; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;" 
+               title="${escapeHtml(item.name)}">
+            ${escapeHtml(item.name)}
+          </div>
+          <div class="product-cell-subtitle" style="font-size: 0.71rem; color: #64748b; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">
+            <strong style="color: #475569;">${escapeHtml(item.code)}</strong>${item.category ? (' &bull; ' + escapeHtml(item.category)) : ''}${item.quantity > 1 ? (' <span style="color: #2563eb; font-weight: 700;">(x' + item.quantity + ')</span>') : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const moreBadge = remainingCount > 0 ? `
+    <div style="font-size: 0.70rem; color: #2563eb; font-weight: 700; padding-left: 46px; margin-top: 1px;">
+      + ${remainingCount} producto(s) más
+    </div>
+  ` : '';
+
+  return `
+    <div class="product-cell-container" style="display: flex; flex-direction: column; gap: 6px; min-width: 190px; max-width: 280px;">
+      ${itemsHtml}
+      ${moreBadge}
+    </div>
+  `;
+}
+
 // Render Sales History
 function renderHistory() {
   const tbody = document.getElementById('salesHistoryTableBody');
@@ -2297,14 +2469,8 @@ function renderHistory() {
         <td>
           ${whBadge}
         </td>
-        <td>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <img src="${firstImg}" style="width: 32px; height: 32px; object-fit: contain; background: #f8fafc; border-radius: 4px; border: 1px solid #e2e8f0;">
-            <div>
-              <div style="font-weight: 600; font-size: 0.88rem;">${escapeHtml(itemsPreview)}</div>
-              <div style="font-size: 0.75rem; color: #64748b;">${sale.items.length} producto(s)</div>
-            </div>
-          </div>
+        <td style="min-width: 210px; max-width: 290px;">
+          ${renderSaleProductsCellHtml(sale)}
         </td>
         <td>
           <a href="javascript:void(0)" onclick="openClientProfileByName('${escapeHtml(sale.clientName || 'General')}')" style="font-weight: 700; color: #2563eb; text-decoration: underline; cursor: pointer;" title="Ver Ficha del Cliente">
@@ -2439,7 +2605,8 @@ function renderCredits() {
         </div>
 
         <div style="margin: 12px 0; padding: 10px; background: #f8fafc; border-radius: 8px; font-size: 0.85rem;">
-          <strong>Artículos:</strong> ${(sale.items || []).map(i => `${escapeHtml(i.code || '')} (x${i.quantity || 1})`).join(', ')}
+          <strong style="display: block; margin-bottom: 6px; color: #334155;">🛍️ Artículos Comprados:</strong>
+          ${renderSaleProductsCellHtml(sale, { maxShow: 4 })}
         </div>
 
         ${sale.paymentsHistory && sale.paymentsHistory.length > 0 ? `
@@ -5715,16 +5882,14 @@ function openClientProfileModal(clientId) {
               ? `<span class="status-badge agotado">Debe $${(s.creditBalance || 0).toFixed(2)}</span>`
               : `<span class="status-badge disponible">Crédito Solvente</span>`);
 
-        const itemsSummary = (s.items || []).map(i => `${i.code} (x${i.quantity})`).join(', ');
-
         return `
           <tr>
             <td>
               <div style="font-weight: 700; color: #0f172a;">#${escapeHtml(s.id)}</div>
               <div style="font-size: 0.72rem; color: #64748b;">${escapeHtml(s.displayDate || '')}</div>
             </td>
-            <td style="max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(itemsSummary)}">
-              ${escapeHtml(itemsSummary || '-')}
+            <td style="min-width: 200px; max-width: 280px;">
+              ${renderSaleProductsCellHtml(s)}
             </td>
             <td>
               <span style="font-weight: 600; font-size: 0.8rem; color: #334155;">
@@ -5765,11 +5930,13 @@ function openClientProfileModal(clientId) {
   if (abonosTbody) {
     const allClientPayments = [];
     metrics.salesList.forEach(s => {
+      const dispItems = getSaleDisplayItems(s);
+      const saleItemName = dispItems.map(i => i.name).join(', ') || 'Venta Cubitt';
       if (s.paymentsHistory && Array.isArray(s.paymentsHistory)) {
         s.paymentsHistory.forEach(p => {
           allClientPayments.push({
             saleId: s.id,
-            saleItem: (s.items && s.items[0]) ? (s.items[0].description || s.items[0].code) : (s.productName || s.productCode || 'Venta'),
+            saleItem: saleItemName,
             date: p.date || s.date || '',
             amount: Number(p.amount) || 0,
             method: p.method || 'Abono',
@@ -14571,12 +14738,57 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       const noteComment = item.paymentDatesComment || '';
 
       // Match product metadata
+      let saleItems = [];
+      if (code.includes(',')) {
+        const subCodes = code.split(',').map(s => s.trim()).filter(Boolean);
+        const subPrice = subCodes.length > 0 ? (total / subCodes.length) : total;
+        subCodes.forEach(subCode => {
+          let cleanSub = subCode.replace(/\(x\d+\)/i, '').trim();
+          let subMatched = knownCodesMap[cleanSub.toUpperCase()] ||
+            (state.products || []).find(p => p.code && p.code.toUpperCase() === cleanSub.toUpperCase()) || null;
+          let subImg = (subMatched && subMatched.image) ? subMatched.image : 'images/placeholder.png';
+          let subName = subMatched ? (subMatched.description || subMatched.name) : (cleanSub.startsWith('CT') ? ('Cubitt ' + cleanSub) : cleanSub);
+          let subCat = subMatched ? (subMatched.category || 'ACCESORIOS') : 'ACCESORIOS';
+          let subMayor = subMatched ? (subMatched.mayor || (subMatched.price * 0.55)) : (subPrice * 0.53);
+          saleItems.push({
+            code: cleanSub,
+            description: subName,
+            category: subCat,
+            image: subImg,
+            quantity: 1,
+            unitPrice: subPrice,
+            mayor: subMayor,
+            subtotal: subPrice
+          });
+        });
+      }
+
       const matchedProd = knownCodesMap[code.toUpperCase()] ||
-        (state.products || []).find(p => p.name && p.name.toLowerCase() === name.toLowerCase()) || null;
+        (state.products || []).find(p => p.code && p.code.toUpperCase() === code.toUpperCase()) ||
+        (state.products || []).find(p => p.name && p.name.toLowerCase() === rawName.toLowerCase()) || null;
 
       const prodImg = (item.image && item.image !== 'CellImage') ? item.image : (matchedProd ? matchedProd.image : 'images/placeholder.png');
-      const prodCategory = matchedProd ? matchedProd.category : 'ACCESORIOS';
+      const prodCategory = matchedProd ? (matchedProd.category || 'ACCESORIOS') : 'ACCESORIOS';
       const prodMayor = matchedProd ? (matchedProd.mayor || (matchedProd.price * 0.55)) : (total * 0.53);
+      const prodName = (matchedProd && (matchedProd.description || matchedProd.name)) || rawName || (code ? (code.startsWith('CT') ? ('Cubitt ' + code) : code) : 'Venta Cubitt');
+
+      if (saleItems.length === 0) {
+        saleItems = [
+          {
+            code: code || 'CT-GEN',
+            description: prodName,
+            category: prodCategory,
+            image: prodImg,
+            quantity: 1,
+            unitPrice: total,
+            mayor: prodMayor,
+            subtotal: total
+          }
+        ];
+      }
+      const firstItem = saleItems[0] || {};
+      const primaryName = saleItems.map(i => i.description).join(', ');
+      const primaryImg = firstItem.image || prodImg;
 
       // Build parsed payments history from note comments (cuotas y fechas) con normalización
       const parsedInstallments = item.installments || parsePaymentDatesCommentClient(noteComment);
@@ -14612,21 +14824,10 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         timestamp: new Date(saleDate + 'T12:00:00Z').toISOString(),
         date: saleDate,
         displayDate: `${saleDate}, 12:00:00`,
-        items: [
-          {
-            code: code || 'CT-GEN',
-            description: name,
-            category: prodCategory,
-            image: prodImg,
-            quantity: 1,
-            unitPrice: total,
-            mayor: prodMayor,
-            subtotal: total
-          }
-        ],
+        items: saleItems,
         productCode: code,
-        productName: name,
-        image: prodImg,
+        productName: primaryName,
+        image: primaryImg,
         totalAmount: total,
         total: total,
         totalMayor: prodMayor,
@@ -15061,9 +15262,11 @@ function ingestImportedSalesList(rawList, sourceName) {
     const pending = Number(item.pendingAmount) !== undefined ? Number(item.pendingAmount) : Math.max(0, total - collected);
     const isCredit = pending > 0;
     const code = (item.productCode || '').trim();
-    const name = (item.productName || '').trim() || (code ? `Producto ${code}` : 'Venta Cubitt');
-    const matched = knownCodesMap[code.toUpperCase()] || null;
+    const matched = knownCodesMap[code.toUpperCase()] ||
+      (state.products || []).find(p => p.code && p.code.toUpperCase() === code.toUpperCase()) || null;
+    const name = (matched && (matched.description || matched.name)) || (item.productName || '').trim() || (code ? (code.startsWith('CT') ? ('Cubitt ' + code) : code) : 'Venta Cubitt');
     const prodImg = item.image || (matched ? matched.image : 'images/placeholder.png');
+    const prodCategory = matched ? (matched.category || 'ACCESORIOS') : 'ACCESORIOS';
     const prodMayor = matched ? (matched.mayor || matched.price * 0.55) : (total * 0.53);
 
     newSales.push({
@@ -15076,7 +15279,7 @@ function ingestImportedSalesList(rawList, sourceName) {
         {
           code: code || 'CT-FILE',
           description: name,
-          category: matched ? matched.category : 'ACCESORIOS',
+          category: prodCategory,
           image: prodImg,
           quantity: 1,
           unitPrice: total,
