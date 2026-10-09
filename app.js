@@ -5615,10 +5615,157 @@ function normalizePhoneKey(phone) {
   return phone.replace(/\D/g, '');
 }
 
+// --------------------------------------------------------------------------
+// Sistema de Alias y Mapeo Permanente de Clientes
+// Permite que nombres variantes (ej: "JUAN ANDRES" -> "Juan Andres Ramos")
+// se mantengan unidos permanentemente, incluso tras sincronizar con Google Sheets.
+// --------------------------------------------------------------------------
+function getClientAliasMap() {
+  try {
+    const raw = localStorage.getItem('cubitt_client_aliases_v2');
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveClientAliasMap(map) {
+  try {
+    localStorage.setItem('cubitt_client_aliases_v2', JSON.stringify(map));
+  } catch (e) {
+    console.error('Error saving client aliases:', e);
+  }
+}
+
+function registerClientAlias(alias, canonicalClientId) {
+  if (!alias || !canonicalClientId) return;
+  const key = normalizeClientKey(alias);
+  if (!key || key === 'general' || key === 'cliente general' || key === 'consumidor final') return;
+  const map = getClientAliasMap();
+  map[key] = canonicalClientId;
+  saveClientAliasMap(map);
+
+  const client = (state.clients || []).find(c => c && c.id === canonicalClientId);
+  if (client) {
+    if (!Array.isArray(client.aliases)) client.aliases = [];
+    const trimmed = typeof alias === 'string' ? alias.trim() : '';
+    if (trimmed && !client.aliases.includes(trimmed)) {
+      client.aliases.push(trimmed);
+    }
+  }
+}
+
+function findClientByAnyNameOrAlias(name, phone) {
+  if (!name && !phone) return null;
+  const normKey = normalizeClientKey(name);
+  const normPhone = normalizePhoneKey(phone);
+
+  if (!normKey && (!normPhone || normPhone.length < 7)) return null;
+
+  // 1. Coincidencia directa por nombre normalizado
+  if (normKey) {
+    let client = (state.clients || []).find(c => c && c.name && normalizeClientKey(c.name) === normKey);
+    if (client) return client;
+
+    // 2. Coincidencia por mapa global de alias persistente
+    const aliasMap = getClientAliasMap();
+    if (aliasMap[normKey]) {
+      const targetId = aliasMap[normKey];
+      client = (state.clients || []).find(c => c && c.id === targetId);
+      if (client) return client;
+    }
+
+    // 3. Coincidencia en el arreglo de aliases del cliente
+    client = (state.clients || []).find(c => c && Array.isArray(c.aliases) && c.aliases.some(a => normalizeClientKey(a) === normKey));
+    if (client) return client;
+  }
+
+  // 4. Coincidencia por teléfono (si tiene al menos 7 dígitos válidos)
+  if (normPhone && normPhone.length >= 7) {
+    let client = (state.clients || []).find(c => c && c.phone && normalizePhoneKey(c.phone) === normPhone);
+    if (client) return client;
+  }
+
+  return null;
+}
+
+function mergeClientsPermanently(sourceClientId, targetClientId) {
+  if (!sourceClientId || !targetClientId || sourceClientId === targetClientId) return;
+  const sourceClient = (state.clients || []).find(c => c && c.id === sourceClientId);
+  const targetClient = (state.clients || []).find(c => c && c.id === targetClientId);
+  if (!sourceClient || !targetClient) {
+    showToast('No se encontró uno de los clientes para unificar', 'danger');
+    return;
+  }
+
+  // Unir listas de aliases
+  const sourceAliases = Array.isArray(sourceClient.aliases) ? sourceClient.aliases : [];
+  const targetAliases = Array.isArray(targetClient.aliases) ? targetClient.aliases : [];
+  const combinedAliases = Array.from(new Set([...targetAliases, ...sourceAliases, sourceClient.name]));
+  targetClient.aliases = combinedAliases;
+
+  // Registrar todos los alias en el mapa persistente de localStorage
+  combinedAliases.forEach(a => registerClientAlias(a, targetClient.id));
+  registerClientAlias(sourceClient.name, targetClient.id);
+  registerClientAlias(sourceClient.id, targetClient.id);
+
+  // Fusionar información faltante en la ficha destino
+  if ((!targetClient.phone || targetClient.phone === '-') && sourceClient.phone && sourceClient.phone !== '-') {
+    targetClient.phone = sourceClient.phone.trim();
+  }
+  if (!targetClient.idCard && sourceClient.idCard) {
+    targetClient.idCard = sourceClient.idCard.trim();
+  }
+  if (!targetClient.email && sourceClient.email) {
+    targetClient.email = sourceClient.email.trim();
+  }
+  if (!targetClient.address && sourceClient.address) {
+    targetClient.address = sourceClient.address.trim();
+  }
+  if ((!targetClient.vendedor || targetClient.vendedor === 'Sin asignar' || targetClient.vendedor === 'General') && sourceClient.vendedor && sourceClient.vendedor !== 'General') {
+    targetClient.vendedor = sourceClient.vendedor.trim();
+  }
+  if (sourceClient.notes && (!targetClient.notes || targetClient.notes.includes('POS') || targetClient.notes.includes('históricas'))) {
+    targetClient.notes = sourceClient.notes;
+  }
+
+  // Re-enlazar todas las ventas históricas y actuales en state.sales a la ficha destino
+  const sourceNorm = normalizeClientKey(sourceClient.name);
+  const targetNorm = normalizeClientKey(targetClient.name);
+  (state.sales || []).forEach(s => {
+    if (!s) return;
+    const sNorm = normalizeClientKey(s.clientName || s.client || '');
+    if (s.clientId === sourceClient.id || sNorm === sourceNorm || sNorm === targetNorm) {
+      s.clientId = targetClient.id;
+      s.clientName = targetClient.name;
+      s.client = targetClient.name;
+    }
+  });
+
+  // Remover cliente origen de la lista
+  state.clients = (state.clients || []).filter(c => c && c.id !== sourceClient.id);
+
+  saveClientsToStorage();
+  saveSalesToStorage();
+  unifyAndDeduplicateClients();
+
+  renderClients();
+  renderHistory();
+  renderCredits();
+  renderTopStats();
+
+  showToast(`¡Ficha de "${sourceClient.name}" unificada permanentemente con "${targetClient.name}"!`, 'success');
+
+  if (state.currentProfileClientId === sourceClientId || state.currentProfileClientId === targetClientId) {
+    openClientProfileModal(targetClient.id);
+  }
+}
+
 // Unifica y deduplica registros de clientes duplicados en state.clients y enlaza todas sus ventas históricas
 function unifyAndDeduplicateClients() {
   if (!state.clients || !Array.isArray(state.clients) || state.clients.length === 0) return;
 
+  const aliasMap = getClientAliasMap();
   const keyMap = new Map();
   const phoneMap = new Map();
   const idRedirectionMap = new Map(); // idDuplicado -> idCanonico
@@ -5635,6 +5782,8 @@ function unifyAndDeduplicateClients() {
     let canonical = null;
     if (keyMap.has(key)) {
       canonical = keyMap.get(key);
+    } else if (aliasMap[key] && unifiedList.some(u => u.id === aliasMap[key])) {
+      canonical = unifiedList.find(u => u.id === aliasMap[key]);
     } else if (hasValidPhone && phoneMap.has(pKey)) {
       canonical = phoneMap.get(pKey);
     }
@@ -5645,6 +5794,14 @@ function unifyAndDeduplicateClients() {
       unifiedList.push(c);
     } else {
       idRedirectionMap.set(c.id, canonical.id);
+
+      // Unir aliases
+      const cAliases = Array.isArray(c.aliases) ? c.aliases : [];
+      const canonAliases = Array.isArray(canonical.aliases) ? canonical.aliases : [];
+      canonical.aliases = Array.from(new Set([...canonAliases, ...cAliases, c.name]));
+      canonical.aliases.forEach(a => registerClientAlias(a, canonical.id));
+      registerClientAlias(c.name, canonical.id);
+      registerClientAlias(c.id, canonical.id);
 
       // Fusionar información complementaria
       if ((!canonical.phone || canonical.phone === '-') && c.phone && c.phone !== '-') {
@@ -5679,11 +5836,23 @@ function unifyAndDeduplicateClients() {
         const canonical = keyMap.get(sKey);
         s.clientId = canonical.id;
         s.clientName = canonical.name;
+        s.client = canonical.name;
       } else if (s.clientId && idRedirectionMap.has(s.clientId)) {
         const newId = idRedirectionMap.get(s.clientId);
         s.clientId = newId;
         const canonical = unifiedList.find(cl => cl.id === newId);
-        if (canonical) s.clientName = canonical.name;
+        if (canonical) {
+          s.clientName = canonical.name;
+          s.client = canonical.name;
+        }
+      } else if (sKey && aliasMap[sKey]) {
+        const canonId = aliasMap[sKey];
+        const canonical = unifiedList.find(cl => cl.id === canonId);
+        if (canonical) {
+          s.clientId = canonical.id;
+          s.clientName = canonical.name;
+          s.client = canonical.name;
+        }
       }
     });
   }
@@ -5701,15 +5870,8 @@ function findOrCreateClient(name, phone, seller) {
     return null;
   }
 
-  const normPhone = normalizePhoneKey(phone);
-
-  // 1. Buscar si ya existe un cliente con el mismo nombre o teléfono
-  let client = (state.clients || []).find(c => {
-    if (!c || !c.name) return false;
-    if (normalizeClientKey(c.name) === normKey) return true;
-    if (normPhone && normPhone.length >= 7 && normalizePhoneKey(c.phone) === normPhone) return true;
-    return false;
-  });
+  // 1. Buscar si ya existe un cliente con el mismo nombre, alias o teléfono
+  let client = findClientByAnyNameOrAlias(trimmed, phone);
 
   if (client) {
     let changed = false;
@@ -5735,11 +5897,13 @@ function findOrCreateClient(name, phone, seller) {
     email: '',
     address: '',
     notes: 'Registrado desde venta POS',
+    aliases: [trimmed],
     createdAt: new Date().toISOString()
   };
 
   if (!state.clients) state.clients = [];
   state.clients.unshift(newClient);
+  registerClientAlias(trimmed, newClient.id);
   saveClientsToStorage();
   return newClient;
 }
@@ -5929,6 +6093,9 @@ function renderClients() {
             <button class="btn btn-outline btn-sm" onclick="openEditClientModal('${c.id}')" title="Editar Datos">
               ✏️
             </button>
+            <button class="btn btn-outline btn-sm" onclick="openMergeClientModal('${c.id}')" title="Unificar compras de este cliente con otra ficha" style="color: #4f46e5; border-color: #c7d2fe;">
+              🔗
+            </button>
             <button class="btn btn-outline btn-sm" onclick="deleteClientById('${c.id}')" title="Eliminar Cliente" style="color: #ef4444; border-color: #fecaca;">
               🗑️
             </button>
@@ -6013,17 +6180,36 @@ function saveClientFromModal() {
       email: email,
       address: address,
       notes: notes,
+      aliases: [name],
       createdAt: new Date().toISOString()
     };
     state.clients.unshift(newClient);
+    registerClientAlias(name, newClient.id);
     showToast(`Cliente ${name} registrado con éxito`, 'success');
   } else {
     // Existing Client
     const index = state.clients.findIndex(c => c.id === id);
     if (index !== -1) {
+      const oldClient = state.clients[index];
+      const oldName = (oldClient.name || '').trim();
+      const newName = name.trim();
+      const oldNorm = normalizeClientKey(oldName);
+      const newNorm = normalizeClientKey(newName);
+
+      // Comprobar si el usuario cambió el nombre para que coincida con OTRA ficha existente (intención de FUSIÓN)
+      const existingOtherClient = state.clients.find(c => c && c.id !== id && normalizeClientKey(c.name) === newNorm);
+
+      if (existingOtherClient) {
+        // FUSIÓN PERMANENTE: Se unifica con el cliente existente y se registra el alias
+        closeClientEditModal();
+        mergeClientsPermanently(id, existingOtherClient.id);
+        return;
+      }
+
+      // Edición habitual: actualizar campos
       state.clients[index] = {
         ...state.clients[index],
-        name: name,
+        name: newName,
         phone: phone,
         vendedor: vendedor,
         idCard: idCard,
@@ -6031,7 +6217,27 @@ function saveClientFromModal() {
         address: address,
         notes: notes
       };
-      showToast(`Datos de ${name} actualizados`, 'success');
+
+      // Si el nombre cambió, registrar el nombre anterior como alias para que Google Sheets no lo recree
+      if (oldNorm !== newNorm) {
+        registerClientAlias(oldName, id);
+        if (!Array.isArray(state.clients[index].aliases)) state.clients[index].aliases = [];
+        if (!state.clients[index].aliases.includes(oldName)) {
+          state.clients[index].aliases.push(oldName);
+        }
+
+        // Actualizar ventas existentes en memoria y storage
+        (state.sales || []).forEach(s => {
+          if (s && (s.clientId === id || normalizeClientKey(s.clientName || s.client || '') === oldNorm)) {
+            s.clientId = id;
+            s.clientName = newName;
+            s.client = newName;
+          }
+        });
+        saveSalesToStorage();
+      }
+
+      showToast(`Datos de ${newName} actualizados`, 'success');
     }
   }
 
@@ -6043,6 +6249,76 @@ function saveClientFromModal() {
   if (state.currentProfileClientId && (state.currentProfileClientId === id || !id)) {
     const targetId = id || state.clients[0].id;
     openClientProfileModal(targetId);
+  }
+}
+
+// --------------------------------------------------------------------------
+// Modal y Acciones para Unificar Fichas de Clientes
+// --------------------------------------------------------------------------
+function openMergeClientModal(clientId) {
+  const sourceClient = (state.clients || []).find(c => c && c.id === clientId);
+  if (!sourceClient) {
+    showToast('Cliente no encontrado', 'danger');
+    return;
+  }
+
+  const modal = document.getElementById('clientMergeModal');
+  if (!modal) return;
+
+  const m = getClientMetrics(sourceClient);
+  document.getElementById('clientMergeSourceId').value = sourceClient.id;
+  document.getElementById('clientMergeSourceName').textContent = sourceClient.name;
+  document.getElementById('clientMergeSourceInfo').textContent = 
+    `Tel: ${sourceClient.phone || 'Sin teléfono'} | Compras: ${m.salesCount} ($${m.totalPurchased.toFixed(2)}) | Deuda: $${m.totalDebt.toFixed(2)}`;
+
+  const select = document.getElementById('clientMergeTargetSelect');
+  if (select) {
+    const otherClients = (state.clients || []).filter(c => c && c.id !== clientId);
+    otherClients.sort((a, b) => a.name.localeCompare(b.name));
+
+    select.innerHTML = '<option value="">-- Selecciona el cliente principal con el que se unirá --</option>' +
+      otherClients.map(c => {
+        const cm = getClientMetrics(c);
+        return `<option value="${c.id}">${escapeHtml(c.name)} (${cm.salesCount} compras${c.phone ? ' - ' + c.phone : ''})</option>`;
+      }).join('');
+  }
+
+  modal.classList.add('active');
+}
+
+function closeClientMergeModal() {
+  const modal = document.getElementById('clientMergeModal');
+  if (modal) modal.classList.remove('active');
+}
+
+function openMergeCurrentProfileClient() {
+  if (state.currentProfileClientId) {
+    const id = state.currentProfileClientId;
+    closeClientProfileModal();
+    openMergeClientModal(id);
+  }
+}
+
+function executeClientMergeFromModal() {
+  const sourceId = document.getElementById('clientMergeSourceId')?.value;
+  const targetId = document.getElementById('clientMergeTargetSelect')?.value;
+
+  if (!sourceId || !targetId) {
+    showToast('Debe seleccionar la ficha de cliente principal/destino', 'danger');
+    return;
+  }
+
+  if (sourceId === targetId) {
+    showToast('No puede unificar un cliente consigo mismo', 'danger');
+    return;
+  }
+
+  const sourceClient = (state.clients || []).find(c => c && c.id === sourceId);
+  const targetClient = (state.clients || []).find(c => c && c.id === targetId);
+
+  if (confirm(`¿Está seguro de unir permanentemente la ficha de "${sourceClient?.name}" dentro de "${targetClient?.name}"? Todas las compras y pagos quedarán unificados.`)) {
+    closeClientMergeModal();
+    mergeClientsPermanently(sourceId, targetId);
   }
 }
 
@@ -15440,7 +15716,20 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         (s.seller === seller && s.totalAmount === total && (s.timestamp || s.date || '').slice(0, 10) === saleDate)
       );
 
-      const saleId = existingIdx >= 0 ? state.sales[existingIdx].id : `SHEETS-R${rowNum}-${Date.now().toString().slice(-4)}`;
+      const existingSale = existingIdx >= 0 ? state.sales[existingIdx] : null;
+      const saleId = existingSale ? existingSale.id : `SHEETS-R${rowNum}-${Date.now().toString().slice(-4)}`;
+
+      // Resolver cliente canónico permanente (evita que Sheets revierta nombres o unificaciones)
+      let resolvedClientObj = null;
+      if (existingSale && existingSale.clientId) {
+        resolvedClientObj = (state.clients || []).find(c => c && c.id === existingSale.clientId) || null;
+      }
+      if (!resolvedClientObj && client) {
+        resolvedClientObj = findClientByAnyNameOrAlias(client, null);
+      }
+
+      const canonicalClientName = resolvedClientObj ? resolvedClientObj.name : (existingSale?.clientName || client);
+      const canonicalClientId = resolvedClientObj ? resolvedClientObj.id : (existingSale?.clientId || null);
 
       const saleObj = sanitizeSaleRecord({
         id: saleId,
@@ -15465,8 +15754,9 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         creditPaid: collected,
         seller: seller,
         vendedor: seller,
-        client: client,
-        clientName: client,
+        clientId: canonicalClientId,
+        client: canonicalClientName,
+        clientName: canonicalClientName,
         almacen: wh,
         warehouse: wh,
         notes: noteComment,
@@ -15507,22 +15797,21 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       state.sales = [...importedSales, ...nonSheetsSales].map(sanitizeSaleRecord);
       state.sales.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
 
-      // Sincronizar todos los clientes únicos en state.clients y enlazar s.clientId
-      const clientMap = new Map();
-      (state.clients || []).forEach(c => {
-        if (c && c.name) {
-          const k = normalizeClientKey(c.name);
-          if (k && !clientMap.has(k)) clientMap.set(k, c);
-        }
-      });
-
+      // Sincronizar todos los clientes únicos en state.clients y enlazar s.clientId de forma canónica
       importedSales.forEach(s => {
         const cName = (s.clientName || s.client || '').trim();
         if (!cName) return;
         const key = normalizeClientKey(cName);
         if (!key || key === 'general' || key === 'cliente general' || key === 'consumidor final') return;
 
-        let clientObj = clientMap.get(key);
+        let clientObj = null;
+        if (s.clientId) {
+          clientObj = (state.clients || []).find(c => c && c.id === s.clientId);
+        }
+        if (!clientObj) {
+          clientObj = findClientByAnyNameOrAlias(cName, s.clientPhone);
+        }
+
         if (!clientObj) {
           clientObj = {
             id: `CLI-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
@@ -15533,10 +15822,19 @@ async function syncFromGoogleSheets(showToastNotification = true) {
             address: '',
             notes: '',
             vendedor: s.seller || s.vendedor || 'General',
+            aliases: [cName],
             createdAt: s.date || new Date().toISOString()
           };
-          clientMap.set(key, clientObj);
+          state.clients.push(clientObj);
+          registerClientAlias(cName, clientObj.id);
         } else {
+          // Si el nombre en la celda de Sheets es diferente al nombre canónico del cliente,
+          // registrarlo como alias permanente para que jamás se desvincule
+          if (normalizeClientKey(clientObj.name) !== key) {
+            registerClientAlias(cName, clientObj.id);
+            if (!Array.isArray(clientObj.aliases)) clientObj.aliases = [];
+            if (!clientObj.aliases.includes(cName)) clientObj.aliases.push(cName);
+          }
           if (s.clientPhone && (!clientObj.phone || clientObj.phone === '-')) {
             clientObj.phone = s.clientPhone;
           }
@@ -15546,9 +15844,9 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         }
         s.clientId = clientObj.id;
         s.clientName = clientObj.name;
+        s.client = clientObj.name;
       });
 
-      state.clients = Array.from(clientMap.values());
       unifyAndDeduplicateClients();
 
       // Register any new sellers in state.sellers

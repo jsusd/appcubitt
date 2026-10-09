@@ -3237,12 +3237,15 @@
 
       <!-- Footer Buttons -->
       <div style="display: flex; gap: 10px; justify-content: space-between; flex-wrap: wrap;">
-        <div style="display: flex; gap: 8px;">
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
           <a id="profileWhatsAppBtn" href="#" target="_blank" class="btn btn-outline" style="color: #25d366; border-color: #bbf7d0;">
             💬 Enviar WhatsApp
           </a>
           <button class="btn btn-outline" onclick="openEditCurrentProfileClient()">
             ✏️ Editar Datos
+          </button>
+          <button class="btn btn-outline" onclick="openMergeCurrentProfileClient()" style="color: #4f46e5; border-color: #c7d2fe;" title="Unificar compras de este cliente con otra ficha">
+            🔗 Unificar Ficha
           </button>
         </div>
         <button class="btn btn-outline" onclick="closeClientProfileModal()">Cerrar</button>
@@ -3306,6 +3309,48 @@
       <div style="display: flex; gap: 10px;">
         <button class="btn btn-primary btn-block" onclick="saveClientFromModal()">💾 Guardar Cliente</button>
         <button class="btn btn-outline" onclick="closeClientEditModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Unificar Ficha de Clientes -->
+  <div class="modal-overlay" id="clientMergeModal">
+    <div class="modal-box" style="max-width: 520px;">
+      <button class="modal-close-btn" onclick="closeClientMergeModal()">&times;</button>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 0.5rem;">
+        <span style="font-size: 1.4rem;">🔗</span>
+        <h3 style="font-size: 1.2rem; font-weight: 800; margin: 0;">Unificar Ficha de Cliente</h3>
+      </div>
+      <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 1.25rem;">
+        Une todas las compras, pagos y datos de este cliente en otra ficha. Esta unificación es <strong>permanente</strong> y se mantendrá incluso al sincronizar con Google Sheets.
+      </p>
+
+      <input type="hidden" id="clientMergeSourceId">
+
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 1.25rem;">
+        <div style="font-size: 0.75rem; font-weight: 700; color: #64748b; text-transform: uppercase;">Ficha a Fusionar (Origen)</div>
+        <div id="clientMergeSourceName" style="font-size: 1.05rem; font-weight: 800; color: #0f172a; margin-top: 2px;">-</div>
+        <div id="clientMergeSourceInfo" style="font-size: 0.8rem; color: #64748b; margin-top: 4px;">-</div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label class="form-label" for="clientMergeTargetSelect">
+          <strong>Seleccionar Ficha Principal / Destino *</strong>
+        </label>
+        <select id="clientMergeTargetSelect" class="form-control" style="font-size: 0.9rem; padding: 8px 12px;">
+          <option value="">-- Selecciona el cliente principal con el que se unirá --</option>
+          <!-- Populated dynamically -->
+        </select>
+        <div style="font-size: 0.75rem; color: #64748b; margin-top: 6px;">
+          💡 Todo el historial (compras, abonos, pagos) se unirá bajo la ficha de destino y el nombre anterior quedará vinculado permanentemente como alias.
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-primary btn-block" onclick="executeClientMergeFromModal()" style="background: #4f46e5; border-color: #4f46e5;">
+          🔗 Unificar Fichas Permanentemente
+        </button>
+        <button class="btn btn-outline" onclick="closeClientMergeModal()">Cancelar</button>
       </div>
     </div>
   </div>
