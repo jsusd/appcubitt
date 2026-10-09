@@ -1809,6 +1809,14 @@ function handleRegisterSaleDirect() {
   const isBajoPedido = (state.orderMode === 'bajo_pedido');
   const orderExpectedDate = isBajoPedido ? (document.getElementById('orderExpectedDate')?.value || '') : '';
   const orderSupplierNotes = isBajoPedido ? (document.getElementById('orderSupplierNotes')?.value || '').trim() : '';
+  // Obtener o enlazar el cliente de forma unificada para agrupar compras y pagos
+  let clientObj = null;
+  if (state.selectedPOSClientId) {
+    clientObj = (state.clients || []).find(c => c && c.id === state.selectedPOSClientId) || null;
+  }
+  if (!clientObj && clientName) {
+    clientObj = findOrCreateClient(clientName, clientPhone, vendedor);
+  }
 
   const saleRecord = {
     id: saleId,
@@ -1834,8 +1842,9 @@ function handleRegisterSaleDirect() {
     netoTienda: netoTienda,
     additionalCommissions: addComms.items,
     additionalCommissionsTotal: addComms.total,
-    clientName: clientName || (paymentType.startsWith('contado') ? 'Cliente General' : ''),
-    clientPhone: clientPhone,
+    clientId: clientObj ? clientObj.id : null,
+    clientName: clientObj ? clientObj.name : (clientName || (paymentType.startsWith('contado') ? 'Cliente General' : '')),
+    clientPhone: (clientObj && clientObj.phone) ? clientObj.phone : clientPhone,
     creditDueDate: creditDueDate,
     creditAbono: creditAbono,
     creditBalance: creditBalance,
@@ -1847,22 +1856,22 @@ function handleRegisterSaleDirect() {
     orderSupplierNotes: orderSupplierNotes,
     orderDeliveredAt: isBajoPedido ? null : saleDate.toISOString(),
     orderDeliveryNotes: isBajoPedido ? '' : 'Entrega directa en tienda',
-    paymentsHistory: creditAbono > 0 ? [
+    paymentsHistory: paymentType === 'contado' ? [
+      { date: formatDateTime(saleDate), amount: subtotal, method: paymentMethod, note: 'Pago total contado' }
+    ] : (creditAbono > 0 ? [
       { date: formatDateTime(saleDate), amount: creditAbono, method: paymentMethod, note: 'Abono / Inicial' }
-    ] : []
+    ] : [])
   };
 
   state.sales.unshift(saleRecord);
   state.sales.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   saveSalesToStorage();
 
+  // Unificar clientes y asegurar que la nueva venta quede ligada a compras y pagos anteriores
+  unifyAndDeduplicateClients();
+
   // Deduct physical inventory stock
   decrementStockForSale(saleRecord);
-
-  // Auto-register or update client in directory (including assigned seller)
-  if (clientName) {
-    autoRegisterOrUpdateClient(clientName, clientPhone, vendedor);
-  }
 
   // Generate / Synchronize CXP for Cashea, IVA, T-Mania, and custom commissions
   syncPayablesForSale(saleRecord);
@@ -1888,6 +1897,7 @@ function handleRegisterSaleDirect() {
 // Reset POS Form
 function resetPOSForm() {
   state.selectedProduct = null;
+  state.selectedPOSClientId = null;
   state.posSaleItems = [];
   renderPosSaleItems();
   setSalesPlatform('ninguna');
@@ -2116,6 +2126,14 @@ function handleCheckoutCart() {
   const isBajoPedido = (state.orderMode === 'bajo_pedido');
   const orderExpectedDate = isBajoPedido ? (document.getElementById('orderExpectedDate')?.value || '') : '';
   const orderSupplierNotes = isBajoPedido ? (document.getElementById('orderSupplierNotes')?.value || '').trim() : '';
+  // Obtener o enlazar el cliente de forma unificada para agrupar compras y pagos
+  let clientObj = null;
+  if (state.selectedPOSClientId) {
+    clientObj = (state.clients || []).find(c => c && c.id === state.selectedPOSClientId) || null;
+  }
+  if (!clientObj && clientName) {
+    clientObj = findOrCreateClient(clientName, clientPhone, vendedor);
+  }
 
   const saleRecord = {
     id: saleId,
@@ -2141,8 +2159,9 @@ function handleCheckoutCart() {
     netoTienda: netoTienda,
     additionalCommissions: addComms.items,
     additionalCommissionsTotal: addComms.total,
-    clientName: clientName || (paymentType.startsWith('contado') ? 'Cliente General' : ''),
-    clientPhone: clientPhone,
+    clientId: clientObj ? clientObj.id : null,
+    clientName: clientObj ? clientObj.name : (clientName || (paymentType.startsWith('contado') ? 'Cliente General' : '')),
+    clientPhone: (clientObj && clientObj.phone) ? clientObj.phone : clientPhone,
     creditDueDate: creditDueDate,
     creditAbono: creditAbono,
     creditBalance: creditBalance,
@@ -2154,22 +2173,22 @@ function handleCheckoutCart() {
     orderSupplierNotes: orderSupplierNotes,
     orderDeliveredAt: isBajoPedido ? null : saleDate.toISOString(),
     orderDeliveryNotes: isBajoPedido ? '' : 'Entrega directa en tienda',
-    paymentsHistory: creditAbono > 0 ? [
+    paymentsHistory: paymentType === 'contado' ? [
+      { date: formatDateTime(saleDate), amount: total, method: paymentMethod, note: 'Pago total contado' }
+    ] : (creditAbono > 0 ? [
       { date: formatDateTime(saleDate), amount: creditAbono, method: paymentMethod, note: 'Inicial / Abono' }
-    ] : []
+    ] : [])
   };
 
   state.sales.unshift(saleRecord);
   state.sales.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   saveSalesToStorage();
 
+  // Unificar clientes y asegurar que la nueva venta quede ligada a compras y pagos anteriores
+  unifyAndDeduplicateClients();
+
   // Deduct physical inventory stock
   decrementStockForSale(saleRecord);
-
-  // Auto-register or update client in directory (including assigned seller)
-  if (clientName) {
-    autoRegisterOrUpdateClient(clientName, clientPhone, vendedor);
-  }
 
   // Generate / Synchronize CXP for Cashea, IVA, T-Mania, and custom commissions
   syncPayablesForSale(saleRecord);
@@ -3515,7 +3534,12 @@ function saveEditedSale() {
 
   // Auto-register or update client in directory (including assigned seller)
   if (clientName) {
-    autoRegisterOrUpdateClient(clientName, updatedSale.clientPhone, vendedor);
+    const cl = autoRegisterOrUpdateClient(clientName, updatedSale.clientPhone, vendedor);
+    if (cl) {
+      updatedSale.clientId = cl.id;
+      updatedSale.clientName = cl.name;
+    }
+    unifyAndDeduplicateClients();
   }
 
   // Synchronize CXP records
@@ -4117,11 +4141,23 @@ function handleSaveAbono() {
     autoSyncAbonoToSheets(sale, amount, method, note);
   }
 
+  // Deduplicar y unificar clientes
+  unifyAndDeduplicateClients();
+
   showToast(`¡Abono de $${amount.toFixed(2)} registrado con éxito!`, 'success');
   renderHistory();
   renderCredits();
   renderClients();
   renderTopStats();
+
+  // Si se abrió desde la ficha de clientes, regresar a ella actualizada
+  if (state.returnToClientProfileId) {
+    const returnId = state.returnToClientProfileId;
+    state.returnToClientProfileId = null;
+    openClientProfileModal(returnId);
+  } else if (state.currentProfileClientId) {
+    openClientProfileModal(state.currentProfileClientId);
+  }
 }
 
 // Ticket Receipt Modal
@@ -5493,6 +5529,7 @@ function loadClientsFromStorage() {
     const saved = localStorage.getItem('cubitt_clients_v1');
     if (saved) {
       state.clients = JSON.parse(saved);
+      unifyAndDeduplicateClients();
       return;
     }
   } catch (e) {
@@ -5528,12 +5565,14 @@ function loadClientsFromStorage() {
   // Auto-populate from any existing sales that are not 'General'
   if (state.sales && state.sales.length > 0) {
     state.sales.forEach(sale => {
-      if (sale.clientName && sale.clientName.trim().toLowerCase() !== 'general' && sale.clientName.trim().toLowerCase() !== 'cliente general') {
-        const found = state.clients.some(c => c.name.trim().toLowerCase() === sale.clientName.trim().toLowerCase());
+      const cName = (sale.clientName || sale.client || '').trim();
+      const nKey = normalizeClientKey(cName);
+      if (nKey && nKey !== 'general' && nKey !== 'cliente general' && nKey !== 'consumidor final') {
+        const found = state.clients.some(c => normalizeClientKey(c.name) === nKey);
         if (!found) {
           state.clients.push({
             id: 'CLI-' + Math.floor(1000 + Math.random() * 9000),
-            name: sale.clientName.trim(),
+            name: cName,
             phone: sale.clientPhone ? sale.clientPhone.trim() : '',
             vendedor: sale.vendedor || '',
             idCard: '',
@@ -5547,7 +5586,7 @@ function loadClientsFromStorage() {
     });
   }
 
-  saveClientsToStorage();
+  unifyAndDeduplicateClients();
 }
 
 function saveClientsToStorage() {
@@ -5558,21 +5597,127 @@ function saveClientsToStorage() {
   }
 }
 
-function autoRegisterOrUpdateClient(name, phone, seller) {
+// --------------------------------------------------------------------------
+// Normalización de Clientes: agrupa compras y pagos bajo una sola ficha
+// --------------------------------------------------------------------------
+function normalizeClientKey(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Quita acentos/tildes
+    .replace(/[\u00A0\s]+/g, ' ')     // Unifica espacios no separables y espacios múltiples
+    .trim()
+    .toLowerCase();
+}
+
+function normalizePhoneKey(phone) {
+  if (!phone || typeof phone !== 'string') return '';
+  return phone.replace(/\D/g, '');
+}
+
+// Unifica y deduplica registros de clientes duplicados en state.clients y enlaza todas sus ventas históricas
+function unifyAndDeduplicateClients() {
+  if (!state.clients || !Array.isArray(state.clients) || state.clients.length === 0) return;
+
+  const keyMap = new Map();
+  const phoneMap = new Map();
+  const idRedirectionMap = new Map(); // idDuplicado -> idCanonico
+  const unifiedList = [];
+
+  state.clients.forEach(c => {
+    if (!c || !c.name) return;
+    const key = normalizeClientKey(c.name);
+    if (!key || key === 'general' || key === 'cliente general' || key === 'consumidor final') return;
+
+    const pKey = normalizePhoneKey(c.phone);
+    const hasValidPhone = pKey && pKey.length >= 7;
+
+    let canonical = null;
+    if (keyMap.has(key)) {
+      canonical = keyMap.get(key);
+    } else if (hasValidPhone && phoneMap.has(pKey)) {
+      canonical = phoneMap.get(pKey);
+    }
+
+    if (!canonical) {
+      keyMap.set(key, c);
+      if (hasValidPhone) phoneMap.set(pKey, c);
+      unifiedList.push(c);
+    } else {
+      idRedirectionMap.set(c.id, canonical.id);
+
+      // Fusionar información complementaria
+      if ((!canonical.phone || canonical.phone === '-') && c.phone && c.phone !== '-') {
+        canonical.phone = c.phone.trim();
+        const newPKey = normalizePhoneKey(canonical.phone);
+        if (newPKey && newPKey.length >= 7) phoneMap.set(newPKey, canonical);
+      }
+      if (!canonical.idCard && c.idCard) {
+        canonical.idCard = c.idCard.trim();
+      }
+      if (!canonical.email && c.email) {
+        canonical.email = c.email.trim();
+      }
+      if (!canonical.address && c.address) {
+        canonical.address = c.address.trim();
+      }
+      if ((!canonical.vendedor || canonical.vendedor === 'Sin asignar' || canonical.vendedor === 'General' || canonical.vendedor === 'Tienda Principal') && c.vendedor && c.vendedor !== 'General') {
+        canonical.vendedor = c.vendedor.trim();
+      }
+      if (c.notes && (!canonical.notes || canonical.notes === 'Registrado desde venta POS')) {
+        canonical.notes = c.notes;
+      }
+    }
+  });
+
+  // Re-enlazar todas las ventas en state.sales al cliente canónico
+  if (state.sales && Array.isArray(state.sales)) {
+    state.sales.forEach(s => {
+      if (!s) return;
+      const sKey = normalizeClientKey(s.clientName || s.client || '');
+      if (sKey && keyMap.has(sKey)) {
+        const canonical = keyMap.get(sKey);
+        s.clientId = canonical.id;
+        s.clientName = canonical.name;
+      } else if (s.clientId && idRedirectionMap.has(s.clientId)) {
+        const newId = idRedirectionMap.get(s.clientId);
+        s.clientId = newId;
+        const canonical = unifiedList.find(cl => cl.id === newId);
+        if (canonical) s.clientName = canonical.name;
+      }
+    });
+  }
+
+  state.clients = unifiedList;
+  saveClientsToStorage();
+  saveSalesToStorage();
+}
+
+function findOrCreateClient(name, phone, seller) {
   if (!name) return null;
   const trimmed = name.trim();
-  if (!trimmed || trimmed.toLowerCase() === 'general' || trimmed.toLowerCase() === 'cliente general' || trimmed.toLowerCase() === 'consumidor final') {
+  const normKey = normalizeClientKey(trimmed);
+  if (!normKey || normKey === 'general' || normKey === 'cliente general' || normKey === 'consumidor final') {
     return null;
   }
 
-  let client = state.clients.find(c => c.name.trim().toLowerCase() === trimmed.toLowerCase());
+  const normPhone = normalizePhoneKey(phone);
+
+  // 1. Buscar si ya existe un cliente con el mismo nombre o teléfono
+  let client = (state.clients || []).find(c => {
+    if (!c || !c.name) return false;
+    if (normalizeClientKey(c.name) === normKey) return true;
+    if (normPhone && normPhone.length >= 7 && normalizePhoneKey(c.phone) === normPhone) return true;
+    return false;
+  });
+
   if (client) {
     let changed = false;
-    if (phone && (!client.phone || client.phone === '-')) {
+    if (phone && (!client.phone || client.phone === '-' || client.phone.trim() === '')) {
       client.phone = phone.trim();
       changed = true;
     }
-    if (seller && (!client.vendedor || client.vendedor === 'Sin asignar' || client.vendedor === 'Tienda Principal')) {
+    if (seller && (!client.vendedor || client.vendedor === 'Sin asignar' || client.vendedor === 'General' || client.vendedor === 'Tienda Principal')) {
       client.vendedor = seller.trim();
       changed = true;
     }
@@ -5580,11 +5725,12 @@ function autoRegisterOrUpdateClient(name, phone, seller) {
     return client;
   }
 
+  // 2. Si es cliente completamente nuevo, registrarlo
   const newClient = {
-    id: 'CLI-' + Math.floor(1000 + Math.random() * 9000),
+    id: 'CLI-' + Date.now() + '-' + Math.floor(1000 + Math.random() * 9000),
     name: trimmed,
     phone: phone ? phone.trim() : '',
-    vendedor: seller ? seller.trim() : '',
+    vendedor: seller ? seller.trim() : 'General',
     idCard: '',
     email: '',
     address: '',
@@ -5592,30 +5738,54 @@ function autoRegisterOrUpdateClient(name, phone, seller) {
     createdAt: new Date().toISOString()
   };
 
+  if (!state.clients) state.clients = [];
   state.clients.unshift(newClient);
   saveClientsToStorage();
   return newClient;
 }
 
-function getClientMetrics(client) {
-  const normClientName = (client.name || '').trim().toLowerCase();
-  const normPhone = (client.phone || '').replace(/\D/g, '');
+function autoRegisterOrUpdateClient(name, phone, seller) {
+  return findOrCreateClient(name, phone, seller);
+}
 
-  const clientSales = state.sales.filter(s => {
+function getClientMetrics(client) {
+  if (!client) return { totalPurchased: 0, totalDebt: 0, totalPaid: 0, salesCount: 0, salesList: [] };
+
+  const clientId = client.id;
+  const normClientName = normalizeClientKey(client.name);
+  const normPhone = normalizePhoneKey(client.phone);
+
+  // Vincular todas las ventas históricas y nuevas pertenecientes a este cliente
+  const clientSales = (state.sales || []).filter(s => {
     if (!s) return false;
-    const sName = (s.clientName || '').trim().toLowerCase();
-    if (sName && sName === normClientName) return true;
-    if (normPhone && s.clientPhone) {
-      const sPhone = s.clientPhone.replace(/\D/g, '');
-      if (sPhone && sPhone === normPhone) return true;
+    // A. Coincidencia directa por clientId
+    if (clientId && s.clientId && s.clientId === clientId) return true;
+
+    // B. Coincidencia por nombre normalizado (ignora tildes, mayúsculas y espacios dobles)
+    const sName = normalizeClientKey(s.clientName || s.client || '');
+    if (normClientName && sName && sName === normClientName) {
+      if (!s.clientId && clientId) s.clientId = clientId;
+      return true;
+    }
+
+    // C. Coincidencia por teléfono
+    if (normPhone && normPhone.length >= 7 && s.clientPhone) {
+      const sPhone = normalizePhoneKey(s.clientPhone);
+      if (sPhone && sPhone === normPhone) {
+        if (!s.clientId && clientId) s.clientId = clientId;
+        return true;
+      }
     }
     return false;
   });
 
-  const totalPurchased = clientSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+  // Ordenar de más reciente a más antigua
+  clientSales.sort((a, b) => new Date(b.timestamp || b.date || 0) - new Date(a.timestamp || a.date || 0));
+
+  const totalPurchased = clientSales.reduce((acc, s) => acc + (Number(s.totalAmount) || Number(s.total) || 0), 0);
   const totalDebt = clientSales
     .filter(s => s.paymentType === 'credito' && (s.creditStatus === 'PENDIENTE' || (s.creditBalance && s.creditBalance > 0.01)))
-    .reduce((acc, s) => acc + (s.creditBalance || 0), 0);
+    .reduce((acc, s) => acc + (Number(s.creditBalance) || 0), 0);
   const totalPaid = Math.max(0, totalPurchased - totalDebt);
 
   return {
@@ -5631,6 +5801,9 @@ function renderClients() {
   const tbody = document.getElementById('clientsTableBody');
   const emptyState = document.getElementById('clientsEmptyState');
   if (!tbody) return;
+
+  // Unificar clientes antes de renderizar para eliminar duplicados automáticamente
+  unifyAndDeduplicateClients();
 
   // Global clients metrics calculation
   let totalPurchasedAll = 0;
@@ -6018,7 +6191,7 @@ function openClientProfileModal(clientId) {
     metrics.salesList.forEach(s => {
       const dispItems = getSaleDisplayItems(s);
       const saleItemName = dispItems.map(i => i.name).join(', ') || 'Venta Cubitt';
-      if (s.paymentsHistory && Array.isArray(s.paymentsHistory)) {
+      if (s.paymentsHistory && Array.isArray(s.paymentsHistory) && s.paymentsHistory.length > 0) {
         s.paymentsHistory.forEach(p => {
           allClientPayments.push({
             saleId: s.id,
@@ -6029,6 +6202,21 @@ function openClientProfileModal(clientId) {
             note: p.note || ''
           });
         });
+      } else {
+        // Fallback para ventas históricas o de contado sin historial detallado
+        const total = Number(s.totalAmount || s.total) || 0;
+        const isCred = s.paymentType === 'credito';
+        const paidAmount = isCred ? (Number(s.creditAbono || s.creditPaid || s.creditInitialPayment) || 0) : total;
+        if (paidAmount > 0) {
+          allClientPayments.push({
+            saleId: s.id,
+            saleItem: saleItemName,
+            date: s.date || (s.timestamp ? s.timestamp.slice(0, 10) : ''),
+            amount: paidAmount,
+            method: isCred ? 'Inicial / Abono' : (s.paymentMethod || 'Contado'),
+            note: isCred ? 'Pago registrado' : 'Pago total de contado'
+          });
+        }
       }
     });
 
@@ -6071,6 +6259,7 @@ function openClientProfileModal(clientId) {
       const firstPendingSale = metrics.salesList.find(s => s.paymentType === 'credito' && (s.creditBalance && s.creditBalance > 0.01));
       if (firstPendingSale) {
         debtActionBtn.onclick = () => {
+          state.returnToClientProfileId = client.id;
           closeClientProfileModal();
           openAbonoModal(firstPendingSale.id);
         };
@@ -6085,26 +6274,16 @@ function openClientProfileModal(clientId) {
 
 function openClientProfileByName(clientName) {
   if (!clientName) return;
-  const norm = clientName.trim().toLowerCase();
-  let client = (state.clients || []).find(c => c && c.name && c.name.trim().toLowerCase() === norm);
+  unifyAndDeduplicateClients();
+  const norm = normalizeClientKey(clientName);
+  let client = (state.clients || []).find(c => c && c.name && normalizeClientKey(c.name) === norm);
   if (!client) {
-    // If not in state.clients yet, find from sales or create
-    const saleMatch = (state.sales || []).find(s => s && (s.clientName || s.client || '').trim().toLowerCase() === norm);
-    client = {
-      id: `CLI-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      name: clientName.trim(),
-      phone: saleMatch?.clientPhone || '',
-      email: '',
-      idCard: '',
-      vendedor: saleMatch?.vendedor || saleMatch?.seller || 'General',
-      address: '',
-      notes: ''
-    };
-    if (!state.clients) state.clients = [];
-    state.clients.push(client);
-    saveClientsToStorage();
+    const saleMatch = (state.sales || []).find(s => s && normalizeClientKey(s.clientName || s.client || '') === norm);
+    client = findOrCreateClient(clientName, saleMatch?.clientPhone, saleMatch?.vendedor || saleMatch?.seller);
   }
-  openClientProfileModal(client.id);
+  if (client) {
+    openClientProfileModal(client.id);
+  }
 }
 
 function closeClientProfileModal() {
@@ -6185,6 +6364,7 @@ function setupClientAutocomplete() {
   if (!input || !dropdown) return;
 
   input.addEventListener('input', (e) => {
+    state.selectedPOSClientId = null;
     const q = e.target.value.trim().toLowerCase();
     if (q.length < 1) {
       dropdown.classList.remove('active');
@@ -6233,6 +6413,8 @@ function setupClientAutocomplete() {
 function selectClientForPOS(clientId) {
   const client = state.clients.find(c => c.id === clientId);
   if (!client) return;
+
+  state.selectedPOSClientId = client.id;
 
   const nameInput = document.getElementById('clientNameInput');
   const phoneInput = document.getElementById('clientPhoneInput');
@@ -15328,19 +15510,24 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       // Sincronizar todos los clientes únicos en state.clients y enlazar s.clientId
       const clientMap = new Map();
       (state.clients || []).forEach(c => {
-        if (c && c.name) clientMap.set(c.name.trim().toLowerCase(), c);
+        if (c && c.name) {
+          const k = normalizeClientKey(c.name);
+          if (k && !clientMap.has(k)) clientMap.set(k, c);
+        }
       });
 
       importedSales.forEach(s => {
         const cName = (s.clientName || s.client || '').trim();
         if (!cName) return;
-        const key = cName.toLowerCase();
+        const key = normalizeClientKey(cName);
+        if (!key || key === 'general' || key === 'cliente general' || key === 'consumidor final') return;
+
         let clientObj = clientMap.get(key);
         if (!clientObj) {
           clientObj = {
             id: `CLI-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
             name: cName,
-            phone: '',
+            phone: s.clientPhone || '',
             email: '',
             idCard: '',
             address: '',
@@ -15349,12 +15536,20 @@ async function syncFromGoogleSheets(showToastNotification = true) {
             createdAt: s.date || new Date().toISOString()
           };
           clientMap.set(key, clientObj);
+        } else {
+          if (s.clientPhone && (!clientObj.phone || clientObj.phone === '-')) {
+            clientObj.phone = s.clientPhone;
+          }
+          if (s.seller && (!clientObj.vendedor || clientObj.vendedor === 'Sin asignar' || clientObj.vendedor === 'General')) {
+            clientObj.vendedor = s.seller;
+          }
         }
         s.clientId = clientObj.id;
+        s.clientName = clientObj.name;
       });
 
       state.clients = Array.from(clientMap.values());
-      saveClientsToStorage();
+      unifyAndDeduplicateClients();
 
       // Register any new sellers in state.sellers
       const knownSellerNames = new Set((state.sellers || []).map(s => s.name.toUpperCase()));
