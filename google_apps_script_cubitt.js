@@ -190,9 +190,7 @@ function doGet(e) {
         finalClient = 'Cliente Bull';
       } else {
         if (!finalClient) {
-          finalClient = lastValidClient || 'Cliente General';
-        } else {
-          lastValidClient = finalClient;
+          finalClient = 'Cliente General';
         }
         if (!finalSeller) {
           finalSeller = lastValidSeller || 'General';
@@ -305,22 +303,26 @@ function handleAddSale(ss, payload) {
     const vCol1 = (checkValues[r][0] || '').toString().trim().toUpperCase();
     const vProd = colProducto >= 0 && checkValues[r][colProducto] ? checkValues[r][colProducto].toString().trim().toUpperCase() : '';
 
-    if (fMonto.includes('SUM') || vCol1.includes('TOTAL') || vProd.includes('TOTAL') || rowNum === 450) {
+    if (fMonto.includes('SUM') || vCol1.includes('TOTAL') || vProd.includes('TOTAL')) {
       totalRow = rowNum;
       break;
     }
   }
 
-  // Si no se encuentra fila de total, insertar justo en 450 (debajo de 449)
+  // Si no se encuentra fila de total explícita, insertar después de los datos existentes
   if (totalRow < 2) {
-    totalRow = 450;
+    totalRow = Math.max(lastRow + 1, 450);
   }
 
   const insertRow = totalRow;
-  const sourceRow = totalRow - 1; // Fila 449 (o la última venta existente)
+  const sourceRow = Math.max(1, totalRow - 1); // Fila anterior (o última venta existente)
 
-  // 2. Insertar nueva fila justo debajo de la fila 449 (antes de la fila de Total)
-  sheet.insertRowBefore(insertRow);
+  // 2. Insertar nueva fila antes de la fila de Total
+  if (insertRow <= sheet.getLastRow()) {
+    sheet.insertRowBefore(insertRow);
+  } else {
+    sheet.insertRowAfter(sheet.getLastRow());
+  }
 
   // 3. COPIAR EXACTAMENTE EL FORMATO DE LA FILA 449
   const sourceRange = sheet.getRange(sourceRow, 1, 1, numCols);

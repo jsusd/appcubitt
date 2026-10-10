@@ -344,24 +344,43 @@ function sanitizeSaleRecord(sale) {
   return sale;
 }
 
-// Purga ventas simuladas o duplicadas generadas por herramientas de Drive/demo
+// Purga ventas simuladas o duplicadas y asegura unicidad estricta de IDs
 function sanitizeSalesState() {
   if (!state.sales || !Array.isArray(state.sales)) return;
-  const hasRealSales = state.sales.some(s => s && (s.rowNumber || s.id?.startsWith('SHEETS-')));
+  const hasRealSales = state.sales.some(s => s && (s.rowNumber || (typeof s.id === 'string' && s.id.startsWith('SHEETS-'))));
+  let modified = false;
+
   if (hasRealSales) {
     const prevCount = state.sales.length;
     state.sales = state.sales.filter(s => {
       if (!s || !s.id) return false;
       // Eliminar ventas simuladas de Drive o demos si ya tenemos ventas reales de Google Sheets
-      if (s.id.startsWith('CUB-DRIVE-') || s.id.startsWith('DRIVE-')) return false;
+      if (typeof s.id === 'string' && (s.id.startsWith('CUB-DRIVE-') || s.id.startsWith('DRIVE-'))) return false;
       if (s.id === 'CUB-1001' || s.id === 'CUB-1002' || s.id === 'CUB-1003') return false;
       if (s.items && s.items[0] && s.items[0].code === 'CT-DRIVE-LOTE') return false;
       return true;
     });
-    if (state.sales.length !== prevCount) {
-      localStorage.setItem('cubitt_sales_v2', JSON.stringify(state.sales));
-      console.log(`[Sanitize] Purgadas ${prevCount - state.sales.length} ventas simuladas duplicadas.`);
+    if (state.sales.length !== prevCount) modified = true;
+  }
+
+  // Garantizar unicidad estricta de IDs (reparar colisiones previas como dos ventas con SHEETS-R450-6304)
+  const seenIds = new Set();
+  state.sales.forEach((s, idx) => {
+    if (!s) return;
+    if (!s.id || seenIds.has(s.id)) {
+      modified = true;
+      if (s.rowNumber) {
+        s.id = `SHEETS-R${s.rowNumber}`;
+      }
+      if (!s.id || seenIds.has(s.id)) {
+        s.id = `SALE-${Date.now().toString().slice(-6)}-${idx}`;
+      }
     }
+    seenIds.add(s.id);
+  });
+
+  if (modified) {
+    localStorage.setItem('cubitt_sales_v2', JSON.stringify(state.sales));
   }
 }
 
@@ -15616,9 +15635,7 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         client = 'Cliente Bull';
       } else {
         if (!client) {
-          client = lastValidClient || 'Cliente General';
-        } else {
-          lastValidClient = client;
+          client = 'Cliente General';
         }
         if (!seller) {
           seller = lastValidSeller || 'General';
@@ -15709,26 +15726,32 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         }];
       }
 
-      // Check if this sale already exists locally
+      // Check if this sale already exists locally by rowNumber or previous deterministic ID
       const existingIdx = (state.sales || []).findIndex(s =>
-        s.rowNumber === rowNum ||
-        (s.id && s.id === `SHEETS-R${rowNum}`) ||
-        (s.seller === seller && s.totalAmount === total && (s.timestamp || s.date || '').slice(0, 10) === saleDate)
+        s && (
+          s.rowNumber === rowNum ||
+          s.id === `SHEETS-R${rowNum}` ||
+          (typeof s.id === 'string' && s.id.startsWith(`SHEETS-R${rowNum}-`))
+        )
       );
 
       const existingSale = existingIdx >= 0 ? state.sales[existingIdx] : null;
-      const saleId = existingSale ? existingSale.id : `SHEETS-R${rowNum}-${Date.now().toString().slice(-4)}`;
+      const saleId = `SHEETS-R${rowNum}`;
 
-      // Resolver cliente canónico permanente (evita que Sheets revierta nombres o unificaciones)
+      // Resolver cliente canónico
       let resolvedClientObj = null;
-      if (existingSale && existingSale.clientId) {
+      const trimmedClient = (client || '').trim();
+      const isGenericClient = !trimmedClient ||
+        ['cliente general', 'general', 'consumidor final', 'cliente'].includes(trimmedClient.toLowerCase());
+
+      if (!isGenericClient) {
+        resolvedClientObj = findClientByAnyNameOrAlias(trimmedClient, null);
+      } else if (existingSale && existingSale.clientId) {
+        // Solo si la fila de Sheets no trae nombre pero localmente ya se le había vinculado uno
         resolvedClientObj = (state.clients || []).find(c => c && c.id === existingSale.clientId) || null;
       }
-      if (!resolvedClientObj && client) {
-        resolvedClientObj = findClientByAnyNameOrAlias(client, null);
-      }
 
-      const canonicalClientName = resolvedClientObj ? resolvedClientObj.name : (existingSale?.clientName || client);
+      const canonicalClientName = resolvedClientObj ? resolvedClientObj.name : (trimmedClient || 'Cliente General');
       const canonicalClientId = resolvedClientObj ? resolvedClientObj.id : (existingSale?.clientId || null);
 
       const saleObj = sanitizeSaleRecord({
@@ -15778,19 +15801,50 @@ async function syncFromGoogleSheets(showToastNotification = true) {
           if (!s || !s.id) return false;
           if (s.rowNumber && importedRowNumbers.has(s.rowNumber)) return false;
           if (importedIds.has(s.id)) return false;
-          if (s.id.startsWith('SHEETS-')) return false;
-          if (s.id.startsWith('CUB-DRIVE-') || s.id.startsWith('DRIVE-')) return false;
+          if (typeof s.id === 'string' && s.id.startsWith('SHEETS-')) return false;
+          if (typeof s.id === 'string' && (s.id.startsWith('CUB-DRIVE-') || s.id.startsWith('DRIVE-'))) return false;
           if (s.id === 'CUB-1001' || s.id === 'CUB-1002' || s.id === 'CUB-1003') return false;
           if (s.items && s.items[0] && s.items[0].code === 'CT-DRIVE-LOTE') return false;
           
+          const sDate = (s.date || (s.timestamp || '').slice(0, 10)).trim();
+          const sTotal = Number(s.totalAmount || s.total || 0);
+          const sClient = (s.clientName || s.client || '').trim().toLowerCase();
+          const sProductCode = (s.productCode || (s.items && s.items[0] && s.items[0].code) || '').trim().toUpperCase();
+
           // Verificar si ya fue importada desde Sheets para evitar duplicados
-          const isAlreadyImported = importedSales.some(imp =>
-            imp.totalAmount === s.totalAmount &&
-            (imp.date === (s.date || (s.timestamp || '').slice(0, 10))) &&
-            ((imp.client && s.clientName && imp.client.toLowerCase() === s.clientName.toLowerCase()) ||
-             (imp.seller && s.vendedor && imp.seller.toLowerCase() === s.vendedor.toLowerCase()))
-          );
-          if (isAlreadyImported) return false;
+          // Requiere coincidencia estricta de fecha, monto Y (cliente específico idéntico O producto idéntico con mismo cliente)
+          // NUNCA descartar por coincidencia de vendedor
+          const matchingImported = importedSales.find(imp => {
+            if (Math.abs((Number(imp.totalAmount) || 0) - sTotal) > 0.01) return false;
+            if ((imp.date || '').trim() !== sDate) return false;
+
+            const impClient = (imp.client || imp.clientName || '').trim().toLowerCase();
+            const impCode = (imp.productCode || '').trim().toUpperCase();
+
+            const isSpecificClient = sClient && sClient !== 'cliente general' && sClient !== 'general' &&
+                                      impClient && impClient !== 'cliente general' && impClient !== 'general';
+            if (isSpecificClient && (sClient === impClient || normalizeClientKey(sClient) === normalizeClientKey(impClient))) {
+              return true;
+            }
+
+            if (sProductCode && impCode && sProductCode === impCode && sProductCode !== 'CT-GEN' && sClient === impClient) {
+              return true;
+            }
+
+            return false;
+          });
+
+          if (matchingImported) {
+            // Preservar metadatos enriquecidos que la venta local pudiera tener
+            if (s.items && s.items.length > 1 && matchingImported.items.length <= 1) {
+              matchingImported.items = s.items;
+            }
+            if (s.paymentsHistory && s.paymentsHistory.length > matchingImported.paymentsHistory.length) {
+              matchingImported.paymentsHistory = s.paymentsHistory;
+            }
+            return false;
+          }
+
           return true; // Preservar venta creada localmente en la App
         })
         .map(sanitizeSaleRecord);
