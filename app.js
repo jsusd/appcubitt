@@ -344,11 +344,85 @@ function sanitizeSaleRecord(sale) {
   return sale;
 }
 
-// Purga ventas simuladas o duplicadas y asegura unicidad estricta de IDs
+// ==============================================================
+// GESTIÓN DE VENTAS ELIMINADAS (PERSISTENCIA Y LISTA NEGRA)
+// ==============================================================
+function getDeletedSaleKeys() {
+  try {
+    const raw = localStorage.getItem('cubitt_deleted_sales_v1');
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function recordDeletedSale(sale) {
+  if (!sale) return;
+  const deletedSet = getDeletedSaleKeys();
+
+  if (sale.id) deletedSet.add(sale.id);
+
+  if (sale.rowNumber) {
+    deletedSet.add(`ROW-${sale.rowNumber}`);
+    deletedSet.add(`SHEETS-R${sale.rowNumber}`);
+  }
+  if (typeof sale.id === 'string' && sale.id.startsWith('SHEETS-R')) {
+    deletedSet.add(sale.id);
+    const rNum = parseInt(sale.id.replace('SHEETS-R', ''));
+    if (!isNaN(rNum)) {
+      deletedSet.add(`ROW-${rNum}`);
+      deletedSet.add(`SHEETS-R${rNum}`);
+    }
+  }
+
+  const sDate = (sale.date || (sale.timestamp || '').slice(0, 10)).trim();
+  const sTotal = Number(sale.totalAmount || sale.total || 0).toFixed(2);
+  const sCode = (sale.productCode || (sale.items && sale.items[0] && sale.items[0].code) || '').trim().toUpperCase();
+  if (sDate && sTotal && sCode) {
+    deletedSet.add(`SIG-${sDate}-${sTotal}-${sCode}`);
+  }
+
+  try {
+    localStorage.setItem('cubitt_deleted_sales_v1', JSON.stringify([...deletedSet]));
+  } catch (e) {
+    console.warn('Error guardando blacklist de ventas eliminadas:', e);
+  }
+}
+
+function isSaleDeleted(saleOrItem) {
+  if (!saleOrItem) return false;
+  const deletedSet = getDeletedSaleKeys();
+  if (deletedSet.size === 0) return false;
+
+  if (saleOrItem.id && deletedSet.has(saleOrItem.id)) return true;
+  if (saleOrItem.rowNumber && (deletedSet.has(`ROW-${saleOrItem.rowNumber}`) || deletedSet.has(`SHEETS-R${saleOrItem.rowNumber}`))) return true;
+
+  if (typeof saleOrItem.id === 'string' && saleOrItem.id.startsWith('SHEETS-R')) {
+    const rNum = parseInt(saleOrItem.id.replace('SHEETS-R', ''));
+    if (!isNaN(rNum) && (deletedSet.has(`ROW-${rNum}`) || deletedSet.has(`SHEETS-R${rNum}`))) return true;
+  }
+
+  const sDate = (saleOrItem.date || (saleOrItem.timestamp || '').slice(0, 10)).trim();
+  const sTotal = Number(saleOrItem.totalAmount || saleOrItem.total || 0).toFixed(2);
+  const sCode = (saleOrItem.productCode || (saleOrItem.items && saleOrItem.items[0] && saleOrItem.items[0].code) || '').trim().toUpperCase();
+  if (sDate && sTotal && sCode && deletedSet.has(`SIG-${sDate}-${sTotal}-${sCode}`)) {
+    return true;
+  }
+
+  return false;
+}
+
+// Purga ventas simuladas, duplicadas o eliminadas y asegura unicidad estricta de IDs
 function sanitizeSalesState() {
   if (!state.sales || !Array.isArray(state.sales)) return;
-  const hasRealSales = state.sales.some(s => s && (s.rowNumber || (typeof s.id === 'string' && s.id.startsWith('SHEETS-'))));
   let modified = false;
+
+  // 1. Purgar cualquier venta que haya sido eliminada por el usuario
+  const prevBeforeDeleted = state.sales.length;
+  state.sales = state.sales.filter(s => s && !isSaleDeleted(s));
+  if (state.sales.length !== prevBeforeDeleted) modified = true;
+
+  const hasRealSales = state.sales.some(s => s && (s.rowNumber || (typeof s.id === 'string' && s.id.startsWith('SHEETS-'))));
 
   if (hasRealSales) {
     const prevCount = state.sales.length;
@@ -2624,14 +2698,14 @@ function renderHistory() {
           ${mlComm > 0 ? `<div style="font-size: 0.7rem; color: #b45309; font-weight: 600;">CXP MercadoLibre: -$${(Number(mlComm) || 0).toFixed(2)}</div>` : ''}
           ${(Number(sale.additionalCommissionsTotal) || 0) > 0 ? `<div style="font-size: 0.7rem; color: #b91c1c;">CXP Comis: -$${(Number(sale.additionalCommissionsTotal) || 0).toFixed(2)}</div>` : ''}
         </td>
-        <td>
-          <div style="display: flex; gap: 6px;">
-            <button class="btn btn-outline btn-sm" onclick="openEditSaleModal('${sale.id}')" title="Modificar Transacción">✏️ Editar</button>
-            <button class="btn btn-outline btn-sm" onclick="viewTicketById('${sale.id}')" title="Ver Ticket">🖨️ Ticket</button>
+        <td style="white-space: nowrap;">
+          <div style="display: flex; gap: 4px; align-items: center; white-space: nowrap;">
+            <button class="btn btn-outline btn-sm" onclick="openEditSaleModal('${sale.id}')" style="padding: 4px 8px;" title="Modificar Transacción">✏️ Editar</button>
+            <button class="btn btn-outline btn-sm" onclick="viewTicketById('${sale.id}')" style="padding: 4px 8px;" title="Ver Ticket">🖨️ Ticket</button>
             ${isCredit && !isPaid ? `
-              <button class="btn btn-success btn-sm" onclick="openAbonoModal('${sale.id}')" title="Registrar Abono">💵 Abonar</button>
+              <button class="btn btn-success btn-sm" onclick="openAbonoModal('${sale.id}')" style="padding: 4px 8px;" title="Registrar Abono">💵 Abonar</button>
             ` : ''}
-            <button class="btn btn-outline btn-sm" onclick="deleteSaleById('${sale.id}')" style="color: #ef4444; border-color: #fee2e2;" title="Eliminar Venta">🗑️</button>
+            <button class="btn btn-outline btn-sm" onclick="deleteSaleById('${sale.id}')" style="color: #ef4444; border-color: #fee2e2; padding: 4px 8px;" title="Eliminar Venta">🗑️</button>
           </div>
         </td>
       </tr>
@@ -4475,23 +4549,57 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Delete Sale
-function deleteSaleById(saleId) {
-  if (confirm(`¿Está seguro de eliminar el registro de venta #${saleId}? Esta acción no se puede deshacer.`)) {
-    state.sales = state.sales.filter(s => s.id !== saleId);
-    state.payables = state.payables.filter(p => p.saleId !== saleId);
-    saveSalesToStorage();
-    savePayablesToStorage();
-    renderHistory();
-    renderCredits();
-    renderPayables();
-    renderClients();
-    renderTopStats();
-    showToast(`Venta #${saleId} y sus cuentas asociadas eliminadas`, 'info');
+async function deleteSaleById(saleId) {
+  const sale = (state.sales || []).find(s => s && s.id === saleId);
+  const rowInfo = sale?.rowNumber ? ` (Fila ${sale.rowNumber} de Google Sheets)` : '';
+
+  if (!confirm(`¿Está seguro de eliminar el registro de venta #${saleId}${rowInfo}? Esta acción eliminará la transacción permanentemente.`)) {
+    return;
+  }
+
+  // 1. Registrar inmediatamente en la lista negra persistente para que NUNCA vuelva a importarse
+  if (sale) {
+    recordDeletedSale(sale);
+  } else {
+    recordDeletedSale({ id: saleId });
+  }
+
+  // 2. Eliminar del estado local
+  state.sales = (state.sales || []).filter(s => s && s.id !== saleId);
+  state.payables = (state.payables || []).filter(p => p && p.saleId !== saleId);
+  saveSalesToStorage();
+  savePayablesToStorage();
+
+  // 3. Re-renderizar interfaces
+  renderHistory();
+  renderCredits();
+  renderPayables();
+  renderClients();
+  renderTopStats();
+  if (typeof renderOrdersTab === 'function') renderOrdersTab();
+
+  showToast(`Venta #${saleId} eliminada permanentemente`, 'info');
+
+  // 4. Sincronizar eliminación en Google Sheets
+  if (sale && (sale.rowNumber || (typeof sale.id === 'string' && sale.id.startsWith('SHEETS-')) || sale.syncedWithSheets)) {
+    try {
+      await autoSyncDeleteToSheets(sale);
+    } catch (e) {
+      console.warn('Error sincronizando eliminación con Google Sheets:', e);
+    }
   }
 }
 
+function deleteCurrentEditingSale() {
+  if (!currentEditingSale) return;
+  const id = currentEditingSale.id;
+  closeEditSaleModal();
+  deleteSaleById(id);
+}
+
 function clearAllSalesHistory() {
-  if (confirm('¿Está seguro de borrar todo el historial de ventas y cuentas por pagar?')) {
+  if (confirm('¿Está seguro de borrar todo el historial de ventas y cuentas por pagar? Esta acción es permanente.')) {
+    (state.sales || []).forEach(s => recordDeletedSale(s));
     state.sales = [];
     state.payables = [];
     saveSalesToStorage();
@@ -4501,6 +4609,7 @@ function clearAllSalesHistory() {
     renderPayables();
     renderClients();
     renderTopStats();
+    if (typeof renderOrdersTab === 'function') renderOrdersTab();
     showToast('Historial vaciado con éxito', 'info');
   }
 }
@@ -15606,6 +15715,12 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       // Filtrar dinámicamente filas de totales generales, subtotales, Pareto o vacías
       if (total >= 5000 || total <= 0 || code === '$' || rawNameUpper.includes('TOTAL') || codeUpper.includes('TOTAL') || rawNameUpper === 'PRODUCTO' || rawNameUpper.includes('PARETO')) return;
 
+      const saleId = `SHEETS-R${rowNum}`;
+      // Omitir si esta venta fue eliminada permanentemente por el usuario
+      if (isSaleDeleted({ id: saleId, rowNumber: rowNum, totalAmount: total, productCode: code, date: (item.date || '').trim() })) {
+        return;
+      }
+
       // Propagar fecha válida si está vacía o inválida (1900-...)
       let saleDate = (item.date || '').trim();
       if (!saleDate || saleDate.startsWith('1900') || saleDate === '1900-01-00') {
@@ -15799,6 +15914,7 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       const nonSheetsSales = (state.sales || [])
         .filter(s => {
           if (!s || !s.id) return false;
+          if (isSaleDeleted(s)) return false;
           if (s.rowNumber && importedRowNumbers.has(s.rowNumber)) return false;
           if (importedIds.has(s.id)) return false;
           if (typeof s.id === 'string' && s.id.startsWith('SHEETS-')) return false;
@@ -15848,7 +15964,7 @@ async function syncFromGoogleSheets(showToastNotification = true) {
           return true; // Preservar venta creada localmente en la App
         })
         .map(sanitizeSaleRecord);
-      state.sales = [...importedSales, ...nonSheetsSales].map(sanitizeSaleRecord);
+      state.sales = [...importedSales, ...nonSheetsSales].filter(s => s && !isSaleDeleted(s)).map(sanitizeSaleRecord);
       state.sales.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
 
       // Sincronizar todos los clientes únicos en state.clients y enlazar s.clientId de forma canónica
@@ -16097,6 +16213,61 @@ async function autoSyncAbonoToSheets(sale, amount, method, note) {
   } catch (err) {
     console.error('Error enviando abono a Google Sheets:', err);
   }
+}
+
+// Push a sale deletion to Google Sheets automatically
+async function autoSyncDeleteToSheets(sale) {
+  const url = normalizeSheetsUrl(getSheetsWebAppUrl());
+  if (!url || !isSheetsAutoSyncEnabled()) return;
+
+  const rowNum = sale.rowNumber || (typeof sale.id === 'string' && sale.id.startsWith('SHEETS-R') ? parseInt(sale.id.replace('SHEETS-R', '')) : null);
+  const total = Number(sale.totalAmount || sale.total) || 0;
+  const primaryItem = (sale.items && sale.items[0]) ? sale.items[0] : {};
+  const code = (primaryItem.code || sale.productCode || '').trim();
+  const saleDate = (sale.date || (sale.timestamp || '').slice(0, 10)).trim();
+
+  const payload = {
+    action: 'delete_sale',
+    saleId: sale.id,
+    rowNumber: rowNum,
+    date: saleDate,
+    totalAmount: total,
+    productCode: code,
+    client: (sale.clientName || sale.client || '').trim()
+  };
+
+  appendSheetsSyncLog(`[Auto-Sync] Solicitando eliminación de venta #${sale.id}${rowNum ? ` (Fila ${rowNum})` : ''} en Google Sheets...`);
+
+  // 1. Intento POST (modo standard no-cors)
+  try {
+    fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload)
+    }).catch(e => console.warn('Background delete POST notice:', e));
+  } catch (err) {
+    console.warn('POST para eliminación falló:', err);
+  }
+
+  // 2. Respaldo GET con parámetros de URL (garantiza ejecución)
+  try {
+    const params = new URLSearchParams({
+      action: 'delete_sale',
+      saleId: sale.id || '',
+      rowNumber: rowNum || '',
+      totalAmount: total,
+      productCode: code,
+      date: saleDate,
+      t: Date.now()
+    });
+    const getUrl = url + (url.includes('?') ? '&' : '?') + params.toString();
+    fetch(getUrl, { mode: 'no-cors' }).catch(e => console.warn('Background delete GET notice:', e));
+  } catch (e) {
+    console.warn('GET delete notice:', e);
+  }
+
+  appendSheetsSyncLog(`[Auto-Sync] ✅ Comando de eliminación para venta #${sale.id} enviado a Google Sheets.`);
 }
 
 // Handle file upload fallback (.xlsx / .csv)

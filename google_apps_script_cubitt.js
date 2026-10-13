@@ -57,6 +57,10 @@ function doGet(e) {
         timestamp: new Date().toISOString()
       }, e);
     }
+    if (action === 'delete_sale' || action === 'remove_sale') {
+      let ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+      return handleDeleteSale(ss, e.parameter, e);
+    }
 
     let ss = null;
     try {
@@ -257,6 +261,8 @@ function doPost(e) {
       return handleUpdateAbono(ss, payload);
     } else if (action === 'add_expense') {
       return handleAddExpense(ss, payload);
+    } else if (action === 'delete_sale' || action === 'remove_sale') {
+      return handleDeleteSale(ss, payload, e);
     } else {
       return jsonResponse({ status: 'error', message: 'Acción no reconocida: ' + action });
     }
@@ -479,6 +485,106 @@ function handleAddExpense(ss, payload) {
   ]);
 
   return jsonResponse({ status: 'success', message: 'Egreso guardado en Google Sheets' });
+}
+
+// Eliminar una fila de venta en la hoja "ventas"
+function handleDeleteSale(ss, payload, e) {
+  let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
+  if (!sheet) sheet = ss.getSheets()[0];
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow <= 1) {
+    return jsonResponse({ status: 'error', message: 'No hay registros en la hoja para eliminar' }, e);
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => (h || '').toString().trim());
+  const colFecha = findColIndex(headers, ['fecha', 'date', 'dia']);
+  const colCodigo = findColIndex(headers, ['codigo', 'código', 'code', 'sku']);
+  const colMonto = findColIndex(headers, ['monto', 'total', 'precio', 'amount', 'facturación']);
+
+  let targetRow = parseInt(payload.rowNumber);
+  if (isNaN(targetRow) && payload.saleId && payload.saleId.toString().startsWith('SHEETS-R')) {
+    targetRow = parseInt(payload.saleId.toString().replace('SHEETS-R', ''));
+  }
+
+  const targetTotal = parseFloat(payload.totalAmount) || 0;
+  const targetCode = (payload.productCode || '').toString().trim().toUpperCase();
+  const targetDate = (payload.date || '').toString().trim();
+
+  let rowToDelete = -1;
+
+  // 1. Probar primero si targetRow es válido y coincide con el monto o código
+  if (targetRow > 1 && targetRow <= lastRow) {
+    const rowValues = sheet.getRange(targetRow, 1, 1, lastCol).getValues()[0];
+    const rMonto = parseFloat(colMonto >= 0 ? rowValues[colMonto] : 0) || 0;
+    const rCode = (colCodigo >= 0 ? rowValues[colCodigo] : '').toString().trim().toUpperCase();
+
+    const matchesMonto = targetTotal > 0 ? (Math.abs(rMonto - targetTotal) < 0.1) : true;
+    const matchesCode = targetCode ? (rCode === targetCode || rCode.includes(targetCode)) : true;
+
+    if (matchesMonto || matchesCode) {
+      rowToDelete = targetRow;
+    }
+  }
+
+  // 2. Si las filas se movieron, buscar desde el final de la hoja hacia arriba por código, monto y/o fecha
+  if (rowToDelete < 0 && (targetTotal > 0 || targetCode)) {
+    const allValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    for (let r = allValues.length - 1; r >= 0; r--) {
+      const rNum = r + 2;
+      const rVal = allValues[r];
+      const rMonto = parseFloat(colMonto >= 0 ? rVal[colMonto] : 0) || 0;
+      const rCode = (colCodigo >= 0 ? rVal[colCodigo] : '').toString().trim().toUpperCase();
+      const rFecha = (colFecha >= 0 ? formatDateOutput(rVal[colFecha]) : '').toString().trim();
+
+      const montoMatches = targetTotal > 0 ? (Math.abs(rMonto - targetTotal) < 0.1) : true;
+      const codeMatches = targetCode ? (rCode === targetCode || rCode.includes(targetCode)) : true;
+      const dateMatches = targetDate ? (rFecha === targetDate) : true;
+
+      if (montoMatches && codeMatches && dateMatches) {
+        rowToDelete = rNum;
+        break;
+      }
+    }
+  }
+
+  // 3. Fallback directo a targetRow si es una fila de datos válida
+  if (rowToDelete < 0 && targetRow > 1 && targetRow <= lastRow) {
+    rowToDelete = targetRow;
+  }
+
+  if (rowToDelete > 1 && rowToDelete <= sheet.getLastRow()) {
+    sheet.deleteRow(rowToDelete);
+
+    // Actualizar fórmula de total si existe
+    const updatedLastRow = sheet.getLastRow();
+    const scanRows = Math.min(updatedLastRow, 550);
+    const montoColIdx = colMonto >= 0 ? colMonto : 4;
+    const checkFormulas = sheet.getRange(1, montoColIdx + 1, scanRows, 1).getFormulas();
+    for (let r = 1; r < scanRows; r++) {
+      const fMonto = (checkFormulas[r][0] || '').toString().toUpperCase();
+      if (fMonto.includes('SUM')) {
+        const totalRowNum = r + 1;
+        const totalCell = sheet.getRange(totalRowNum, montoColIdx + 1);
+        const colLetter = getColumnLetter(montoColIdx + 1);
+        totalCell.setFormula(`=SUM(${colLetter}2:${colLetter}${totalRowNum - 1})`);
+        break;
+      }
+    }
+
+    return jsonResponse({
+      status: 'success',
+      message: `Fila ${rowToDelete} eliminada permanentemente de Google Sheets`,
+      deletedRow: rowToDelete
+    }, e);
+  }
+
+  return jsonResponse({
+    status: 'warning',
+    message: 'No se pudo localizar la fila exacta para eliminar en Google Sheets',
+    rowRequested: targetRow
+  }, e);
 }
 
 // ==============================================================
