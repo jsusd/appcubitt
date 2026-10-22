@@ -16118,7 +16118,6 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       );
 
       const existingSale = existingIdx >= 0 ? state.sales[existingIdx] : null;
-      const saleId = `SHEETS-R${rowNum}`;
 
       // Resolver cliente canónico
       let resolvedClientObj = null;
