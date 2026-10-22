@@ -4182,13 +4182,24 @@
     </div>
   </div>
 
-  <!-- MODAL: Ajuste Rápido de Stock Físico -->
+  <!-- MODAL: Ajuste Rápido de Stock y Precio por Defecto -->
   <div class="modal-overlay" id="quickStockAdjustModal">
-    <div class="modal-box" style="max-width: 440px;">
+    <div class="modal-box" style="max-width: 460px;">
       <button class="modal-close-btn" onclick="closeQuickStockAdjustModal()">&times;</button>
       <input type="hidden" id="adjustProductCodeInput">
-      <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 0.25rem;">Ajuste de Stock Físico</h3>
+      <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 0.25rem;">Ajuste de Stock y Precio</h3>
       <div id="adjustProductTitle" style="font-size: 0.85rem; color: #64748b; margin-bottom: 1rem;">Producto</div>
+
+      <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1rem;">
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label" for="adjustStockPvpInput" style="color: #2563eb; font-weight: 700;">Precio Venta por Defecto (PVP $)</label>
+          <input type="number" id="adjustStockPvpInput" class="form-control" min="0" step="0.01" placeholder="Ej: 35.00" style="border-color: #93c5fd; font-weight: 700; color: #1d4ed8;">
+        </div>
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label" for="adjustStockCostInput">Costo Unitario ($ USD)</label>
+          <input type="number" id="adjustStockCostInput" class="form-control" min="0" step="0.01" placeholder="Ej: 14.99">
+        </div>
+      </div>
 
       <div class="form-group" style="margin-bottom: 1rem;">
         <label class="form-label" for="adjustStockQuantityInput">Nuevo Stock Físico (Unidades)</label>
@@ -4199,6 +4210,7 @@
         <label class="form-label" for="adjustStockReasonInput">Motivo del Ajuste</label>
         <select id="adjustStockReasonInput" class="form-control">
           <option value="Conteo Físico / Inventario">📋 Conteo Físico / Auditoría</option>
+          <option value="Actualización de Precio PVP">💲 Actualización de Precio de Venta (PVP)</option>
           <option value="Reposición Directa">📦 Reposición Directa de Mercancía</option>
           <option value="Corrección de Registro">✏️ Corrección de Registro</option>
           <option value="Merma o Garantía">⚠️ Merma / Daño / Garantía</option>
@@ -4206,7 +4218,7 @@
       </div>
 
       <div style="display: flex; gap: 10px;">
-        <button class="btn btn-primary btn-block" onclick="handleConfirmStockAdjustment()">💾 Guardar Ajuste</button>
+        <button class="btn btn-primary btn-block" onclick="handleConfirmStockAdjustment()">💾 Guardar Cambios</button>
         <button class="btn btn-outline" onclick="closeQuickStockAdjustModal()">Cancelar</button>
       </div>
     </div>

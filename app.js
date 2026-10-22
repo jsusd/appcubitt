@@ -3638,6 +3638,11 @@ function saveEditedSale() {
   // Synchronize CXP records
   syncPayablesForSale(updatedSale);
 
+  // Sync updated sale fields to Google Sheets if connected
+  if (typeof autoSyncUpdatedSaleToSheets === 'function') {
+    autoSyncUpdatedSaleToSheets(updatedSale);
+  }
+
   closeEditSaleModal();
   showToast(`¡Transacción #${updatedSale.id} actualizada correctamente!`, 'success');
 
@@ -3781,7 +3786,15 @@ function loadProductsFromStorage() {
     state.products = typeof CUBITT_PRODUCTS !== 'undefined' ? JSON.parse(JSON.stringify(CUBITT_PRODUCTS)) : [];
   }
 
-  // Normalize all products with description, images array, and synced cost
+  let customPvpMap = {};
+  try {
+    const savedCustomPvp = localStorage.getItem('cubitt_custom_pvp_map_v1');
+    if (savedCustomPvp) customPvpMap = JSON.parse(savedCustomPvp) || {};
+  } catch (e) {
+    console.warn('Error loading custom PVP map:', e);
+  }
+
+  // Normalize all products with description, images array, synced cost, and default selling price (PVP)
   state.products.forEach(p => {
     if (!p.description) {
       if (p.category && p.category.includes(' - ')) {
@@ -3797,6 +3810,16 @@ function loadProductsFromStorage() {
     p.costo = (p.mayor !== undefined ? p.mayor : (p.costo || 0));
     p.mayor = p.costo;
 
+    const codeKey = (p.code || '').toUpperCase();
+    const customPvp = customPvpMap[codeKey];
+    const resolvedPvp = (customPvp !== undefined && !isNaN(Number(customPvp)))
+      ? Number(customPvp)
+      : Number(p.pvpActual ?? p.pvpTienda ?? p.pvp ?? p.price ?? 0);
+    p.pvpActual = resolvedPvp;
+    p.pvpTienda = resolvedPvp;
+    p.pvp = resolvedPvp;
+    p.price = resolvedPvp;
+
     // Normalize physical stock (Starts at 0 units so it is populated exclusively from purchase invoices)
     if (p.stock === undefined || p.stock === null || isNaN(Number(p.stock))) {
       p.stock = 0;
@@ -3810,7 +3833,7 @@ function loadProductsFromStorage() {
     }
   });
 
-  // Synchronize all products with official descriptions and images from CUBITT_PRODUCTS (from Shopify)
+  // Synchronize all products with official descriptions, images, and fallback PVP from CUBITT_PRODUCTS (from Shopify)
   if (typeof CUBITT_PRODUCTS !== 'undefined' && Array.isArray(CUBITT_PRODUCTS)) {
     const officialMap = {};
     CUBITT_PRODUCTS.forEach(op => {
@@ -3833,6 +3856,17 @@ function loadProductsFromStorage() {
         if (Array.isArray(official.images) && official.images.length > 0) {
           if (!p.images || p.images.length !== official.images.length || p.images[0] !== official.images[0]) {
             p.images = [...official.images];
+            catalogUpdated = true;
+          }
+        }
+        // If product had 0 PVP and no custom override, restore from official CUBITT_PRODUCTS
+        if (customPvpMap[codeKey] === undefined && (!p.pvpActual || p.pvpActual <= 0)) {
+          const officialPvp = Number(official.pvpActual ?? official.pvpTienda ?? official.pvp ?? 0);
+          if (officialPvp > 0) {
+            p.pvpActual = officialPvp;
+            p.pvpTienda = officialPvp;
+            p.pvp = officialPvp;
+            p.price = officialPvp;
             catalogUpdated = true;
           }
         }
@@ -4106,6 +4140,8 @@ function saveProductFromModal() {
       category: category,
       pvpActual: pvp,
       pvpTienda: pvp,
+      pvp: pvp,
+      price: pvp,
       mayor: mayor,
       costo: mayor,
       status: status,
@@ -4113,6 +4149,7 @@ function saveProductFromModal() {
       images: images
     };
 
+    persistCustomProductPvp(code, pvp);
     state.products.unshift(newProd);
     showToast(`¡Producto ${code} (${description}) registrado exitosamente!`, 'success');
   } else {
@@ -4135,6 +4172,8 @@ function saveProductFromModal() {
       category: category,
       pvpActual: pvp,
       pvpTienda: pvp,
+      pvp: pvp,
+      price: pvp,
       mayor: mayor,
       costo: mayor,
       status: status,
@@ -4142,9 +4181,13 @@ function saveProductFromModal() {
       images: images
     };
 
+    persistCustomProductPvp(code, pvp);
+
     if (state.selectedProduct && state.selectedProduct.code === originalCode) {
       state.selectedProduct = state.products[index];
       renderProductPreview(state.selectedProduct);
+      const priceInput = document.getElementById('salePriceInput');
+      if (priceInput) priceInput.value = pvp.toFixed(2);
     }
 
     showToast(`¡Producto ${code} actualizado exitosamente!`, 'success');
@@ -4153,7 +4196,20 @@ function saveProductFromModal() {
   saveProductsToStorage();
   closeProductEditModal();
   renderCatalog();
+  if (typeof renderInventoryTab === 'function') renderInventoryTab();
   setupAutocomplete();
+}
+
+function persistCustomProductPvp(code, pvpValue) {
+  if (!code) return;
+  try {
+    const raw = localStorage.getItem('cubitt_custom_pvp_map_v1');
+    const map = raw ? (JSON.parse(raw) || {}) : {};
+    map[String(code).toUpperCase()] = Number(pvpValue) || 0;
+    localStorage.setItem('cubitt_custom_pvp_map_v1', JSON.stringify(map));
+  } catch (e) {
+    console.warn('Error persisting custom PVP:', e);
+  }
 }
 
 function deleteProductByCode(code) {
@@ -8455,7 +8511,7 @@ function renderInventoryMetrics() {
   products.forEach(p => {
     const stock = Number(p.stock) || 0;
     const cost = Number(p.costo || p.mayor || 0);
-    const pvp = Number(p.pvp || 0);
+    const pvp = Number(p.pvpActual ?? p.pvpTienda ?? p.pvp ?? p.price ?? 0);
 
     totalUnits += stock;
     costValuation += (stock * cost);
@@ -8571,10 +8627,12 @@ function renderInventoryStockTable() {
   tbody.innerHTML = filtered.map(p => {
     const stock = Number(p.stock) || 0;
     const cost = Number(p.costo || p.mayor || 0);
-    const pvp = Number(p.pvp || 0);
+    const pvp = Number(p.pvpActual ?? p.pvpTienda ?? p.pvp ?? p.price ?? 0);
     const totalValuation = stock * cost;
     const margin = pvp - cost;
-    const marginPct = cost > 0 ? ((margin / cost) * 100).toFixed(0) : 100;
+    const marginPct = cost > 0 ? ((margin / cost) * 100).toFixed(0) : (pvp > 0 ? 100 : 0);
+    const marginColor = margin >= 0 ? '#059669' : '#dc2626';
+    const marginSign = margin >= 0 ? `+$${margin.toFixed(2)}` : `-$${Math.abs(margin).toFixed(2)}`;
 
     let stockClass = 'high';
     if (stock <= 0) stockClass = 'out';
@@ -8600,9 +8658,22 @@ function renderInventoryStockTable() {
           </span>
         </td>
         <td style="font-weight: 700; color: #059669;">$${cost.toFixed(2)}</td>
-        <td style="font-weight: 700; color: #2563eb;">$${pvp.toFixed(2)}</td>
         <td>
-          <div style="font-weight: 700; color: #059669; font-size: 0.85rem;">+$${margin.toFixed(2)}</div>
+          <div style="display: inline-flex; align-items: center; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 2px 6px;" title="Haz clic para modificar el precio de venta por defecto (PVP Tienda)">
+            <span style="font-weight: 800; color: #2563eb; font-size: 0.85rem; margin-right: 2px;">$</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value="${pvp.toFixed(2)}"
+              style="width: 68px; border: none; background: transparent; font-weight: 800; color: #2563eb; font-size: 0.88rem; outline: none; padding: 2px 0;"
+              onchange="updateProductDefaultPvp('${p.code}', this.value)"
+              onkeydown="if(event.key==='Enter'){this.blur();}"
+            >
+          </div>
+        </td>
+        <td>
+          <div style="font-weight: 700; color: ${marginColor}; font-size: 0.85rem;">${marginSign}</div>
           <div style="font-size: 0.72rem; color: #64748b;">${marginPct}% margen</div>
         </td>
         <td>
@@ -8620,7 +8691,7 @@ function renderInventoryStockTable() {
         </td>
         <td>
           <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <button type="button" class="btn btn-outline btn-xs" onclick="openQuickStockAdjustModal('${p.code}')" title="Ajustar stock físico">
+            <button type="button" class="btn btn-outline btn-xs" onclick="openQuickStockAdjustModal('${p.code}')" title="Ajustar stock y precio de venta por defecto">
               ✏️ Ajustar
             </button>
             <button type="button" class="btn btn-primary btn-xs" onclick="selectFromCatalog('${p.code}')" title="Vender en POS" style="background: #2563eb; border: none;">
@@ -8631,6 +8702,43 @@ function renderInventoryStockTable() {
       </tr>
     `;
   }).join('');
+}
+
+// Inline handler to update default selling price (PVP Tienda) directly from Inventory
+function updateProductDefaultPvp(productCode, newPvpVal) {
+  const parsedPvp = parseFloat(newPvpVal);
+  if (isNaN(parsedPvp) || parsedPvp < 0) {
+    showToast('Ingrese un precio de venta válido ($0.00 o superior)', 'danger');
+    renderInventoryStockTable();
+    return;
+  }
+
+  const prod = (state.products || []).find(p => p.code === productCode);
+  if (!prod) {
+    showToast('Producto no encontrado', 'danger');
+    return;
+  }
+
+  prod.pvpActual = parsedPvp;
+  prod.pvpTienda = parsedPvp;
+  prod.pvp = parsedPvp;
+  prod.price = parsedPvp;
+
+  persistCustomProductPvp(prod.code, parsedPvp);
+  saveProductsToStorage();
+
+  if (state.selectedProduct && state.selectedProduct.code === prod.code) {
+    state.selectedProduct = prod;
+    renderProductPreview(prod);
+    const priceInput = document.getElementById('salePriceInput');
+    if (priceInput) priceInput.value = parsedPvp.toFixed(2);
+    updateLiveCalculations();
+  }
+
+  renderInventoryMetrics();
+  renderInventoryStockTable();
+  renderCatalog();
+  showToast(`Precio de venta por defecto de ${prod.code} actualizado a $${parsedPvp.toFixed(2)}`, 'success');
 }
 
 // Handlers for Stock Filters
@@ -10035,7 +10143,7 @@ function exportLoansToCSV() {
   showToast('Archivo CSV de Préstamos descargado con éxito', 'success');
 }
 
-// Quick Stock Adjustment Modal
+// Quick Stock & Default Price Adjustment Modal
 function openQuickStockAdjustModal(productCode) {
   const prod = (state.products || []).find(p => p.code === productCode);
   if (!prod) {
@@ -10046,13 +10154,22 @@ function openQuickStockAdjustModal(productCode) {
   const modal = document.getElementById('quickStockAdjustModal');
   if (!modal) return;
 
+  const currentPvp = Number(prod.pvpActual ?? prod.pvpTienda ?? prod.pvp ?? prod.price ?? 0);
+  const currentCost = Number(prod.costo ?? prod.mayor ?? 0);
+
   document.getElementById('adjustProductCodeInput').value = prod.code;
   document.getElementById('adjustProductTitle').textContent = `${prod.description || prod.code} (${prod.code}) • Stock actual: ${prod.stock || 0} un`;
   document.getElementById('adjustStockQuantityInput').value = prod.stock || 0;
 
+  const pvpInput = document.getElementById('adjustStockPvpInput');
+  if (pvpInput) pvpInput.value = currentPvp.toFixed(2);
+
+  const costInput = document.getElementById('adjustStockCostInput');
+  if (costInput) costInput.value = currentCost.toFixed(2);
+
   modal.classList.add('active');
   setTimeout(() => {
-    const input = document.getElementById('adjustStockQuantityInput');
+    const input = document.getElementById('adjustStockPvpInput') || document.getElementById('adjustStockQuantityInput');
     if (input) {
       input.focus();
       input.select();
@@ -10070,8 +10187,23 @@ function handleConfirmStockAdjustment() {
   const newStockVal = parseInt(document.getElementById('adjustStockQuantityInput').value, 10);
   const reason = document.getElementById('adjustStockReasonInput').value || 'Ajuste Manual';
 
+  const pvpInput = document.getElementById('adjustStockPvpInput');
+  const costInput = document.getElementById('adjustStockCostInput');
+  const newPvpVal = pvpInput ? parseFloat(pvpInput.value) : NaN;
+  const newCostVal = costInput ? parseFloat(costInput.value) : NaN;
+
   if (isNaN(newStockVal) || newStockVal < 0) {
     showToast('Ingrese un número de unidades válido (0 o superior)', 'danger');
+    return;
+  }
+
+  if (pvpInput && (isNaN(newPvpVal) || newPvpVal < 0)) {
+    showToast('Ingrese un precio de venta por defecto válido ($0.00 o superior)', 'danger');
+    return;
+  }
+
+  if (costInput && (isNaN(newCostVal) || newCostVal < 0)) {
+    showToast('Ingrese un costo unitario válido ($0.00 o superior)', 'danger');
     return;
   }
 
@@ -10088,22 +10220,45 @@ function handleConfirmStockAdjustment() {
     prod.status = 'DISPONIBLE';
   }
 
-  recordInventoryMovement({
-    type: 'AJUSTE_MANUAL',
-    productCode: prod.code,
-    productName: prod.description || prod.category || prod.code,
-    quantity: diff,
-    stockBefore: oldStock,
-    stockAfter: newStockVal,
-    reference: `Auditoría: ${reason}`,
-    notes: `Modificación manual de stock por ${state.currentUser ? (state.currentUser.fullName || state.currentUser.username) : 'Usuario'}`
-  });
+  if (!isNaN(newPvpVal) && newPvpVal >= 0) {
+    prod.pvpActual = newPvpVal;
+    prod.pvpTienda = newPvpVal;
+    prod.pvp = newPvpVal;
+    prod.price = newPvpVal;
+    persistCustomProductPvp(prod.code, newPvpVal);
+  }
+
+  if (!isNaN(newCostVal) && newCostVal >= 0) {
+    prod.costo = newCostVal;
+    prod.mayor = newCostVal;
+  }
+
+  if (diff !== 0) {
+    recordInventoryMovement({
+      type: 'AJUSTE_MANUAL',
+      productCode: prod.code,
+      productName: prod.description || prod.category || prod.code,
+      quantity: diff,
+      stockBefore: oldStock,
+      stockAfter: newStockVal,
+      reference: `Auditoría: ${reason}`,
+      notes: `Modificación manual de stock por ${state.currentUser ? (state.currentUser.fullName || state.currentUser.username) : 'Usuario'}`
+    });
+  }
+
+  if (state.selectedProduct && state.selectedProduct.code === prod.code) {
+    state.selectedProduct = prod;
+    renderProductPreview(prod);
+    const salePriceInput = document.getElementById('salePriceInput');
+    if (salePriceInput) salePriceInput.value = Number(prod.pvpActual || 0).toFixed(2);
+    updateLiveCalculations();
+  }
 
   saveProductsToStorage();
   closeQuickStockAdjustModal();
   renderInventoryTab();
   renderCatalog();
-  showToast(`Stock actualizado para ${prod.code}: ${newStockVal} unidades`, 'success');
+  showToast(`Actualizado ${prod.code}: Stock ${newStockVal} un • PVP $${Number(prod.pvpActual || 0).toFixed(2)}`, 'success');
 }
 
 // Invoice Detail Modal
@@ -11855,7 +12010,7 @@ function exportInventoryToCSV() {
   const rows = products.map(p => {
     const stock = Number(p.stock) || 0;
     const cost = Number(p.costo || p.mayor || 0);
-    const pvp = Number(p.pvp || 0);
+    const pvp = Number(p.pvpActual ?? p.pvpTienda ?? p.pvp ?? p.price ?? 0);
     const margin = pvp - cost;
     const totalVal = stock * cost;
 
@@ -14384,6 +14539,9 @@ function doGet(e) {
     if (action === 'repair_row_450') {
       return repairRow450(ss, e);
     }
+    if (action === 'delete_sale') {
+      return handleDeleteSale(ss, e.parameter || {}, e);
+    }
 
     let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
     if (!sheet) {
@@ -14508,6 +14666,10 @@ function doPost(e) {
       return repairRow450(ss, e);
     } else if (action === 'add_abono' || action === 'update_sale') {
       return handleUpdateAbono(ss, payload, e);
+    } else if (action === 'delete_sale') {
+      return handleDeleteSale(ss, payload, e);
+    } else if (action === 'update_client') {
+      return handleUpdateClient(ss, payload, e);
     } else if (action === 'add_expense') {
       return handleAddExpense(ss, payload, e);
     } else {
@@ -14980,12 +15142,33 @@ function handleUpdateAbono(ss, payload, e) {
   let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
   if (!sheet) sheet = ss.getSheets()[0];
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function(h) { return (h || '').toString().trim(); });
+  const colResponsable = findColIndex(headers, ['responsable', 'vendedor', 'seller', 'asesor']);
+  const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
+  const colCantidad = findColIndex(headers, ['cantidad', 'quantity', 'cant', 'qty']);
+  const colPrecioUnidad = findColIndex(headers, ['precio unidad', 'precio unitario', 'unit price']);
   const colMonto = findColIndex(headers, ['total', 'monto', 'precio']);
   const colCobrado = findColIndex(headers, ['pago 1', 'cobrado', 'pagado', 'paid', 'abono']);
   const colPendiente = findColIndex(headers, ['pendiente', 'saldo', 'pending']);
 
   const rowNumber = parseInt(payload.rowNumber);
   if (rowNumber > 1 && rowNumber <= sheet.getLastRow()) {
+    if (colCliente >= 0 && payload.client) {
+      sheet.getRange(rowNumber, colCliente + 1).setValue(payload.client.toString().trim().toUpperCase());
+    }
+    if (colResponsable >= 0 && payload.seller) {
+      const cellA = sheet.getRange(rowNumber, colResponsable + 1);
+      const matched = matchValidationValue(cellA, payload.seller, ['JENNIFER', 'ZULMI', 'JESUS', 'FABIOLA', 'TANIA', 'BULL', 'CASHEA', 'TABATHA', 'SARA', 'VERUSKA', 'MARIELA', 'KLEIVER', 'PEDRO', 'FABIOLA PAOLA', 'PAOLA']);
+      cellA.setValue(matched);
+    }
+    if (colCantidad >= 0 && payload.quantity !== undefined) {
+      sheet.getRange(rowNumber, colCantidad + 1).setValue(Number(payload.quantity) || 1);
+    }
+    if (colPrecioUnidad >= 0 && payload.unitPrice !== undefined) {
+      sheet.getRange(rowNumber, colPrecioUnidad + 1).setValue(Number(payload.unitPrice) || 0);
+    }
+    if (colMonto >= 0 && payload.totalAmount !== undefined) {
+      sheet.getRange(rowNumber, colMonto + 1).setValue(Number(payload.totalAmount) || 0);
+    }
     if (colCobrado >= 0 && payload.newCollectedAmount !== undefined) {
       sheet.getRange(rowNumber, colCobrado + 1).setValue(payload.newCollectedAmount);
     }
@@ -14998,9 +15181,93 @@ function handleUpdateAbono(ss, payload, e) {
       const updatedNote = oldNote ? (oldNote + '\\n' + payload.newPaymentComment) : payload.newPaymentComment;
       cell.setNote(updatedNote);
     }
-    return jsonResponse({ status: 'success', message: 'Abono registrado en Google Sheets fila ' + rowNumber }, e);
+    return jsonResponse({ status: 'success', message: 'Registro actualizado en Google Sheets fila ' + rowNumber }, e);
   }
   return jsonResponse({ status: 'error', message: 'Fila no encontrada en la hoja' }, e);
+}
+
+function handleDeleteSale(ss, payload, e) {
+  let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
+  if (!sheet) sheet = ss.getSheets()[0];
+
+  const rowNumber = parseInt(payload.rowNumber);
+  const lastRow = sheet.getLastRow();
+
+  if (rowNumber && rowNumber > 1 && rowNumber <= lastRow) {
+    sheet.deleteRow(rowNumber);
+    return jsonResponse({ status: 'success', message: 'Fila ' + rowNumber + ' eliminada de Google Sheets' }, e);
+  }
+
+  const lastCol = sheet.getLastColumn();
+  if (lastRow <= 1 || lastCol < 1) {
+    return jsonResponse({ status: 'error', message: 'Hoja vacía' }, e);
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) { return (h || '').toString().trim(); });
+  const colCodigo = findColIndex(headers, ['codigo', 'código', 'code', 'sku']);
+  const colMonto = findColIndex(headers, ['total', 'monto', 'precio']);
+  const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
+
+  const targetCode = (payload.productCode || '').toString().trim().toUpperCase();
+  const targetMonto = parseFloat(payload.totalAmount) || 0;
+  const targetClient = (payload.client || '').toString().trim().toUpperCase();
+
+  const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  for (let r = data.length - 1; r >= 0; r--) {
+    const row = data[r];
+    const rCode = colCodigo >= 0 ? (row[colCodigo] || '').toString().trim().toUpperCase() : '';
+    const rMonto = colMonto >= 0 ? (parseFloat(row[colMonto]) || 0) : 0;
+    const rClient = colCliente >= 0 ? (row[colCliente] || '').toString().trim().toUpperCase() : '';
+
+    const codeMatches = !targetCode || rCode === targetCode;
+    const montoMatches = !targetMonto || Math.abs(rMonto - targetMonto) < 0.05;
+    const clientMatches = !targetClient || rClient === targetClient;
+
+    if (codeMatches && montoMatches && clientMatches && (targetCode || targetMonto > 0)) {
+      const targetRowIdx = r + 2;
+      sheet.deleteRow(targetRowIdx);
+      return jsonResponse({ status: 'success', message: 'Fila coincidente ' + targetRowIdx + ' eliminada de Google Sheets' }, e);
+    }
+  }
+
+  return jsonResponse({ status: 'error', message: 'No se encontró la fila para eliminar en Google Sheets' }, e);
+}
+
+function handleUpdateClient(ss, payload, e) {
+  let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
+  if (!sheet) sheet = ss.getSheets()[0];
+
+  const oldName = (payload.oldName || '').toString().trim().toUpperCase();
+  const newName = (payload.newName || '').toString().trim().toUpperCase();
+  if (!oldName || !newName) {
+    return jsonResponse({ status: 'error', message: 'Nombres de cliente inválidos' }, e);
+  }
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow <= 1) return jsonResponse({ status: 'success', updated: 0 }, e);
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) { return (h || '').toString().trim(); });
+  const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
+  const cCli = colCliente >= 0 ? colCliente : 1;
+
+  const clientRange = sheet.getRange(2, cCli + 1, lastRow - 1, 1);
+  const clientVals = clientRange.getValues();
+  let updatedCount = 0;
+
+  for (let i = 0; i < clientVals.length; i++) {
+    const curr = (clientVals[i][0] || '').toString().trim().toUpperCase();
+    if (curr === oldName) {
+      clientVals[i][0] = newName;
+      updatedCount++;
+    }
+  }
+
+  if (updatedCount > 0) {
+    clientRange.setValues(clientVals);
+  }
+
+  return jsonResponse({ status: 'success', updated: updatedCount, message: 'Cliente actualizado en ' + updatedCount + ' filas' }, e);
 }
 
 function handleAddExpense(ss, payload, e) {
@@ -16212,6 +16479,49 @@ async function autoSyncAbonoToSheets(sale, amount, method, note) {
     appendSheetsSyncLog(`[Auto-Sync] Abono de $${Number(amount).toFixed(2)} registrado para venta #${sale.id}.`);
   } catch (err) {
     console.error('Error enviando abono a Google Sheets:', err);
+  }
+}
+
+// Push an edited sale to Google Sheets automatically
+async function autoSyncUpdatedSaleToSheets(sale) {
+  const url = normalizeSheetsUrl(getSheetsWebAppUrl());
+  if (!url || !isSheetsAutoSyncEnabled() || !sale) return;
+
+  const rowNum = sale.rowNumber || (typeof sale.id === 'string' && sale.id.startsWith('SHEETS-R') ? parseInt(sale.id.replace('SHEETS-R', ''), 10) : null);
+  if (!rowNum) return;
+
+  const primaryItem = (sale.items && sale.items[0]) ? sale.items[0] : {};
+  const total = Number(sale.totalAmount || sale.total) || 0;
+  const qty = Number(primaryItem.quantity) || 1;
+  const unitPrice = Number(primaryItem.unitPrice) || (qty > 0 ? total / qty : total);
+  const isContado = (sale.paymentType || '').toLowerCase() === 'contado';
+  const collected = isContado ? total : (Number(sale.creditAbono || sale.creditPaid) || 0);
+  const pending = isContado ? 0 : Math.max(0, total - collected);
+
+  const payload = {
+    action: 'update_sale',
+    rowNumber: rowNum,
+    saleId: sale.id,
+    client: (sale.clientName || sale.client || '').trim().toUpperCase(),
+    seller: (sale.vendedor || sale.seller || '').trim().toUpperCase(),
+    quantity: qty,
+    unitPrice: unitPrice,
+    totalAmount: total,
+    newCollectedAmount: collected,
+    newPendingAmount: pending
+  };
+
+  try {
+    fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload)
+    }).catch(e => console.warn('Background update_sale sync dispatch:', e));
+
+    appendSheetsSyncLog(`[Auto-Sync] Venta #${sale.id} (Fila ${rowNum}) actualizada en Google Sheets.`);
+  } catch (err) {
+    console.error('Error actualizando venta en Google Sheets:', err);
   }
 }
 
