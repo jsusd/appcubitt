@@ -12,12 +12,18 @@
 const SPREADSHEET_ID = '18a86QMObmZnX611SmtSBRLVIvZJRYHnqFSr5vFCBtIw';
 const SHEET_NAME_VENTAS = 'ventas';
 const SHEET_NAME_GASTOS = 'gastos';
+const SHEET_NAME_BDD = 'BDD';
 
 function testConn() {
   const ss = SpreadsheetApp.getActiveSpreadsheet() || (SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : null);
   const sheet = ss.getSheetByName(SHEET_NAME_VENTAS) || ss.getSheets()[0];
   Logger.log("✅ Conexión Exitosa con Hoja: " + sheet.getName() + " (Filas: " + sheet.getLastRow() + ")");
   return "OK: " + sheet.getName();
+}
+
+function syncMomentopToBDD() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet() || (SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : null);
+  return handleSyncBDD(ss, {}, null);
 }
 
 function doGet(e) {
@@ -47,6 +53,9 @@ function doGet(e) {
     }
     if (action === 'delete_sale') {
       return handleDeleteSale(ss, e.parameter || {}, e);
+    }
+    if (action === 'sync_bdd') {
+      return handleSyncBDD(ss, e.parameter || {}, e);
     }
 
     let sheet = ss.getSheetByName(SHEET_NAME_VENTAS);
@@ -178,6 +187,8 @@ function doPost(e) {
       return handleUpdateClient(ss, payload, e);
     } else if (action === 'add_expense') {
       return handleAddExpense(ss, payload, e);
+    } else if (action === 'sync_bdd') {
+      return handleSyncBDD(ss, payload, e);
     } else {
       return jsonResponse({ status: 'error', message: 'Acción no reconocida: ' + action }, e);
     }
@@ -614,7 +625,9 @@ function getPublicCdnImage(code) {
     'CT-AURA-1': 'https://cdn.shopify.com/s/files/1/0279/6424/4068/files/CT-AURA-1.webp',
     'CT-AURA2-1': 'https://cdn.shopify.com/s/files/1/0279/6424/4068/files/CT-AURA2-1.webp'
   };
-  return map[c] || '';
+  if (map[c]) return map[c];
+  if (c) return 'https://raw.githubusercontent.com/jsusd/appcubitt/main/images/' + c + '.jpg';
+  return '';
 }
 
 function getColumnLetter(columnNumber) {
@@ -776,6 +789,268 @@ function handleAddExpense(ss, payload, e) {
     payload.ref || ''
   ]);
   return jsonResponse({ status: 'success', message: 'Egreso guardado en Google Sheets' }, e);
+}
+
+const MOMENTOP_CATALOG_BDD = [
+  ['VCCP20','COOLER','RETRO COOLER 20L','ROSADO','Cava Retro Cooler Momentop 20L Pink / Rosado','CAVAS Y COOLERS MOMENTOP','DISPONIBLE',45,75,0,'850064522358'],
+  ['VCLH20','COOLER','RETRO COOLER 20L','MIEL','Cava Retro Cooler Momentop 20L Honey / Miel','CAVAS Y COOLERS MOMENTOP','DISPONIBLE',45,75,0,'850064522365'],
+  ['HCSW24','COOLER','HARD COOLER 24L','BLANCO','Cava Rígida Hard Cooler Momentop 24L White / Blanco','CAVAS Y COOLERS MOMENTOP','DISPONIBLE',55,90,56,'850064522372'],
+  ['HCSW50','COOLER','HARD COOLER 50L','BLANCO','Cava Rígida Hard Cooler Momentop 50L White / Blanco','CAVAS Y COOLERS MOMENTOP','DISPONIBLE',85,140,0,'850064522396'],
+  ['HCUG50','COOLER','ROTOMOLDED HARD COOLER 50L','GRIS','Cava Rígida Rotomolded Hard Cooler Momentop 50L Grey / Gris','CAVAS Y COOLERS MOMENTOP','DISPONIBLE',85,140,0,'850064522402'],
+  ['LBCCP22','BACKPACK','SOFT COOLER BACKPACK 22L','ROSADO','Bolso Cava Soft Cooler Backpack Momentop 22L Pink / Rosado','BOLSOS CUBITT - SOFT COOLER MOMENTOP','DISPONIBLE',39,65,0,'850064522433'],
+  ['LBCDB22','BACKPACK','SOFT COOLER BACKPACK 22L','NEGRO','Bolso Cava Soft Cooler Backpack Momentop 22L Black / Negro','BOLSOS CUBITT - SOFT COOLER MOMENTOP','DISPONIBLE',39,65,0,'850064522440'],
+  ['LBCUG22','BACKPACK','SOFT COOLER BACKPACK 22L','GRIS','Bolso Cava Soft Cooler Backpack Momentop 22L Grey / Gris','BOLSOS CUBITT - SOFT COOLER MOMENTOP','DISPONIBLE',39,65,0,'850064522457'],
+  ['TMHDB40','TUMBLER','TUMBLER 40 OZ CON ASA','NEGRO','Tumbler Momentop 40 oz con Asa Black / Negro','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,300,'850064522037'],
+  ['TMHOB40','TUMBLER','TUMBLER 40 OZ CON ASA','AZUL','Tumbler Momentop 40 oz con Asa Blue / Azul','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,249,'850064522105'],
+  ['TMHSY40','TUMBLER','TUMBLER 40 OZ CON ASA','AMARILLO','Tumbler Momentop 40 oz con Asa Yellow / Amarillo','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,300,'850064522006'],
+  ['TMHIP40','TUMBLER','TUMBLER 40 OZ CON ASA','MORADO','Tumbler Momentop 40 oz con Asa Purple / Morado','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,15,'850064522020'],
+  ['TMNHDB40','TUMBLER','TUMBLER 40 OZ TAPA ASA','NEGRO','Tumbler Momentop 40 oz Tapa Asa Black / Negro','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,193,'850064522082'],
+  ['TMNHSW40','TUMBLER','TUMBLER 40 OZ TAPA ASA','BLANCO','Tumbler Momentop 40 oz Tapa Asa White / Blanco','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,0,'850064522112'],
+  ['TMNHOB40','TUMBLER','TUMBLER 40 OZ TAPA ASA','AZUL','Tumbler Momentop 40 oz Tapa Asa Blue / Azul','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,40,'850064522044'],
+  ['TMNHSY40','TUMBLER','TUMBLER 40 OZ TAPA ASA','AMARILLO','Tumbler Momentop 40 oz Tapa Asa Yellow / Amarillo','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,300,'850064522051'],
+  ['TMNHIP40','TUMBLER','TUMBLER 40 OZ TAPA ASA','MORADO','Tumbler Momentop 40 oz Tapa Asa Purple / Morado','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',19.09,35,0,'850064522075'],
+  ['WBDB40','HYDRO BOTTLE','WATER BOTTLE 40 OZ','NEGRO','Water Bottle Termo Momentop 40 oz Black / Negro','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',19.5,35,0,'791115795539'],
+  ['WBSW40','HYDRO BOTTLE','WATER BOTTLE 40 OZ','BLANCO','Water Bottle Termo Momentop 40 oz White / Blanco','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',19.5,35,300,'791115795546'],
+  ['WBCP40','HYDRO BOTTLE','WATER BOTTLE 40 OZ','ROSADO','Water Bottle Termo Momentop 40 oz Pink / Rosado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',19.5,35,218,'791115795553'],
+  ['WBOB40','HYDRO BOTTLE','WATER BOTTLE 40 OZ','AZUL','Water Bottle Termo Momentop 40 oz Blue / Azul','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',19.5,35,300,'791115795560'],
+  ['WBSY40','HYDRO BOTTLE','WATER BOTTLE 40 OZ','AMARILLO','Water Bottle Termo Momentop 40 oz Yellow / Amarillo','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',19.5,35,300,'791115795577'],
+  ['WBIP40','HYDRO BOTTLE','WATER BOTTLE 40 OZ','MORADO','Water Bottle Termo Momentop 40 oz Purple / Morado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',19.5,35,300,'791115795591'],
+  ['WBCR40','HYDRO BOTTLE','WATER BOTTLE 40 OZ','ROJO','Water Bottle Termo Momentop 40 oz Red / Rojo','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',19.5,35,300,'791115431116'],
+  ['WBTG40','HYDRO BOTTLE','WATER BOTTLE 40 OZ','VERDE','Water Bottle Termo Momentop 40 oz Green / Verde','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',19.5,35,74,'791115431123'],
+  ['WBDB32','HYDRO BOTTLE','WATER BOTTLE 32 OZ','NEGRO','Water Bottle Termo Momentop 32 oz Black / Negro','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',18,32,0,'791115795461'],
+  ['WBSW32','HYDRO BOTTLE','WATER BOTTLE 32 OZ','BLANCO','Water Bottle Termo Momentop 32 oz White / Blanco','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',18,32,300,'791115795478'],
+  ['WBCP32','HYDRO BOTTLE','WATER BOTTLE 32 OZ','ROSADO','Water Bottle Termo Momentop 32 oz Pink / Rosado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',18,32,0,'791115795485'],
+  ['WBOB32','HYDRO BOTTLE','WATER BOTTLE 32 OZ','AZUL','Water Bottle Termo Momentop 32 oz Blue / Azul','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',18,32,0,'791115795492'],
+  ['WBSY32','HYDRO BOTTLE','WATER BOTTLE 32 OZ','AMARILLO','Water Bottle Termo Momentop 32 oz Yellow / Amarillo','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',18,32,139,'791115795508'],
+  ['WBIP32','HYDRO BOTTLE','WATER BOTTLE 32 OZ','MORADO','Water Bottle Termo Momentop 32 oz Purple / Morado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',18,32,0,'791115795522'],
+  ['WBCR32','HYDRO BOTTLE','WATER BOTTLE 32 OZ','ROJO','Water Bottle Termo Momentop 32 oz Red / Rojo','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',18,32,88,'791115431383'],
+  ['TMEML25','TUMBLER','ELITE TUMBLER 25 OZ','MOCCA LATTE','Elite Tumbler Momentop 25 oz Mocca Latte','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',17.5,30,0,'850064522303'],
+  ['TMEDG25','TUMBLER','ELITE TUMBLER 25 OZ','VERDE','Elite Tumbler Momentop 25 oz Green / Verde','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',17.5,30,68,'850064522310'],
+  ['TMEPC25','TUMBLER','ELITE TUMBLER 25 OZ','CREMA','Elite Tumbler Momentop 25 oz Cream / Crema','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',17.5,30,0,'850064522327'],
+  ['TMELB25','TUMBLER','ELITE TUMBLER 25 OZ','NEGRO','Elite Tumbler Momentop 25 oz Black / Negro','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',17.5,30,0,'850064522334'],
+  ['TMERP25','TUMBLER','ELITE TUMBLER 25 OZ','ROSADO','Elite Tumbler Momentop 25 oz Pink / Rosado','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',17.5,30,54,'850064522341'],
+  ['LWBTOB22','HYDRO BOTTLE','LIFESTYLE WATER BOTTLE 22 OZ','AZUL','Lifestyle Water Bottle Momentop 22 oz Blue / Azul','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'850064522181'],
+  ['LWBTSY22','HYDRO BOTTLE','LIFESTYLE WATER BOTTLE 22 OZ','AMARILLO','Lifestyle Water Bottle Momentop 22 oz Yellow / Amarillo','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'850064522198'],
+  ['LWBTCP22','HYDRO BOTTLE','LIFESTYLE WATER BOTTLE 22 OZ','ROSADO','Lifestyle Water Bottle Momentop 22 oz Pink / Rosado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'850064522204'],
+  ['LWBTIP22','HYDRO BOTTLE','LIFESTYLE WATER BOTTLE 22 OZ','MORADO','Lifestyle Water Bottle Momentop 22 oz Purple / Púrpura','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'850064522211'],
+  ['LWBTTG22','HYDRO BOTTLE','LIFESTYLE WATER BOTTLE 22 OZ','VERDE','Lifestyle Water Bottle Momentop 22 oz Green / Verde','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'850064522228'],
+  ['WBDB22','HYDRO BOTTLE','WATER BOTTLE 22 OZ','NEGRO','Water Bottle Termo Momentop 22 oz Black / Negro','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'791115795607'],
+  ['WBSW22','HYDRO BOTTLE','WATER BOTTLE 22 OZ','BLANCO','Water Bottle Termo Momentop 22 oz White / Blanco','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,281,'791115795614'],
+  ['WBCP22','HYDRO BOTTLE','WATER BOTTLE 22 OZ','ROSADO','Water Bottle Termo Momentop 22 oz Pink / Rosado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'791115795621'],
+  ['WBOB22','HYDRO BOTTLE','WATER BOTTLE 22 OZ','AZUL','Water Bottle Termo Momentop 22 oz Blue / Azul','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'791115431154'],
+  ['WBSY22','HYDRO BOTTLE','WATER BOTTLE 22 OZ','AMARILLO','Water Bottle Termo Momentop 22 oz Yellow / Amarillo','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,300,'791115431338'],
+  ['WBIP22','HYDRO BOTTLE','WATER BOTTLE 22 OZ','MORADO','Water Bottle Termo Momentop 22 oz Purple / Morado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,0,'791115431352'],
+  ['WBCR22','HYDRO BOTTLE','WATER BOTTLE 22 OZ','ROJO','Water Bottle Termo Momentop 22 oz Red / Rojo','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',16.04,28,41,'791115431369'],
+  ['TMDB20','TUMBLER','TUMBLER 20 OZ','NEGRO','Tumbler Momentop 20 oz Black / Negro','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',15.5,27,223,'791115431161'],
+  ['TMSW20','TUMBLER','TUMBLER 20 OZ','BLANCO','Tumbler Momentop 20 oz White / Blanco','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',15.5,27,300,'791115431178'],
+  ['TMCP20','TUMBLER','TUMBLER 20 OZ','ROSADO','Tumbler Momentop 20 oz Pink / Rosado','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',15.5,27,300,'791115431185'],
+  ['TMOB20','TUMBLER','TUMBLER 20 OZ','AZUL','Tumbler Momentop 20 oz Blue / Azul','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',15.5,27,223,'791115431192'],
+  ['TMSY20','TUMBLER','TUMBLER 20 OZ','AMARILLO','Tumbler Momentop 20 oz Yellow / Amarillo','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',15.5,27,300,'791115431239'],
+  ['TMIP20','TUMBLER','TUMBLER 20 OZ','MORADO','Tumbler Momentop 20 oz Purple / Púrpura','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',15.5,27,300,'791115431253'],
+  ['TMCR20','TUMBLER','TUMBLER 20 OZ','ROJO','Tumbler Momentop 20 oz Red / Rojo','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',15.5,27,300,'791115431260'],
+  ['TMTG20','TUMBLER','TUMBLER 20 OZ','VERDE','Tumbler Momentop 20 oz Green / Verde','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',15.5,27,300,'791115431277'],
+  ['KWBLP18','HYDRO BOTTLE','KIDS WATER BOTTLE 18 OZ','ROSADO','Kids Water Bottle Termo Jr. Momentop 18 oz Pink / Rosado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',14.9,25,0,'850064522143'],
+  ['KWBLL18','HYDRO BOTTLE','KIDS WATER BOTTLE 18 OZ','LAVANDA','Kids Water Bottle Termo Jr. Momentop 18 oz Lavender / Lavanda','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',14.9,25,0,'850064522150'],
+  ['KWBLC18','HYDRO BOTTLE','KIDS WATER BOTTLE 18 OZ','CORAL','Kids Water Bottle Termo Jr. Momentop 18 oz Coral','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',14.9,25,0,'850064522167'],
+  ['KWBLB18','HYDRO BOTTLE','KIDS WATER BOTTLE 18 OZ','AZUL','Kids Water Bottle Termo Jr. Momentop 18 oz Blue / Azul','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',14.9,25,0,'850064522174'],
+  ['KWBPP12','HYDRO BOTTLE','KIDS WATER BOTTLE 12 OZ','ROSADO','Kids Water Bottle Termo Jr. Momentop 12 oz Pink / Rosado','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',13.5,22,0,'791115431208'],
+  ['KWBCW12','HYDRO BOTTLE','KIDS WATER BOTTLE 12 OZ','BLANCO','Kids Water Bottle Termo Jr. Momentop 12 oz White / Blanco','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',13.5,22,0,'791115431215'],
+  ['KWBSB12','HYDRO BOTTLE','KIDS WATER BOTTLE 12 OZ','AZUL','Kids Water Bottle Termo Jr. Momentop 12 oz Blue / Azul','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',13.5,22,0,'791115431222'],
+  ['KWBDG12','HYDRO BOTTLE','KIDS WATER BOTTLE 12 OZ','VERDE','Kids Water Bottle Termo Jr. Momentop 12 oz Green / Verde','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',13.5,22,0,'850064522129'],
+  ['KWBUP12','HYDRO BOTTLE','KIDS WATER BOTTLE 12 OZ','MORADO','Kids Water Bottle Termo Jr. Momentop 12 oz Purple / Púrpura','TERMO PARA AGUA - WATER BOTTLE MOMENTOP','DISPONIBLE',13.5,22,0,'850064522136'],
+  ['TMDB12','TUMBLER','TUMBLER 12 OZ','NEGRO','Mini Tumbler Momentop 12 oz Black / Negro','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',13.5,22,0,'791115795386'],
+  ['TMSW12','TUMBLER','TUMBLER 12 OZ','BLANCO','Mini Tumbler Momentop 12 oz White / Blanco','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',13.5,22,164,'791115795393'],
+  ['TMCP12','TUMBLER','TUMBLER 12 OZ','ROSADO','Mini Tumbler Momentop 12 oz Pink / Rosado','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',13.5,22,0,'791115795409'],
+  ['TMOB12','TUMBLER','TUMBLER 12 OZ','AZUL','Mini Tumbler Momentop 12 oz Blue / Azul','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',13.5,22,0,'791115795416'],
+  ['TMSY12','TUMBLER','TUMBLER 12 OZ','AMARILLO','Mini Tumbler Momentop 12 oz Yellow / Amarillo','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',13.5,22,144,'791115431284'],
+  ['TMIP12','TUMBLER','TUMBLER 12 OZ','MORADO','Mini Tumbler Momentop 12 oz Purple / Púrpura','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',13.5,22,59,'791115431307'],
+  ['TMCR12','TUMBLER','TUMBLER 12 OZ','ROJO','Mini Tumbler Momentop 12 oz Red / Rojo','TERMO PARA AGUA - TUMBLER MOMENTOP','DISPONIBLE',13.5,22,199,'791115431314']
+];
+
+function handleSyncBDD(ss, payload, e) {
+  let sheet = ss.getSheetByName(SHEET_NAME_BDD);
+  if (!sheet) {
+    const allSheets = ss.getSheets();
+    sheet = allSheets.find(function(s) {
+      const n = s.getName().trim().toUpperCase();
+      return n === 'BDD' || n.indexOf('BDD') > -1 || n.indexOf('BASE') > -1 || n.indexOf('PRECIOS') > -1 || n.indexOf('PRODUCTO') > -1;
+    });
+  }
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAME_BDD);
+    sheet.appendRow(['PRODUCTO', 'CODIGO', 'MODELO', 'COLOR', 'FOTO', 'ESTADO', 'MAYOR', 'PVP TIENDA', 'EXISTENCIA', 'UPC']);
+  }
+
+  const lastRow = Math.max(sheet.getLastRow(), 1);
+  const lastCol = Math.max(sheet.getLastColumn(), 5);
+
+  // Detect header row (scan rows 1..5)
+  let headerRowIdx = 1;
+  let headers = [];
+  const maxHeaderScan = Math.min(lastRow, 5);
+  const headerScanVals = sheet.getRange(1, 1, maxHeaderScan, lastCol).getValues();
+  for (let r = 0; r < maxHeaderScan; r++) {
+    const rowStr = headerScanVals[r].join(' ').toUpperCase();
+    if (rowStr.indexOf('CODIGO') > -1 || rowStr.indexOf('CÓDIGO') > -1 || rowStr.indexOf('ARTICULO') > -1 || rowStr.indexOf('PRODUCTO') > -1 || rowStr.indexOf('MODELO') > -1) {
+      headerRowIdx = r + 1;
+      headers = headerScanVals[r].map(function(h) { return (h || '').toString().trim(); });
+      break;
+    }
+  }
+  if (headers.length === 0) {
+    headers = headerScanVals[0].map(function(h) { return (h || '').toString().trim(); });
+  }
+
+  let colCodigo = findColIndex(headers, ['codigo', 'código', 'articulo', 'artículo', 'sku', 'code']);
+  let colProducto = findColIndex(headers, ['producto', 'product', 'linea', 'línea', 'tipo']);
+  let colCategoria = findColIndex(headers, ['categoria', 'categoría', 'descripcion', 'descripción']);
+  let colModelo = findColIndex(headers, ['modelo', 'model', 'variante', 'nombre']);
+  let colColor = findColIndex(headers, ['color', 'tono']);
+  let colFoto = findColIndex(headers, ['foto', 'imagen', 'image', 'photo']);
+  let colEstado = findColIndex(headers, ['estado', 'status', 'disponibilidad', 'disponible']);
+  let colMayor = findColIndex(headers, ['mayor', 'costo', 'cost']);
+  let colPvp = findColIndex(headers, ['pvp', 'precio', 'tienda', 'venta']);
+  let colStock = findColIndex(headers, ['existencia', 'stock', 'cantidad', 'inventario']);
+  let colUpc = findColIndex(headers, ['upc', 'barcode', 'barra']);
+
+  // Fallback positional mapping if BDD uses standard Cubitt BDD columns (e.g. PRODUCTO | CODIGO | MODELO | COLOR | FOTO or ARTICULO | IMAGEN | CATEGORIA | ESTADO | MAYOR | PVP)
+  if (colCodigo < 0) {
+    if (headers.length >= 5 && findColIndex(headers, ['producto']) === 0) {
+      colProducto = 0; colCodigo = 1; colModelo = 2; colColor = 3; colFoto = 4;
+    } else {
+      colCodigo = 0;
+      if (colFoto < 0) colFoto = 1;
+      if (colCategoria < 0) colCategoria = 2;
+      if (colEstado < 0 && lastCol >= 4) colEstado = 3;
+      if (colMayor < 0 && lastCol >= 5) colMayor = 4;
+      if (colPvp < 0 && lastCol >= 6) colPvp = 5;
+    }
+  }
+
+  // Collect existing codes to prevent duplicates
+  const existingCodes = {};
+  if (lastRow > headerRowIdx) {
+    const allData = sheet.getRange(headerRowIdx + 1, 1, lastRow - headerRowIdx, lastCol).getValues();
+    for (let r = 0; r < allData.length; r++) {
+      for (let c = 0; c < allData[r].length; c++) {
+        const cellVal = (allData[r][c] || '').toString().trim().toUpperCase();
+        if (cellVal) existingCodes[cellVal] = headerRowIdx + 1 + r;
+      }
+    }
+  }
+
+  const sourceRow = lastRow > headerRowIdx ? lastRow : headerRowIdx;
+  const sourceRange = sheet.getRange(sourceRow, 1, 1, lastCol);
+  const sourceRowHeight = sheet.getRowHeight(sourceRow) || 42;
+
+  const itemsToSync = (payload && Array.isArray(payload.products) && payload.products.length > 0)
+    ? payload.products.map(function(p) {
+        return [
+          p.code, p.productLine || 'TUMBLER', p.model || p.description, p.color || 'NEGRO',
+          p.description || p.model, p.category || 'MOMENTOP', 'DISPONIBLE',
+          Number(p.mayor) || 15, Number(p.pvpTienda || p.pvpActual) || 28,
+          Number(p.stock || p.pdfStock) || 0, p.upc || ''
+        ];
+      })
+    : MOMENTOP_CATALOG_BDD;
+
+  let addedCount = 0;
+  let updatedCount = 0;
+  let currentLastRow = sheet.getLastRow();
+
+  for (let i = 0; i < itemsToSync.length; i++) {
+    const item = itemsToSync[i];
+    const code = (item[0] || '').toString().trim().toUpperCase();
+    const prodLine = item[1];
+    const model = item[2];
+    const color = item[3];
+    const desc = item[4];
+    const category = item[5];
+    const status = item[6] || 'DISPONIBLE';
+    const mayor = Number(item[7]) || 0;
+    const pvp = Number(item[8]) || 0;
+    const stock = Number(item[9]) || 0;
+    const upc = item[10] || '';
+    const imgUrl = getPublicCdnImage(code);
+
+    let targetRow = existingCodes[code];
+    const isNew = !targetRow;
+    if (isNew) {
+      currentLastRow++;
+      targetRow = currentLastRow;
+    }
+
+    const targetRange = sheet.getRange(targetRow, 1, 1, lastCol);
+    if (isNew && sourceRow > headerRowIdx) {
+      sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      try { targetRange.setNumberFormats(sourceRange.getNumberFormats()); } catch (err) {}
+      try { targetRange.setDataValidations(sourceRange.getDataValidations()); } catch (err) {}
+      try { sheet.setRowHeight(targetRow, sourceRowHeight); } catch (err) {}
+    }
+
+    if (colCodigo >= 0 && colCodigo < lastCol) {
+      sheet.getRange(targetRow, colCodigo + 1).setValue(code);
+    }
+    if (colProducto >= 0 && colProducto < lastCol) {
+      const pCell = sheet.getRange(targetRow, colProducto + 1);
+      const matchedLine = matchValidationValue(pCell, prodLine, [prodLine, 'COOLER', 'BACKPACK', 'TUMBLER', 'HYDRO BOTTLE', 'TERMO PARA AGUA', 'ACCESORIO']);
+      pCell.setValue(matchedLine);
+    }
+    if (colCategoria >= 0 && colCategoria < lastCol && colCategoria !== colProducto && colCategoria !== colModelo) {
+      sheet.getRange(targetRow, colCategoria + 1).setValue(category || desc);
+    }
+    if (colModelo >= 0 && colModelo < lastCol) {
+      sheet.getRange(targetRow, colModelo + 1).setValue(model || desc);
+    }
+    if (colColor >= 0 && colColor < lastCol) {
+      sheet.getRange(targetRow, colColor + 1).setValue(color);
+    }
+    if (colEstado >= 0 && colEstado < lastCol) {
+      sheet.getRange(targetRow, colEstado + 1).setValue(status);
+    }
+    if (colMayor >= 0 && colMayor < lastCol) {
+      const mCell = sheet.getRange(targetRow, colMayor + 1);
+      mCell.setValue(mayor);
+      mCell.setNumberFormat('$#,##0.00');
+    }
+    if (colPvp >= 0 && colPvp < lastCol && colPvp !== colMayor) {
+      const pvCell = sheet.getRange(targetRow, colPvp + 1);
+      pvCell.setValue(pvp);
+      pvCell.setNumberFormat('$#,##0.00');
+    }
+    if (colStock >= 0 && colStock < lastCol) {
+      sheet.getRange(targetRow, colStock + 1).setValue(stock);
+    }
+    if (colUpc >= 0 && colUpc < lastCol) {
+      sheet.getRange(targetRow, colUpc + 1).setValue(upc);
+    }
+    if (colFoto >= 0 && colFoto < lastCol && imgUrl) {
+      const fCell = sheet.getRange(targetRow, colFoto + 1);
+      fCell.clearContent();
+      try {
+        const cImg = SpreadsheetApp.newCellImage().setSourceUrl(imgUrl).setAltTextTitle(code).build();
+        fCell.setValue(cImg);
+      } catch (eImg) {
+        fCell.setFormula('=IMAGE("' + imgUrl + '", 1)');
+      }
+    }
+
+    targetRange.setFontFamily('Roboto');
+    targetRange.setFontSize(10);
+    targetRange.setVerticalAlignment('middle');
+
+    if (isNew) addedCount++;
+    else updatedCount++;
+  }
+
+  return jsonResponse({
+    status: 'success',
+    sheetName: sheet.getName(),
+    added: addedCount,
+    updated: updatedCount,
+    totalMomentop: itemsToSync.length,
+    message: 'Catálogo Momentop sincronizado en hoja "' + sheet.getName() + '" (' + addedCount + ' agregados, ' + updatedCount + ' actualizados).'
+  }, e);
 }
 
 function findColIndex(headers, matchWords) {

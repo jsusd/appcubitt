@@ -807,6 +807,10 @@
               Haz clic en cualquier categoría para explorar productos y cargarlos inmediatamente en el formulario:
             </p>
             <div style="display: flex; flex-direction: column; gap: 8px;">
+              <button class="btn btn-outline" style="justify-content: space-between; border-color: #38bdf8; background: #f0f9ff;" onclick="quickFilterCatalog('MOMENTOP')">
+                <span>🧊 Catálogo Momentop (Coolers, Tumblers y Termos)</span>
+                <span style="color: #0284c7; font-size: 0.8rem; font-weight: 700;">73 SKUs →</span>
+              </button>
               <button class="btn btn-outline" style="justify-content: space-between;" onclick="quickFilterCatalog('CAFE')">
                 <span>☕ Termos para Café (Coffee Mug)</span>
                 <span style="color: #64748b; font-size: 0.8rem;">Ver →</span>
@@ -982,6 +986,8 @@
           <div style="display: flex; gap: 10px; flex-wrap: wrap;">
             <select id="catalogCategorySelect" class="form-control" style="width: auto;">
               <option value="all">Todas las Categorías</option>
+              <option value="MOMENTOP">🧊 Catálogo Momentop (Coolers, Tumblers y Termos)</option>
+              <option value="COOLER">🧊 Cavas y Coolers Momentop</option>
               <option value="CAFE">☕ Termos para Café (Coffee Mug)</option>
               <option value="AGUA">💧 Termos para Agua (Hydro / Tumbler)</option>
               <option value="RELOJ">⌚ Relojes Inteligentes</option>
@@ -4923,6 +4929,17 @@
             <input type="checkbox" id="sheetsAutoSyncCheckbox" checked onchange="handleToggleAutoSync(this.checked)">
             <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #10b981; border-radius: 24px;"></span>
           </label>
+        </div>
+
+        <!-- One-click Momentop BDD Catalog Sync -->
+        <div style="margin-bottom: 1rem; padding: 10px 14px; background: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd; display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+          <div>
+            <div style="font-weight: 700; font-size: 0.84rem; color: #0369a1;">🧊 Sincronizar Catálogo Momentop en Hoja "BDD" (73 SKUs)</div>
+            <div style="font-size: 0.72rem; color: #0284c7;">Agrega los 73 productos Momentop al final de la hoja "BDD" continuando el mismo formato, validaciones, precios y fotos</div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="syncMomentopCatalogToBDD(true)" id="btnSyncMomentopBDD" style="background: #0284c7; color: #ffffff; font-weight: 700; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap;">
+            📦 Sincronizar a "BDD"
+          </button>
         </div>
 
         <!-- One-click Row 450 Repair -->
