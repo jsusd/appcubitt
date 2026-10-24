@@ -867,7 +867,7 @@
         <div class="metric-card">
           <div class="metric-icon-box purple">💵</div>
           <div>
-            <div class="metric-title">Cobrado de Contado</div>
+            <div class="metric-title">Total Cobrado</div>
             <div class="metric-value" id="histMetricContado">$0.00</div>
           </div>
         </div>
@@ -2139,8 +2139,8 @@
           </div>
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button type="button" class="btn btn-sm" onclick="syncDriveHistoricalData(true)" style="background: rgba(255,255,255,0.18); color: #ffffff; border: 1px solid rgba(255,255,255,0.35);">
-            📥 Cargar Datos Drive ($18,330)
+          <button type="button" class="btn btn-sm" onclick="syncFromGoogleSheets(true)" style="background: rgba(255,255,255,0.18); color: #ffffff; border: 1px solid rgba(255,255,255,0.35);">
+            🔄 Sincronizar Google Sheets ($21,262.23)
           </button>
           <button type="button" class="btn btn-sm btn-success" onclick="openExpenseModal()">
             ➕ Registrar Gasto / Egreso
@@ -2157,15 +2157,15 @@
           <div>
             <label class="form-label" style="font-size: 0.72rem; margin-bottom: 2px;">Periodo / Rango:</label>
             <select id="analyticsPeriodSelect" class="form-control" style="font-size: 0.82rem; padding: 6px 10px;" onchange="handleAnalyticsFilterChange()">
-              <option value="all" selected>Todo el Histórico</option>
-              <option value="2026">Año 2026 Completo</option>
-              <option value="2026-10">Octubre 2026 (Mes Actual)</option>
-              <option value="2026-09">Septiembre 2026 ($6,051)</option>
-              <option value="2026-08">Agosto 2026 ($5,323)</option>
-              <option value="2026-07">Julio 2026 ($3,857)</option>
-              <option value="2026-06">Junio 2026 ($610)</option>
-              <option value="2026-05">Mayo 2026 ($1,351)</option>
-              <option value="2026-04">Abril 2026 ($187)</option>
+              <option value="all" selected>Todo el Histórico ($21,262.23)</option>
+              <option value="2026">Año 2026 Completo ($21,262.23)</option>
+              <option value="2026-10">Octubre 2026 ($3,658.00)</option>
+              <option value="2026-09">Septiembre 2026 ($6,220.01)</option>
+              <option value="2026-08">Agosto 2026 ($5,341.72)</option>
+              <option value="2026-07">Julio 2026 ($3,857.88)</option>
+              <option value="2026-06">Junio 2026 ($609.62)</option>
+              <option value="2026-05">Mayo 2026 ($1,351.00)</option>
+              <option value="2026-04">Abril 2026 ($224.00)</option>
             </select>
           </div>
 
@@ -4983,11 +4983,11 @@
         <div class="app-card" style="background: #f0fdf4; border-color: #bbf7d0;">
           <div style="display: flex; align-items: center; justify-content: space-between;">
             <div>
-              <div style="font-weight: 700; font-size: 0.88rem; color: #065f46;">¿Deseas restaurar la copia de respaldo de tu Drive ($18,330.23)?</div>
-              <div style="font-size: 0.74rem; color: #047857;">Incluye las 443 ventas históricas, todos los 15 vendedores y el desglose de egresos.</div>
+              <div style="font-weight: 700; font-size: 0.88rem; color: #065f46;">¿Deseas restaurar la copia oficial de tu hoja ($21,262.23)?</div>
+              <div style="font-size: 0.74rem; color: #047857;">Incluye las 487 unidades vendidas ($15,248.61 cobrado y $6,013.62 pendiente), los 15 vendedores y el desglose de egresos.</div>
             </div>
             <button type="button" class="btn btn-success btn-sm" onclick="syncDriveHistoricalData(true)">
-              📥 Restaurar Copia Drive
+              📥 Restaurar Copia Oficial
             </button>
           </div>
         </div>
