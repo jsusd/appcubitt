@@ -14703,7 +14703,7 @@ function handleAddSale(ss, payload, e) {
   const colFecha = findColIndex(headers, ['fecha', 'date', 'dia']);
   const colCantidad = findColIndex(headers, ['cantidad', 'quantity', 'cant', 'qty']);
   const colPrecioUnidad = findColIndex(headers, ['precio unidad', 'precio unitario', 'unit price']);
-  const colTotal = findColIndex(headers, ['total', 'monto total', 'importe']);
+  const colTotal = findColIndex(headers, ['total', 'monto total', 'importe', 'precio', 'monto']);
   const colPago1 = findColIndex(headers, ['pago 1', 'pago1', 'abono 1']);
   const colPago2 = findColIndex(headers, ['pago 2', 'pago2', 'abono 2']);
   const colPago3 = findColIndex(headers, ['pago 3', 'pago3', 'abono 3']);
@@ -14733,30 +14733,49 @@ function handleAddSale(ss, payload, e) {
   const lastRow = sheet.getLastRow();
 
   // 1. Localizar la fila de Totales para insertar justo debajo de la última venta
-  const scanRows = Math.min(lastRow, 600);
-  const checkValues = sheet.getRange(1, 1, scanRows, Math.min(numCols, 12)).getValues();
-  const checkFormulas = sheet.getRange(1, cTot + 1, scanRows, 1).getFormulas();
+  const scanRows = Math.min(lastRow, 650);
+  const scanCols = Math.min(numCols, 17);
+  const checkValues = sheet.getRange(1, 1, scanRows, scanCols).getValues();
+  const checkFormulas = sheet.getRange(1, 1, scanRows, scanCols).getFormulas();
 
   let totalRow = -1;
+  let lastValidSaleRow = 1;
   for (let r = 1; r < scanRows; r++) {
     const rowNum = r + 1;
-    const fTot = (checkFormulas[r][0] || '').toString().toUpperCase();
+    const fTot = (cTot < scanCols && checkFormulas[r][cTot] ? checkFormulas[r][cTot] : '').toString().toUpperCase();
+    const fPend = (cPend < scanCols && checkFormulas[r][cPend] ? checkFormulas[r][cPend] : '').toString().toUpperCase();
     const vCol1 = (checkValues[r][0] || '').toString().trim().toUpperCase();
     const vCol2 = (checkValues[r][1] || '').toString().trim().toUpperCase();
-    const vProd = cProd < numCols && checkValues[r][cProd] ? checkValues[r][cProd].toString().trim().toUpperCase() : '';
+    const vProd = cProd < scanCols && checkValues[r][cProd] ? checkValues[r][cProd].toString().trim().toUpperCase() : '';
+    const vCod = cCod < scanCols && checkValues[r][cCod] ? checkValues[r][cCod].toString().trim().toUpperCase() : '';
+    const valTot = cTot < scanCols ? parseNumber(checkValues[r][cTot]) : 0;
 
-    if (fTot.indexOf('SUM') > -1 || vCol1.indexOf('TOTAL') > -1 || vCol2.indexOf('TOTAL') > -1 || vProd.indexOf('TOTAL') > -1) {
+    if (
+      fTot.indexOf('SUM') > -1 ||
+      fTot.indexOf('SUMA') > -1 ||
+      fTot.indexOf('SUBTOTAL') > -1 ||
+      fPend.indexOf('SUM') > -1 ||
+      fPend.indexOf('SUMA') > -1 ||
+      vCol1.indexOf('TOTAL') > -1 ||
+      vCol2.indexOf('TOTAL') > -1 ||
+      vProd.indexOf('TOTAL') > -1 ||
+      (valTot >= 5000 && !vProd && !vCod && !vCol2)
+    ) {
       totalRow = rowNum;
       break;
+    }
+
+    if ((vProd || vCod) && valTot > 0 && valTot < 5000) {
+      lastValidSaleRow = rowNum;
     }
   }
 
   if (totalRow < 2) {
-    totalRow = Math.max(450, lastRow + 1);
+    totalRow = lastValidSaleRow > 1 ? lastValidSaleRow + 1 : lastRow + 1;
   }
 
   const insertRow = totalRow;
-  const sourceRow = totalRow - 1; // Fila de referencia anterior (p. ej. fila 449)
+  const sourceRow = totalRow - 1; // Fila de referencia anterior (p. ej. última venta antes de Totales)
 
   // 2. Insertar nueva fila antes de Totales
   sheet.insertRowBefore(insertRow);
