@@ -1867,7 +1867,8 @@ function handleRegisterSaleDirect() {
     ] : [])
   };
 
-  state.sales.unshift(saleRecord);
+  const individualRecords = expandSaleRecordIntoIndividualUnits(saleRecord);
+  individualRecords.slice().reverse().forEach(rec => state.sales.unshift(rec));
   state.sales.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   saveSalesToStorage();
 
@@ -1878,11 +1879,15 @@ function handleRegisterSaleDirect() {
   decrementStockForSale(saleRecord);
 
   // Generate / Synchronize CXP for Cashea, IVA, T-Mania, and custom commissions
-  syncPayablesForSale(saleRecord);
+  individualRecords.forEach(rec => syncPayablesForSale(rec));
 
-  // Auto-sync sale to Google Sheets
+  // Auto-sync each individual unit row to Google Sheets sequentially
   if (typeof autoSyncSaleToSheets === 'function') {
-    autoSyncSaleToSheets(saleRecord);
+    (async () => {
+      for (const rec of individualRecords) {
+        await autoSyncSaleToSheets(rec);
+      }
+    })();
   }
 
   renderTopStats();
@@ -1892,7 +1897,7 @@ function handleRegisterSaleDirect() {
   if (isBajoPedido) {
     showToast(`¡Venta #${saleRecord.id} registrada en "Ventas Bajo Pedido"!`, 'info');
   } else {
-    showToast(`¡Venta #${saleRecord.id} registrada con éxito!`, 'success');
+    showToast(`¡Venta #${saleRecord.id} (${individualRecords.length} reg.) registrada con éxito!`, 'success');
   }
   showSaleTicketModal(saleRecord);
   resetPOSForm();
@@ -2184,7 +2189,8 @@ function handleCheckoutCart() {
     ] : [])
   };
 
-  state.sales.unshift(saleRecord);
+  const individualRecords = expandSaleRecordIntoIndividualUnits(saleRecord);
+  individualRecords.slice().reverse().forEach(rec => state.sales.unshift(rec));
   state.sales.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   saveSalesToStorage();
 
@@ -2195,11 +2201,15 @@ function handleCheckoutCart() {
   decrementStockForSale(saleRecord);
 
   // Generate / Synchronize CXP for Cashea, IVA, T-Mania, and custom commissions
-  syncPayablesForSale(saleRecord);
+  individualRecords.forEach(rec => syncPayablesForSale(rec));
 
-  // Auto-sync sale to Google Sheets
+  // Auto-sync each individual unit row to Google Sheets sequentially
   if (typeof autoSyncSaleToSheets === 'function') {
-    autoSyncSaleToSheets(saleRecord);
+    (async () => {
+      for (const rec of individualRecords) {
+        await autoSyncSaleToSheets(rec);
+      }
+    })();
   }
 
   clearCart();
@@ -2211,15 +2221,101 @@ function handleCheckoutCart() {
   if (isBajoPedido) {
     showToast(`¡Venta con Carrito #${saleRecord.id} registrada en "Ventas Bajo Pedido"!`, 'info');
   } else {
-    showToast(`¡Venta #${saleRecord.id} completada!`, 'success');
+    showToast(`¡Venta #${saleRecord.id} (${individualRecords.length} reg.) completada!`, 'success');
   }
   showSaleTicketModal(saleRecord);
   resetPOSForm();
 }
 
+// Desglosa una venta con múltiples productos o cantidad > 1 en registros individuales de 1 unidad cada uno (idéntico a la hoja Ventas)
+function expandSaleRecordIntoIndividualUnits(saleRecord) {
+  if (!saleRecord || !Array.isArray(saleRecord.items) || saleRecord.items.length === 0) {
+    return [saleRecord];
+  }
+
+  const expandedUnitItems = [];
+  saleRecord.items.forEach(item => {
+    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+    const unitPrice = Number(item.unitPrice) || (qty > 0 ? (Number(item.subtotal) || 0) / qty : 0);
+    for (let i = 0; i < qty; i++) {
+      expandedUnitItems.push({
+        ...item,
+        quantity: 1,
+        unitPrice: unitPrice,
+        subtotal: unitPrice
+      });
+    }
+  });
+
+  if (expandedUnitItems.length <= 1) {
+    const singleItem = expandedUnitItems[0] || saleRecord.items[0];
+    return [{
+      ...saleRecord,
+      items: [singleItem],
+      productCode: singleItem.code,
+      productName: singleItem.description
+    }];
+  }
+
+  const totalSaleAmount = Number(saleRecord.totalAmount) || expandedUnitItems.reduce((s, it) => s + it.unitPrice, 0) || 1;
+  const totalAbono = Number(saleRecord.creditAbono) || 0;
+  let remainingAbono = totalAbono;
+  const isContado = (saleRecord.paymentType || '').toLowerCase().startsWith('contado');
+
+  return expandedUnitItems.map((unitItem, idx) => {
+    const uPrice = Number(unitItem.unitPrice) || 0;
+    const ratio = totalSaleAmount > 0 ? (uPrice / totalSaleAmount) : (1 / expandedUnitItems.length);
+    const uMayor = Number(unitItem.mayor) || 0;
+
+    let uAbono = 0;
+    if (isContado) {
+      uAbono = uPrice;
+    } else if (remainingAbono > 0) {
+      uAbono = (idx === expandedUnitItems.length - 1)
+        ? Math.min(uPrice, Math.round(remainingAbono * 100) / 100)
+        : Math.min(uPrice, Math.round(totalAbono * ratio * 100) / 100);
+      remainingAbono = Math.max(0, remainingAbono - uAbono);
+    }
+    const uBalance = isContado ? 0 : Math.max(0, Math.round((uPrice - uAbono) * 100) / 100);
+
+    const uComCashea = Math.round((Number(saleRecord.comisionCashea) || 0) * ratio * 100) / 100;
+    const uComTMania = Math.round((Number(saleRecord.comisionTMania) || 0) * ratio * 100) / 100;
+    const uComML = Math.round((Number(saleRecord.comisionMercadoLibre) || 0) * ratio * 100) / 100;
+    const uIVA = Math.round((Number(saleRecord.montoIVA) || 0) * ratio * 100) / 100;
+    const uAddComm = Math.round((Number(saleRecord.additionalCommissionsTotal) || 0) * ratio * 100) / 100;
+    const uNeto = Math.round((uPrice - uComCashea - uComTMania - uComML - uIVA) * 100) / 100;
+    const uProfit = Math.round((uNeto - uMayor - uAddComm) * 100) / 100;
+
+    return {
+      ...saleRecord,
+      id: idx === 0 ? saleRecord.id : `${saleRecord.id}-${idx + 1}`,
+      items: [unitItem],
+      productCode: unitItem.code,
+      productName: unitItem.description,
+      totalAmount: uPrice,
+      totalMayor: uMayor,
+      totalProfit: uProfit,
+      comisionCashea: uComCashea,
+      comisionTMania: uComTMania,
+      comisionMercadoLibre: uComML,
+      montoIVA: uIVA,
+      netoTienda: uNeto,
+      additionalCommissionsTotal: uAddComm,
+      creditAbono: uAbono,
+      creditBalance: uBalance,
+      creditStatus: uBalance <= 0 ? 'PAGADO' : 'PENDIENTE',
+      paymentsHistory: isContado ? [
+        { date: saleRecord.displayDate, amount: uPrice, method: saleRecord.paymentMethod, note: 'Pago total contado' }
+      ] : (uAbono > 0 ? [
+        { date: saleRecord.displayDate, amount: uAbono, method: saleRecord.paymentMethod, note: 'Abono / Inicial' }
+      ] : [])
+    };
+  });
+}
+
 // --------------------------------------------------------------------------
 // Helper: Extract Product Line (Col C), Model (Col E), Color (Col F), and Image (Col G)
-// Matches Google Sheets Tabla_1 validation lists and columns exactly
+// Matches Google Sheets Ventas validation lists and columns 100% exactly
 // --------------------------------------------------------------------------
 function extractProductSpecs(item) {
   const code = (item && (item.code || item.productCode || '')).trim().toUpperCase();
@@ -2232,29 +2328,39 @@ function extractProductSpecs(item) {
   let prod = productsList.find(p => p.code && p.code.trim().toUpperCase() === code);
   const fullDesc = (prod ? (prod.description || prod.name) : desc) || '';
 
-  // 1. Línea de Producto (Col C en Google Sheets - Dropdown / Chip)
-  let productLine = (prod && prod.productLine) ? prod.productLine.toUpperCase() : 'ACCESORIO';
+  // 1. Línea de Producto (Col C en Google Sheets - 26 opciones exactas de validación de datos)
   const uDesc = fullDesc.toUpperCase();
   const uCode = code.toUpperCase();
+  const rawLine = (prod && prod.productLine ? prod.productLine : '').toUpperCase();
 
-  if (!prod || !prod.productLine) {
-    if (uDesc.includes('BELT BAG') || uCode.includes('BLT')) productLine = 'BELT BAG';
-    else if (uDesc.includes('BACKPACK') || uCode.includes('BPK') || uCode.startsWith('LBC')) productLine = 'BACKPACK';
-    else if (uDesc.includes('COOLER') || uDesc.includes('CAVA') || uCode.startsWith('VC') || uCode.startsWith('HC')) productLine = 'COOLER';
-    else if (uDesc.includes('DUFFLE') || uCode.includes('DFL')) productLine = 'DUFFLE BAG';
-    else if (uDesc.includes('TOTE') || uCode.includes('TOTE')) productLine = 'TOTE BAG';
-    else if (uDesc.includes('VIVA PRO 2') || uDesc.includes('VIVA 2 PRO') || uCode.includes('VIVAP2')) productLine = 'VIVA 2 PRO';
-    else if (uDesc.includes('VIVA 2') || uCode.includes('VIVA2')) productLine = 'VIVA 2';
-    else if (uDesc.includes('VIVA PRO') || uCode.includes('VIVAP')) productLine = 'VIVA PRO';
-    else if (uDesc.includes('AURA 2') || uCode.includes('AURA2')) productLine = 'AURA 2';
-    else if (uDesc.includes('AURA') || uCode.includes('AURA')) productLine = 'AURA';
-    else if (uDesc.includes('HERO') || uCode.includes('HERO')) productLine = 'HERO';
-    else if (uDesc.includes('TUMBLER') || uCode.includes('TUMB') || uCode.startsWith('TM')) productLine = 'TUMBLER';
-    else if (uDesc.includes('HYDRO BOTTLE') || uDesc.includes('WATER BOTTLE') || uCode.includes('HB') || uCode.startsWith('WB') || uCode.startsWith('LWBT') || uCode.startsWith('KWB')) productLine = 'HYDRO BOTTLE';
-    else if (uDesc.includes('COFFEE MUG') || uCode.includes('MUG')) productLine = 'COFFEE MUG';
-    else if (uDesc.includes('SPORTBELT') || uCode.includes('SB')) productLine = 'SPORTBELT';
-    else if (prod && prod.category) productLine = prod.category.toUpperCase();
-  }
+  let productLine = 'HYDRO';
+  if (uCode.startsWith('CT-AURAP2') || uDesc.includes('AURA 2 PRO') || uDesc.includes('AURA PRO 2')) productLine = 'AURA 2 PRO';
+  else if (uCode.startsWith('CT-AURA') || uDesc.includes('AURA 2') || uDesc.includes('AURA')) productLine = 'AURA 2';
+  else if (uCode.startsWith('CT-VIVAP2') || uDesc.includes('VIVA 2 PRO') || uDesc.includes('VIVA PRO 2')) productLine = 'VIVA 2 PRO';
+  else if (uCode.startsWith('CT-VIVA2') || uDesc.includes('VIVA 2')) productLine = 'VIVA 2';
+  else if (uCode.startsWith('CT-TERRA') || uDesc.includes('TERRA')) productLine = 'TERRA';
+  else if (uCode.startsWith('CTJR-') || uCode.startsWith('CTHR-') || uDesc.includes('RELOJ JR') || uDesc.includes('HERO')) productLine = 'RELOJ JR';
+  else if (uDesc.includes('CASIO')) productLine = 'RELOJ CASIO';
+  else if (uCode.startsWith('CTBJ-') || rawLine === 'JR') productLine = 'JR';
+  else if (uCode.startsWith('CT-COF') || uDesc.includes('COFFEE MUG') || rawLine === 'COFFEE MUG') productLine = 'COFFEE MUG';
+  else if (uCode.startsWith('CT-TUMBS') || uDesc.includes('TUMBLR MINI') || uDesc.includes('TUMBLER MINI')) productLine = 'TUMBLR MINI';
+  else if (uCode.startsWith('CT-TUMB') || uCode.startsWith('TM') || uDesc.includes('TUMBL') || rawLine === 'TUMBLER' || rawLine === 'TUMBLR') productLine = 'TUMBLR';
+  else if (uCode.startsWith('CTHB') || uCode.startsWith('WB') || uCode.startsWith('LWBT') || uCode.startsWith('KWB') || uDesc.includes('HYDRO') || uDesc.includes('WATER BOTTLE') || rawLine === 'HYDRO BOTTLE') productLine = 'HYDRO';
+  else if (uCode.startsWith('CTBPK') || uCode.startsWith('LBC') || uDesc.includes('BACKPACK') || rawLine === 'BACKPACK') productLine = 'BACKPACK';
+  else if (uCode.startsWith('CTBLT') || uCode.startsWith('CTSB') || uDesc.includes('BELT BAG') || uDesc.includes('SPORTBELT') || rawLine === 'BELT BAG') productLine = 'BELT BAG';
+  else if (uCode.startsWith('CTDUF') || uCode.startsWith('CTDFL') || uDesc.includes('DUFFLE') || rawLine === 'DUFFLE BAG') productLine = 'DUFFLE BAG';
+  else if (uCode.startsWith('CT-TOTE') || uCode.startsWith('CTTOT') || uDesc.includes('TOTE') || rawLine === 'TOTE BAG') productLine = 'TOTE BAG';
+  else if (uCode.startsWith('CT-PWANCL') || uDesc.includes('HEADPHONES LITE')) productLine = 'POWER HEADPHONES LITE';
+  else if (uCode.startsWith('CT-PWANC') || uDesc.includes('POWER HEADPHONES')) productLine = 'POWER HEADPHONES';
+  else if (uCode.startsWith('CT-PWEP') || uDesc.includes('EARBUDS PRO')) productLine = 'EARBUDS PRO';
+  else if (uCode.startsWith('CT-PWOE') || uDesc.includes('OPEN-EAR') || uDesc.includes('OPEN EAR')) productLine = 'OPEN-EAR EARBUDS';
+  else if (uCode.startsWith('CTCAP') || uDesc.includes('GORRA') || uDesc.includes('CAP ')) productLine = 'GORRA';
+  else if (uCode.startsWith('CTSC-') || uDesc.includes('SCRUNCHIE')) productLine = 'SCRUNCHIES';
+  else if (uCode.startsWith('BASE-') || uDesc.includes('PROTECTOR SILICON') || uDesc.includes('SILICONE')) productLine = 'PROTECTOR SILICON';
+  else if (uCode.startsWith('CUBRE-') || uDesc.includes('CUBRE PITILLO')) productLine = 'CUBRE PITILLO';
+  else if (uCode.startsWith('CTSP-') || uDesc.includes('PROTECTOR PANTALLA') || uDesc.includes('SCREEN PROTECTOR')) productLine = 'PROTECTOR PANTALLA';
+  else if (uCode.startsWith('S22R') || uCode.startsWith('S20R') || uDesc.includes('CORREA') || uDesc.includes('STRAP')) productLine = 'CORREA';
+  else if (rawLine) productLine = rawLine;
 
   // 2. Modelo / Variante (Col E en Google Sheets)
   let model = (prod && prod.model) ? prod.model.toUpperCase() : '';
@@ -14652,6 +14758,11 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (lockErr) {}
+
   try {
     let payload = {};
     if (e.postData && e.postData.contents) {
@@ -14682,7 +14793,53 @@ function doPost(e) {
     }
   } catch (error) {
     return jsonResponse({ status: 'error', message: error.toString() }, e);
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch (re) {}
   }
+}
+
+function resolveSheetProductLine(code, name, lineHint) {
+  var uc = (code || '').toString().trim().toUpperCase();
+  var un = (name || '').toString().trim().toUpperCase();
+  var ul = (lineHint || '').toString().trim().toUpperCase();
+
+  if (ul === 'HYDRO BOTTLE' || ul === 'WATER BOTTLE' || ul === 'HYDRO') return 'HYDRO';
+  if (ul === 'TUMBLER' || ul === 'TUMBLR') {
+    if (uc.indexOf('TUMBS') > -1 || un.indexOf('MINI') > -1) return 'TUMBLR MINI';
+    return 'TUMBLR';
+  }
+  if (ul === 'TUMBLER MINI' || ul === 'TUMBLR MINI') return 'TUMBLR MINI';
+
+  if (uc.indexOf('CT-AURAP2') === 0 || un.indexOf('AURA 2 PRO') > -1 || un.indexOf('AURA PRO 2') > -1) return 'AURA 2 PRO';
+  if (uc.indexOf('CT-AURA') === 0 || un.indexOf('AURA 2') > -1 || un.indexOf('AURA') > -1) return 'AURA 2';
+  if (uc.indexOf('CT-VIVAP2') === 0 || un.indexOf('VIVA 2 PRO') > -1 || un.indexOf('VIVA PRO 2') > -1) return 'VIVA 2 PRO';
+  if (uc.indexOf('CT-VIVA2') === 0 || un.indexOf('VIVA 2') > -1) return 'VIVA 2';
+  if (uc.indexOf('CT-TERRA') === 0 || un.indexOf('TERRA') > -1) return 'TERRA';
+  if (uc.indexOf('CTJR-') === 0 || uc.indexOf('CTHR-') === 0 || un.indexOf('RELOJ JR') > -1 || un.indexOf('HERO') > -1) return 'RELOJ JR';
+  if (un.indexOf('CASIO') > -1) return 'RELOJ CASIO';
+  if (uc.indexOf('CTBJ-') === 0 || ul === 'JR') return 'JR';
+  if (uc.indexOf('CT-COF') === 0 || un.indexOf('COFFEE MUG') > -1 || ul === 'COFFEE MUG') return 'COFFEE MUG';
+  if (uc.indexOf('CT-TUMBS') === 0 || un.indexOf('TUMBLR MINI') > -1 || un.indexOf('TUMBLER MINI') > -1) return 'TUMBLR MINI';
+  if (uc.indexOf('CT-TUMB') === 0 || uc.indexOf('TM') === 0 || un.indexOf('TUMBL') > -1) return 'TUMBLR';
+  if (uc.indexOf('CTHB') === 0 || uc.indexOf('WB') === 0 || uc.indexOf('LWBT') === 0 || uc.indexOf('KWB') === 0 || un.indexOf('HYDRO') > -1 || un.indexOf('WATER BOTTLE') > -1) return 'HYDRO';
+  if (uc.indexOf('CTBPK') === 0 || uc.indexOf('LBC') === 0 || un.indexOf('BACKPACK') > -1 || ul === 'BACKPACK') return 'BACKPACK';
+  if (uc.indexOf('CTBLT') === 0 || uc.indexOf('CTSB') === 0 || un.indexOf('BELT BAG') > -1 || un.indexOf('SPORTBELT') > -1 || ul === 'BELT BAG') return 'BELT BAG';
+  if (uc.indexOf('CTDUF') === 0 || uc.indexOf('CTDFL') === 0 || un.indexOf('DUFFLE') > -1 || ul === 'DUFFLE BAG') return 'DUFFLE BAG';
+  if (uc.indexOf('CT-TOTE') === 0 || uc.indexOf('CTTOT') === 0 || un.indexOf('TOTE') > -1 || ul === 'TOTE BAG') return 'TOTE BAG';
+  if (uc.indexOf('CT-PWANCL') === 0 || un.indexOf('HEADPHONES LITE') > -1 || ul === 'POWER HEADPHONES LITE') return 'POWER HEADPHONES LITE';
+  if (uc.indexOf('CT-PWANC') === 0 || un.indexOf('POWER HEADPHONES') > -1 || ul === 'POWER HEADPHONES') return 'POWER HEADPHONES';
+  if (uc.indexOf('CT-PWEP') === 0 || un.indexOf('EARBUDS PRO') > -1 || ul === 'EARBUDS PRO') return 'EARBUDS PRO';
+  if (uc.indexOf('CT-PWOE') === 0 || un.indexOf('OPEN-EAR') > -1 || un.indexOf('OPEN EAR') > -1 || ul === 'OPEN-EAR EARBUDS') return 'OPEN-EAR EARBUDS';
+  if (uc.indexOf('CTCAP') === 0 || un.indexOf('GORRA') > -1 || un.indexOf('CAP ') > -1 || ul === 'GORRA') return 'GORRA';
+  if (uc.indexOf('CTSC-') === 0 || un.indexOf('SCRUNCHIE') > -1 || ul === 'SCRUNCHIES') return 'SCRUNCHIES';
+  if (uc.indexOf('BASE-') === 0 || un.indexOf('PROTECTOR SILICON') > -1 || un.indexOf('SILICONE') > -1 || ul === 'PROTECTOR SILICON') return 'PROTECTOR SILICON';
+  if (uc.indexOf('CUBRE-') === 0 || un.indexOf('CUBRE PITILLO') > -1 || ul === 'CUBRE PITILLO') return 'CUBRE PITILLO';
+  if (uc.indexOf('CTSP-') === 0 || un.indexOf('PROTECTOR PANTALLA') > -1 || un.indexOf('SCREEN PROTECTOR') > -1 || ul === 'PROTECTOR PANTALLA') return 'PROTECTOR PANTALLA';
+  if (uc.indexOf('S22R') === 0 || uc.indexOf('S20R') === 0 || un.indexOf('CORREA') > -1 || un.indexOf('STRAP') > -1 || ul === 'CORREA') return 'CORREA';
+
+  return ul || 'HYDRO';
 }
 
 function handleAddSale(ss, payload, e) {
@@ -14730,269 +14887,267 @@ function handleAddSale(ss, payload, e) {
   const cPend = colPendiente >= 0 ? colPendiente : 16;
 
   const numCols = lastCol;
-  const lastRow = sheet.getLastRow();
 
-  // 1. Localizar la fila de Totales para insertar justo debajo de la última venta
-  const scanRows = Math.min(lastRow, 650);
-  const scanCols = Math.min(numCols, 17);
-  const checkValues = sheet.getRange(1, 1, scanRows, scanCols).getValues();
-  const checkFormulas = sheet.getRange(1, 1, scanRows, scanCols).getFormulas();
-
-  let totalRow = -1;
-  let lastValidSaleRow = 1;
-  for (let r = 1; r < scanRows; r++) {
-    const rowNum = r + 1;
-    const fTot = (cTot < scanCols && checkFormulas[r][cTot] ? checkFormulas[r][cTot] : '').toString().toUpperCase();
-    const fPend = (cPend < scanCols && checkFormulas[r][cPend] ? checkFormulas[r][cPend] : '').toString().toUpperCase();
-    const vCol1 = (checkValues[r][0] || '').toString().trim().toUpperCase();
-    const vCol2 = (checkValues[r][1] || '').toString().trim().toUpperCase();
-    const vProd = cProd < scanCols && checkValues[r][cProd] ? checkValues[r][cProd].toString().trim().toUpperCase() : '';
-    const vCod = cCod < scanCols && checkValues[r][cCod] ? checkValues[r][cCod].toString().trim().toUpperCase() : '';
-    const valTot = cTot < scanCols ? parseNumber(checkValues[r][cTot]) : 0;
-
-    if (
-      fTot.indexOf('SUM') > -1 ||
-      fTot.indexOf('SUMA') > -1 ||
-      fTot.indexOf('SUBTOTAL') > -1 ||
-      fPend.indexOf('SUM') > -1 ||
-      fPend.indexOf('SUMA') > -1 ||
-      vCol1.indexOf('TOTAL') > -1 ||
-      vCol2.indexOf('TOTAL') > -1 ||
-      vProd.indexOf('TOTAL') > -1 ||
-      (valTot >= 5000 && !vProd && !vCod && !vCol2)
-    ) {
-      totalRow = rowNum;
-      break;
-    }
-
-    if ((vProd || vCod) && valTot > 0 && valTot < 5000) {
-      lastValidSaleRow = rowNum;
-    }
-  }
-
-  if (totalRow < 2) {
-    totalRow = lastValidSaleRow > 1 ? lastValidSaleRow + 1 : lastRow + 1;
-  }
-
-  const insertRow = totalRow;
-  const sourceRow = totalRow - 1; // Fila de referencia anterior (p. ej. última venta antes de Totales)
-
-  // 2. Insertar nueva fila antes de Totales
-  sheet.insertRowBefore(insertRow);
-
-  // 3. COPIAR FORMATO Y REGLAS DE VALIDACIÓN DE LA FILA ANTERIOR
-  const sourceRange = sheet.getRange(sourceRow, 1, 1, numCols);
-  const targetRange = sheet.getRange(insertRow, 1, 1, numCols);
-
-  targetRange.clearContent();
-  sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
-  targetRange.setNumberFormats(sourceRange.getNumberFormats());
-
-  try {
-    targetRange.setDataValidations(sourceRange.getDataValidations());
-  } catch (e) {}
-
-  try {
-    sheet.setRowHeight(insertRow, sheet.getRowHeight(sourceRow) || 32);
-  } catch (e) {}
-
-  try {
-    const prevPrev = sourceRow - 1;
-    if (prevPrev >= 2) {
-      targetRange.setBackgrounds(sheet.getRange(prevPrev, 1, 1, numCols).getBackgrounds());
-    }
-  } catch (e) {}
-
-  // 4. Preparar datos completos de la venta
-  const total = Number(payload.totalAmount) || Number(payload.total) || 0;
-  const qty = Number(payload.quantity) || 1;
-  const unitPrice = Number(payload.unitPrice) || (qty > 0 ? (total / qty) : total);
+  const rawQty = Math.max(1, parseInt(payload.quantity, 10) || 1);
+  const rawTotal = Number(payload.totalAmount) || Number(payload.total) || 0;
+  const unitPriceVal = Number(payload.unitPrice) || (rawQty > 0 ? (rawTotal / rawQty) : rawTotal);
   const isContado = (payload.paymentType || '').toLowerCase() === 'contado';
-  const cobrado = Number(payload.collectedAmount) || Number(payload.creditPaid) || (isContado ? total : 0);
-  const pendiente = Number(payload.pendingAmount) !== undefined && !isNaN(Number(payload.pendingAmount))
-    ? Number(payload.pendingAmount)
-    : Math.max(0, total - cobrado);
+  const totalCobrado = Number(payload.collectedAmount) !== undefined && !isNaN(Number(payload.collectedAmount))
+    ? Number(payload.collectedAmount)
+    : (Number(payload.creditPaid) || (isContado ? rawTotal : 0));
 
-  // A. Responsable (Col A) - Menú Desplegable con Chip
-  let rawSeller = (payload.seller || payload.responsable || '').toString().trim().toUpperCase();
-  if (!rawSeller || rawSeller === 'TIENDA PRINCIPAL' || rawSeller === 'ADMIN' || rawSeller === 'GERENCIA') {
-    rawSeller = 'JENNIFER';
-  }
-  const officialSellers = [
-    'JENNIFER', 'ZULMI', 'JESUS', 'FABIOLA', 'TANIA', 'BULL', 'CASHEA',
-    'TABATHA', 'SARA', 'VERUSKA', 'MARIELA', 'KLEIVER', 'PEDRO', 'FABIOLA PAOLA', 'PAOLA'
-  ];
-  const matchedSeller = matchValidationValue(sheet.getRange(insertRow, cResp + 1), rawSeller, officialSellers);
-  sheet.getRange(insertRow, cResp + 1).setValue(matchedSeller);
+  let remainingCobrado = totalCobrado;
+  const insertedRows = [];
 
-  // B. Cliente (Col B)
-  const clientName = (payload.client || payload.clientName || 'CLIENTE GENERAL').toString().trim().toUpperCase();
-  sheet.getRange(insertRow, cCli + 1).setValue(clientName);
+  for (let u = 0; u < rawQty; u++) {
+    const lastRow = sheet.getLastRow();
 
-  // C. Producto (Col C) - Menú Desplegable con Chip
-  let prodLine = (payload.productLine || payload.category || '').toString().trim().toUpperCase();
-  if (!prodLine) {
-    const uc = (payload.productCode || '').toString().toUpperCase();
-    const un = (payload.productName || payload.description || '').toString().toUpperCase();
-    if (uc.indexOf('BLT') > -1 || un.indexOf('BELT BAG') > -1) prodLine = 'BELT BAG';
-    else if (uc.indexOf('BPK') > -1 || un.indexOf('BACKPACK') > -1) prodLine = 'BACKPACK';
-    else if (uc.indexOf('VIVAP2') > -1 || un.indexOf('VIVA 2 PRO') > -1 || un.indexOf('VIVA PRO 2') > -1) prodLine = 'VIVA 2 PRO';
-    else if (uc.indexOf('VIVA2') > -1 || un.indexOf('VIVA 2') > -1) prodLine = 'VIVA 2';
-    else if (uc.indexOf('AURA2') > -1 || un.indexOf('AURA 2') > -1) prodLine = 'AURA 2';
-    else if (uc.indexOf('AURA') > -1) prodLine = 'AURA';
-    else if (uc.indexOf('HERO') > -1) prodLine = 'HERO';
-    else if (uc.indexOf('TOTE') > -1) prodLine = 'TOTE BAG';
-    else if (uc.indexOf('DFL') > -1 || un.indexOf('DUFFLE') > -1) prodLine = 'DUFFLE BAG';
-    else prodLine = 'ACCESORIO';
-  }
-  const officialLines = [
-    'BACKPACK', 'BELT BAG', 'DUFFLE BAG', 'TOTE BAG', 'VIVA 2', 'VIVA 2 PRO', 'VIVA PRO',
-    'AURA', 'AURA 2', 'HERO', 'TUMBLER', 'HYDRO BOTTLE', 'COFFEE MUG', 'SPORTBELT', 'ACCESORIO'
-  ];
-  const matchedProdLine = matchValidationValue(sheet.getRange(insertRow, cProd + 1), prodLine, officialLines);
-  sheet.getRange(insertRow, cProd + 1).setValue(matchedProdLine);
+    // 1. Localizar la fila de Totales para insertar justo debajo de la última venta
+    const scanRows = Math.min(lastRow, 650);
+    const scanCols = Math.min(numCols, 17);
+    const checkValues = sheet.getRange(1, 1, scanRows, scanCols).getValues();
+    const checkFormulas = sheet.getRange(1, 1, scanRows, scanCols).getFormulas();
 
-  // D. Código (Col D)
-  const codeVal = (payload.productCode || payload.code || '').toString().trim().toUpperCase();
-  sheet.getRange(insertRow, cCod + 1).setValue(codeVal);
+    let totalRow = -1;
+    let lastValidSaleRow = 1;
+    for (let r = 1; r < scanRows; r++) {
+      const rowNum = r + 1;
+      const fTot = (cTot < scanCols && checkFormulas[r][cTot] ? checkFormulas[r][cTot] : '').toString().toUpperCase();
+      const fPend = (cPend < scanCols && checkFormulas[r][cPend] ? checkFormulas[r][cPend] : '').toString().toUpperCase();
+      const vCol1 = (checkValues[r][0] || '').toString().trim().toUpperCase();
+      const vCol2 = (checkValues[r][1] || '').toString().trim().toUpperCase();
+      const vProd = cProd < scanCols && checkValues[r][cProd] ? checkValues[r][cProd].toString().trim().toUpperCase() : '';
+      const vCod = cCod < scanCols && checkValues[r][cCod] ? checkValues[r][cCod].toString().trim().toUpperCase() : '';
+      const valTot = cTot < scanCols ? parseNumber(checkValues[r][cTot]) : 0;
 
-  // E. Modelo (Col E)
-  let modeloVal = (payload.modelo || payload.model || '').toString().trim().toUpperCase();
-  if (!modeloVal) {
-    let cleanM = (payload.productName || payload.description || '').toString().toUpperCase();
-    const stopWords = ['SMARTWATCH', 'RELOJ INTELIGENTE', 'BELT BAG', 'BACKPACK', 'VIVA 2 PRO', 'VIVA 2', 'AURA 2', 'AURA', 'HERO', 'CUBITT', 'TOTE BAG', 'DUFFLE BAG'];
-    for (let sw = 0; sw < stopWords.length; sw++) {
-      cleanM = cleanM.replace(new RegExp(stopWords[sw], 'g'), ' ');
-    }
-    modeloVal = cleanM.replace(/\\s+/g, ' ').trim() || codeVal;
-  }
-  sheet.getRange(insertRow, cMod + 1).setValue(modeloVal);
+      if (
+        fTot.indexOf('SUM') > -1 ||
+        fTot.indexOf('SUMA') > -1 ||
+        fTot.indexOf('SUBTOTAL') > -1 ||
+        fPend.indexOf('SUM') > -1 ||
+        fPend.indexOf('SUMA') > -1 ||
+        vCol1.indexOf('TOTAL') > -1 ||
+        vCol2.indexOf('TOTAL') > -1 ||
+        vProd.indexOf('TOTAL') > -1 ||
+        (valTot >= 5000 && !vProd && !vCod && !vCol2)
+      ) {
+        totalRow = rowNum;
+        break;
+      }
 
-  // F. Color (Col F)
-  let colorVal = (payload.color || '').toString().trim().toUpperCase();
-  if (!colorVal) {
-    const comb = (modeloVal + ' ' + (payload.productName || '')).toUpperCase();
-    if (comb.indexOf('OBSIDIAN BLACK') > -1 || comb.indexOf('BLACK') > -1 || comb.indexOf('NEGRO') > -1) colorVal = 'NEGRO';
-    else if (comb.indexOf('DEEPEST BLUE') > -1 || comb.indexOf('NAVY') > -1) colorVal = 'AZUL MARINO';
-    else if (comb.indexOf('SMOKE BLUE') > -1 || comb.indexOf('LIGHT BLUE') > -1 || comb.indexOf('BLUE') > -1 || comb.indexOf('AZUL') > -1) colorVal = 'AZUL';
-    else if (comb.indexOf('OLIVE') > -1 || comb.indexOf('GREEN') > -1 || comb.indexOf('VERDE') > -1) colorVal = 'VERDE';
-    else if (comb.indexOf('BEIGE') > -1 || comb.indexOf('SAND') > -1) colorVal = 'BEIGE';
-    else if (comb.indexOf('ROSE GOLD') > -1) colorVal = 'ROSE GOLD';
-    else if (comb.indexOf('PINK') > -1 || comb.indexOf('ROSADO') > -1) colorVal = 'ROSADO';
-    else if (comb.indexOf('PURPLE') > -1 || comb.indexOf('MORADO') > -1) colorVal = 'MORADO';
-    else if (comb.indexOf('WHITE') > -1 || comb.indexOf('BLANCO') > -1) colorVal = 'BLANCO';
-    else if (comb.indexOf('GREY') > -1 || comb.indexOf('GRAY') > -1 || comb.indexOf('GRIS') > -1) colorVal = 'GRIS';
-    else colorVal = 'NEGRO';
-  }
-  sheet.getRange(insertRow, cCol + 1).setValue(colorVal);
-
-  // G. Foto (Col G)
-  let imgUrl = (payload.image || '').toString().trim();
-  if (imgUrl.indexOf('http://') !== 0 && imgUrl.indexOf('https://') !== 0) {
-    imgUrl = getPublicCdnImage(codeVal);
-  }
-  const photoCell = sheet.getRange(insertRow, cFoto + 1);
-  photoCell.clearContent();
-  if (imgUrl && (imgUrl.indexOf('http://') === 0 || imgUrl.indexOf('https://') === 0)) {
-    try {
-      const cImg = SpreadsheetApp.newCellImage().setSourceUrl(imgUrl).setAltTextTitle(codeVal || 'Cubitt').build();
-      photoCell.setValue(cImg);
-    } catch (eImg) {
-      photoCell.setFormula('=IMAGE("' + imgUrl + '", 1)');
-    }
-  } else {
-    photoCell.setValue('');
-  }
-
-  // H. Fecha (Col H)
-  let dateStr = payload.date || Utilities.formatDate(new Date(), 'GMT-4', 'dd/MM/yyyy');
-  if (dateStr.indexOf('-') > -1) {
-    const dp = dateStr.split('-');
-    if (dp.length === 3 && dp[0].length === 4) {
-      dateStr = dp[2] + '/' + dp[1] + '/' + dp[0];
-    }
-  }
-  const fCell = sheet.getRange(insertRow, cFec + 1);
-  fCell.setValue(dateStr);
-  fCell.setNumberFormat('dd/MM/yyyy');
-  fCell.setHorizontalAlignment('center');
-
-  // I. Cantidad (Col I)
-  const qCell = sheet.getRange(insertRow, cCant + 1);
-  qCell.setValue(qty);
-  qCell.setNumberFormat('0');
-  qCell.setHorizontalAlignment('center');
-
-  // J. Precio Unidad (Col J)
-  const puCell = sheet.getRange(insertRow, cPU + 1);
-  puCell.setValue(unitPrice);
-  puCell.setNumberFormat('$#,##0.00');
-  puCell.setHorizontalAlignment('right');
-
-  // K. Total (Col K)
-  const totCell = sheet.getRange(insertRow, cTot + 1);
-  totCell.setValue(total);
-  totCell.setNumberFormat('$#,##0.00');
-  totCell.setHorizontalAlignment('right');
-
-  // L. Pago 1 (Col L)
-  const p1Cell = sheet.getRange(insertRow, cP1 + 1);
-  p1Cell.setValue(cobrado);
-  p1Cell.setNumberFormat('$#,##0.00');
-  p1Cell.setHorizontalAlignment('right');
-
-  // M..P. Pagos 2 a 5
-  if (cP2 < numCols) sheet.getRange(insertRow, cP2 + 1).setValue('');
-  if (cP3 < numCols) sheet.getRange(insertRow, cP3 + 1).setValue('');
-  if (cP4 < numCols) sheet.getRange(insertRow, cP4 + 1).setValue('');
-  if (cP5 < numCols) sheet.getRange(insertRow, cP5 + 1).setValue('');
-
-  // Q. Pendiente (Col Q)
-  const pendCell = sheet.getRange(insertRow, cPend + 1);
-  pendCell.setValue(pendiente);
-  pendCell.setNumberFormat('$#,##0.00');
-  pendCell.setHorizontalAlignment('right');
-
-  // Tipografía Oficial Roboto 10pt con alineación vertical al medio
-  targetRange.setFontFamily('Roboto');
-  targetRange.setFontSize(10);
-  targetRange.setVerticalAlignment('middle');
-
-  // Comentario de cuotas / notas
-  if (payload.paymentDatesComment) {
-    totCell.setNote(payload.paymentDatesComment);
-  }
-
-  // 5. Actualizar la fórmula =SUM(...) en la fila de Totales
-  const shiftedTotalRow = insertRow + 1;
-  for (let c = 1; c <= numCols; c++) {
-    const tCell = sheet.getRange(shiftedTotalRow, c);
-    const existingFormula = tCell.getFormula();
-    if (existingFormula && existingFormula.toUpperCase().indexOf('SUM') > -1) {
-      if (existingFormula.toUpperCase().indexOf('TABLA_1') === -1) {
-        const colLetter = getColumnLetter(c);
-        tCell.setFormula('=SUM(' + colLetter + '2:' + colLetter + insertRow + ')');
+      if ((vProd || vCod) && valTot > 0 && valTot < 5000) {
+        lastValidSaleRow = rowNum;
       }
     }
-  }
 
-  // 6. Limpieza preventiva de filas residuales lejanas
-  if (sheet.getLastRow() >= 486 && (sheet.getLastRow() > shiftedTotalRow + 10)) {
+    if (totalRow < 2) {
+      totalRow = lastValidSaleRow > 1 ? lastValidSaleRow + 1 : lastRow + 1;
+    }
+
+    const insertRow = totalRow;
+    const sourceRow = Math.max(2, totalRow - 1);
+
+    // 2. Insertar nueva fila antes de Totales
+    sheet.insertRowBefore(insertRow);
+
+    // 3. COPIAR FORMATO Y REGLAS DE VALIDACIÓN DE LA FILA ANTERIOR
+    const sourceRange = sheet.getRange(sourceRow, 1, 1, numCols);
+    const targetRange = sheet.getRange(insertRow, 1, 1, numCols);
+
+    targetRange.clearContent();
+    sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    targetRange.setNumberFormats(sourceRange.getNumberFormats());
+
     try {
-      const farRow = sheet.getLastRow();
-      const farCode = (sheet.getRange(farRow, cCod + 1).getValue() || '').toString();
-      const farMonto = Number(sheet.getRange(farRow, cTot + 1).getValue()) || 0;
-      if (farMonto === 104 || farCode.indexOf('CTBPK') > -1 || farCode === codeVal) {
-        sheet.deleteRow(farRow);
+      targetRange.setDataValidations(sourceRange.getDataValidations());
+    } catch (e) {}
+
+    try {
+      sheet.setRowHeight(insertRow, sheet.getRowHeight(sourceRow) || 32);
+    } catch (e) {}
+
+    try {
+      const prevPrev = sourceRow - 1;
+      if (prevPrev >= 2) {
+        targetRange.setBackgrounds(sheet.getRange(prevPrev, 1, 1, numCols).getBackgrounds());
       }
     } catch (e) {}
+
+    // 4. Montos individuales para esta unidad (Cantidad = 1 por fila)
+    const rowTotal = Math.round(unitPriceVal * 100) / 100;
+    let rowCobrado = 0;
+    if (isContado) {
+      rowCobrado = rowTotal;
+    } else if (remainingCobrado > 0) {
+      rowCobrado = (u === rawQty - 1) ? Math.min(rowTotal, Math.round(remainingCobrado * 100) / 100) : Math.min(rowTotal, Math.round((totalCobrado / rawQty) * 100) / 100);
+      remainingCobrado = Math.max(0, remainingCobrado - rowCobrado);
+    }
+    const rowPendiente = Math.max(0, Math.round((rowTotal - rowCobrado) * 100) / 100);
+
+    // A. Responsable (Col A) - Coincidencia exacta con la regla de validación de datos
+    let rawSeller = (payload.seller || payload.responsable || '').toString().trim().toUpperCase();
+    if (!rawSeller || rawSeller === 'TIENDA PRINCIPAL' || rawSeller === 'ADMIN' || rawSeller === 'GERENCIA' || rawSeller === 'GENERAL') {
+      rawSeller = 'JENNIFER';
+    }
+    const officialSellers = [
+      'JENNIFER', 'JESUS', 'FABIOLA', 'TANIA', 'BULL', 'CASHEA',
+      'TABATHA', 'SARA', 'FABIOLA PAOLA', 'VERUSKA', 'MARIELA', 'KLEIVER', 'ZULMI', 'PEDRO', 'PAOLA'
+    ];
+    const cellResp = sheet.getRange(insertRow, cResp + 1);
+    const matchedSeller = matchValidationValue(cellResp, rawSeller, officialSellers, sheet, cResp + 1);
+    cellResp.setValue(matchedSeller);
+
+    // B. Cliente (Col B)
+    const clientName = (payload.client || payload.clientName || 'CLIENTE GENERAL').toString().trim().toUpperCase();
+    sheet.getRange(insertRow, cCli + 1).setValue(clientName);
+
+    // C. Producto (Col C) - Coincidencia exacta con la regla de validación de datos
+    const codeVal = (payload.productCode || payload.code || '').toString().trim().toUpperCase();
+    const rawNameVal = (payload.productName || payload.description || '').toString().trim();
+    const prodLine = resolveSheetProductLine(codeVal, rawNameVal, payload.productLine || payload.category);
+    const officialLines = [
+      'HYDRO', 'COFFEE MUG', 'JR', 'TUMBLR', 'TUMBLR MINI', 'BACKPACK', 'EARBUDS PRO',
+      'SCRUNCHIES', 'PROTECTOR SILICON', 'POWER HEADPHONES', 'POWER HEADPHONES LITE',
+      'OPEN-EAR EARBUDS', 'GORRA', 'VIVA 2', 'VIVA 2 PRO', 'TERRA', 'CUBRE PITILLO',
+      'BELT BAG', 'AURA 2 PRO', 'AURA 2', 'PROTECTOR PANTALLA', 'DUFFLE BAG',
+      'CORREA', 'RELOJ JR', 'RELOJ CASIO', 'TOTE BAG'
+    ];
+    const cellProd = sheet.getRange(insertRow, cProd + 1);
+    const matchedProdLine = matchValidationValue(cellProd, prodLine, officialLines, sheet, cProd + 1);
+    cellProd.setValue(matchedProdLine);
+
+    // D. Código (Col D)
+    sheet.getRange(insertRow, cCod + 1).setValue(codeVal);
+
+    // E. Modelo (Col E)
+    let modeloVal = (payload.modelo || payload.model || '').toString().trim().toUpperCase();
+    if (!modeloVal) {
+      let cleanM = rawNameVal.toUpperCase();
+      const stopWords = ['SMARTWATCH', 'RELOJ INTELIGENTE', 'BELT BAG', 'BACKPACK', 'VIVA 2 PRO', 'VIVA 2', 'AURA 2 PRO', 'AURA 2', 'AURA', 'HERO', 'CUBITT', 'TOTE BAG', 'DUFFLE BAG', 'HYDRO BOTTLE', 'TUMBLER', 'COFFEE MUG'];
+      for (let sw = 0; sw < stopWords.length; sw++) {
+        cleanM = cleanM.replace(new RegExp(stopWords[sw], 'g'), ' ');
+      }
+      modeloVal = cleanM.replace(/\\s+/g, ' ').trim() || codeVal;
+    }
+    sheet.getRange(insertRow, cMod + 1).setValue(modeloVal);
+
+    // F. Color (Col F)
+    let colorVal = (payload.color || '').toString().trim().toUpperCase();
+    if (!colorVal) {
+      const comb = (modeloVal + ' ' + rawNameVal).toUpperCase();
+      if (comb.indexOf('OBSIDIAN BLACK') > -1 || comb.indexOf('BLACK') > -1 || comb.indexOf('NEGRO') > -1) colorVal = 'NEGRO';
+      else if (comb.indexOf('DEEPEST BLUE') > -1 || comb.indexOf('NAVY') > -1) colorVal = 'AZUL MARINO';
+      else if (comb.indexOf('SMOKE BLUE') > -1 || comb.indexOf('LIGHT BLUE') > -1 || comb.indexOf('BLUE') > -1 || comb.indexOf('AZUL') > -1) colorVal = 'AZUL';
+      else if (comb.indexOf('OLIVE') > -1 || comb.indexOf('GREEN') > -1 || comb.indexOf('VERDE') > -1) colorVal = 'VERDE';
+      else if (comb.indexOf('BEIGE') > -1 || comb.indexOf('SAND') > -1) colorVal = 'BEIGE';
+      else if (comb.indexOf('ROSE GOLD') > -1) colorVal = 'ROSE GOLD';
+      else if (comb.indexOf('PINK') > -1 || comb.indexOf('ROSADO') > -1) colorVal = 'ROSADO';
+      else if (comb.indexOf('PURPLE') > -1 || comb.indexOf('MORADO') > -1) colorVal = 'MORADO';
+      else if (comb.indexOf('WHITE') > -1 || comb.indexOf('BLANCO') > -1) colorVal = 'BLANCO';
+      else if (comb.indexOf('GREY') > -1 || comb.indexOf('GRAY') > -1 || comb.indexOf('GRIS') > -1) colorVal = 'GRIS';
+      else colorVal = 'NEGRO';
+    }
+    sheet.getRange(insertRow, cCol + 1).setValue(colorVal);
+
+    // G. Foto (Col G)
+    let imgUrl = (payload.image || '').toString().trim();
+    if (imgUrl.indexOf('http://') !== 0 && imgUrl.indexOf('https://') !== 0) {
+      imgUrl = getPublicCdnImage(codeVal);
+    }
+    const photoCell = sheet.getRange(insertRow, cFoto + 1);
+    photoCell.clearContent();
+    if (imgUrl && (imgUrl.indexOf('http://') === 0 || imgUrl.indexOf('https://') === 0)) {
+      try {
+        const cImg = SpreadsheetApp.newCellImage().setSourceUrl(imgUrl).setAltTextTitle(codeVal || 'Cubitt').build();
+        photoCell.setValue(cImg);
+      } catch (eImg) {
+        photoCell.setFormula('=IMAGE("' + imgUrl + '", 1)');
+      }
+    } else {
+      photoCell.setValue('');
+    }
+
+    // H. Fecha (Col H)
+    let dateStr = payload.date || Utilities.formatDate(new Date(), 'GMT-4', 'dd/MM/yyyy');
+    if (dateStr.indexOf('-') > -1) {
+      const dp = dateStr.split('-');
+      if (dp.length === 3 && dp[0].length === 4) {
+        dateStr = dp[2] + '/' + dp[1] + '/' + dp[0];
+      }
+    }
+    const fCell = sheet.getRange(insertRow, cFec + 1);
+    fCell.setValue(dateStr);
+    fCell.setNumberFormat('dd/MM/yyyy');
+    fCell.setHorizontalAlignment('center');
+
+    // I. Cantidad (Col I) -> Siempre 1 unidad por fila individual
+    const qCell = sheet.getRange(insertRow, cCant + 1);
+    qCell.setValue(1);
+    qCell.setNumberFormat('0');
+    qCell.setHorizontalAlignment('center');
+
+    // J. Precio Unidad (Col J)
+    const puCell = sheet.getRange(insertRow, cPU + 1);
+    puCell.setValue(rowTotal);
+    puCell.setNumberFormat('$#,##0.00');
+    puCell.setHorizontalAlignment('right');
+
+    // K. Total (Col K)
+    const totCell = sheet.getRange(insertRow, cTot + 1);
+    totCell.setValue(rowTotal);
+    totCell.setNumberFormat('$#,##0.00');
+    totCell.setHorizontalAlignment('right');
+
+    // L. Pago 1 (Col L)
+    const p1Cell = sheet.getRange(insertRow, cP1 + 1);
+    p1Cell.setValue(rowCobrado);
+    p1Cell.setNumberFormat('$#,##0.00');
+    p1Cell.setHorizontalAlignment('right');
+
+    // M..P. Pagos 2 a 5
+    if (cP2 < numCols) sheet.getRange(insertRow, cP2 + 1).setValue('');
+    if (cP3 < numCols) sheet.getRange(insertRow, cP3 + 1).setValue('');
+    if (cP4 < numCols) sheet.getRange(insertRow, cP4 + 1).setValue('');
+    if (cP5 < numCols) sheet.getRange(insertRow, cP5 + 1).setValue('');
+
+    // Q. Pendiente (Col Q)
+    const pendCell = sheet.getRange(insertRow, cPend + 1);
+    pendCell.setValue(rowPendiente);
+    pendCell.setNumberFormat('$#,##0.00');
+    pendCell.setHorizontalAlignment('right');
+
+    // Tipografía Oficial Roboto 10pt con alineación vertical al medio
+    targetRange.setFontFamily('Roboto');
+    targetRange.setFontSize(10);
+    targetRange.setVerticalAlignment('middle');
+
+    // Comentario de cuotas / notas
+    if (payload.paymentDatesComment) {
+      totCell.setNote(payload.paymentDatesComment);
+    }
+
+    // 5. Actualizar la fórmula =SUM(...) en la fila de Totales
+    const shiftedTotalRow = insertRow + 1;
+    for (let c = 1; c <= numCols; c++) {
+      const tCell = sheet.getRange(shiftedTotalRow, c);
+      const existingFormula = tCell.getFormula();
+      if (existingFormula && existingFormula.toUpperCase().indexOf('SUM') > -1) {
+        if (existingFormula.toUpperCase().indexOf('TABLA_1') === -1) {
+          const colLetter = getColumnLetter(c);
+          tCell.setFormula('=SUM(' + colLetter + '2:' + colLetter + insertRow + ')');
+        }
+      }
+    }
+
+    insertedRows.push(insertRow);
   }
 
   return jsonResponse({
     status: 'success',
-    message: 'Venta registrada con éxito en fila ' + insertRow + ' con todas las columnas A a Q completas y formato idéntico.',
-    row: insertRow,
-    saleId: payload.id || ('ROW-' + insertRow)
+    message: 'Venta registrada individualmente en fila(s) ' + insertedRows.join(', '),
+    row: insertedRows[0],
+    rows: insertedRows,
+    saleId: payload.id || ('ROW-' + insertedRows[0])
   }, e);
 }
 
@@ -15006,29 +15161,20 @@ function repairRow450(ss, e) {
     return jsonResponse({ status: 'error', message: 'La fila 450 no existe en la hoja.' }, e);
   }
 
-  // 1. RESPONSABLE (Col A) -> JESUS (con dropdown validado)
   const cellA = sheet.getRange(row, 1);
-  const matchedSeller = matchValidationValue(cellA, 'JESUS', ['JENNIFER', 'ZULMI', 'JESUS', 'FABIOLA', 'TANIA', 'BULL', 'CASHEA', 'TABATHA', 'SARA', 'VERUSKA', 'MARIELA', 'KLEIVER', 'PEDRO', 'FABIOLA PAOLA', 'PAOLA']);
+  const matchedSeller = matchValidationValue(cellA, 'JESUS', ['JENNIFER', 'ZULMI', 'JESUS', 'FABIOLA', 'TANIA', 'BULL', 'CASHEA', 'TABATHA', 'SARA', 'VERUSKA', 'MARIELA', 'KLEIVER', 'PEDRO', 'FABIOLA PAOLA', 'PAOLA'], sheet, 1);
   cellA.setValue(matchedSeller);
 
-  // 2. CLIENTE (Col B) -> JESUS PALMA
   sheet.getRange(row, 2).setValue('JESUS PALMA');
 
-  // 3. PRODUCTO (Col C) -> BELT BAG (con dropdown validado)
   const cellC = sheet.getRange(row, 3);
-  const matchedProd = matchValidationValue(cellC, 'BELT BAG', ['BACKPACK', 'BELT BAG', 'DUFFLE BAG', 'TOTE BAG', 'VIVA 2', 'VIVA 2 PRO', 'VIVA PRO', 'AURA', 'AURA 2', 'HERO', 'TUMBLER', 'HYDRO BOTTLE', 'COFFEE MUG', 'SPORTBELT', 'ACCESORIO']);
+  const matchedProd = matchValidationValue(cellC, 'BELT BAG', ['HYDRO', 'COFFEE MUG', 'JR', 'TUMBLR', 'TUMBLR MINI', 'BACKPACK', 'EARBUDS PRO', 'SCRUNCHIES', 'PROTECTOR SILICON', 'POWER HEADPHONES', 'POWER HEADPHONES LITE', 'OPEN-EAR EARBUDS', 'GORRA', 'VIVA 2', 'VIVA 2 PRO', 'TERRA', 'CUBRE PITILLO', 'BELT BAG', 'AURA 2 PRO', 'AURA 2', 'PROTECTOR PANTALLA', 'DUFFLE BAG', 'CORREA', 'RELOJ JR', 'RELOJ CASIO', 'TOTE BAG'], sheet, 3);
   cellC.setValue(matchedProd);
 
-  // 4. CODIGO (Col D) -> CTBLT-1
   sheet.getRange(row, 4).setValue('CTBLT-1');
-
-  // 5. MODELO (Col E) -> OBSIDIAN BLACK
   sheet.getRange(row, 5).setValue('OBSIDIAN BLACK');
-
-  // 6. COLOR (Col F) -> NEGRO
   sheet.getRange(row, 6).setValue('NEGRO');
 
-  // 7. FOTO (Col G) -> Belt Bag photo de alta calidad
   const photoCell = sheet.getRange(row, 7);
   photoCell.clearContent();
   const beltBagImg = 'https://cdn.shopify.com/s/files/1/0279/6424/4068/files/CTBLT-1.webp?v=1750457388';
@@ -15039,59 +15185,80 @@ function repairRow450(ss, e) {
     photoCell.setFormula('=IMAGE("' + beltBagImg + '", 1)');
   }
 
-  // 8. FECHA (Col H) -> 08/10/2026
   const fCell = sheet.getRange(row, 8);
   fCell.setValue('08/10/2026');
   fCell.setNumberFormat('dd/MM/yyyy');
   fCell.setHorizontalAlignment('center');
 
-  // 9. CANTIDAD (Col I) -> 1
   const qCell = sheet.getRange(row, 9);
   qCell.setValue(1);
   qCell.setNumberFormat('0');
   qCell.setHorizontalAlignment('center');
 
-  // 10. PRECIO UNIDAD (Col J) -> 25.00
   const puCell = sheet.getRange(row, 10);
   puCell.setValue(25.00);
   puCell.setNumberFormat('$#,##0.00');
   puCell.setHorizontalAlignment('right');
 
-  // 11. TOTAL (Col K) -> 25.00
   const totCell = sheet.getRange(row, 11);
   totCell.setValue(25.00);
   totCell.setNumberFormat('$#,##0.00');
   totCell.setHorizontalAlignment('right');
 
-  // 12. PAGO 1 (Col L) -> 25.00
   const p1Cell = sheet.getRange(row, 12);
   p1Cell.setValue(25.00);
   p1Cell.setNumberFormat('$#,##0.00');
   p1Cell.setHorizontalAlignment('right');
 
-  // 17. PENDIENTE (Col Q) -> 0.00
   const pendCell = sheet.getRange(row, 17);
   pendCell.setValue(0.00);
   pendCell.setNumberFormat('$#,##0.00');
   pendCell.setHorizontalAlignment('right');
 
-  // Formato completo idéntico (Roboto 10pt, vertical middle)
   const range450 = sheet.getRange(row, 1, 1, 17);
   range450.setFontFamily('Roboto');
   range450.setFontSize(10);
   range450.setVerticalAlignment('middle');
 
-  Logger.log("✅ Fila 450 reparada exitosamente con todas las 17 columnas y formato");
   return jsonResponse({
     status: 'success',
-    message: 'Fila 450 reparada exitosamente con toda la información y formatos (Responsable: JESUS, Producto: BELT BAG, Modelo: OBSIDIAN BLACK, Color: NEGRO, Foto, Cantidad: 1, Total: $25.00, Pago 1: $25.00, Pendiente: $0.00).'
+    message: 'Fila 450 reparada exitosamente con toda la información y formatos.'
   }, e);
 }
 
-function matchValidationValue(cell, targetVal, fallbackList) {
-  var normTarget = (targetVal || '').toString().trim().toUpperCase();
+function normalizeValidationToken(str) {
+  return (str || '')
+    .toString()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\\u0300-\\u036f]/g, '')
+    .toUpperCase();
+}
+
+function matchValidationValue(cell, targetVal, fallbackList, sheet, colOneBased) {
+  var normTarget = normalizeValidationToken(targetVal);
+  if (normTarget === 'HYDRO BOTTLE' || normTarget === 'WATER BOTTLE') normTarget = 'HYDRO';
+  if (normTarget === 'TUMBLER') normTarget = 'TUMBLR';
+  if (normTarget === 'TUMBLER MINI') normTarget = 'TUMBLR MINI';
+
   try {
-    var rule = cell.getDataValidation();
+    var rule = cell ? cell.getDataValidation() : null;
+    if (!rule && sheet && colOneBased) {
+      var maxCheck = Math.min(sheet.getLastRow(), 40);
+      if (maxCheck >= 2) {
+        var colRules = sheet.getRange(2, colOneBased, maxCheck - 1, 1).getDataValidations();
+        for (var r = 0; r < colRules.length; r++) {
+          if (colRules[r][0]) {
+            rule = colRules[r][0];
+            try {
+              if (cell) cell.setDataValidation(rule);
+            } catch (eSet) {}
+            break;
+          }
+        }
+      }
+    }
+
     if (rule) {
       var criteriaVals = rule.getCriteriaValues();
       if (criteriaVals && criteriaVals.length > 0) {
@@ -15102,15 +15269,20 @@ function matchValidationValue(cell, targetVal, fallbackList) {
           options = criteriaVals[0].getValues().flat();
         }
         for (var i = 0; i < options.length; i++) {
-          var opt = (options[i] || '').toString().trim();
-          if (opt.toUpperCase() === normTarget) {
-            return opt;
+          var rawOpt = (options[i] || '').toString();
+          var trimOpt = rawOpt.trim();
+          if (!trimOpt) continue;
+          if (normalizeValidationToken(trimOpt) === normTarget) {
+            return rawOpt;
           }
         }
         for (var j = 0; j < options.length; j++) {
-          var opt2 = (options[j] || '').toString().trim();
-          if (opt2.toUpperCase().indexOf(normTarget) > -1 || normTarget.indexOf(opt2.toUpperCase()) > -1) {
-            return opt2;
+          var rawOpt2 = (options[j] || '').toString();
+          var trimOpt2 = rawOpt2.trim();
+          if (!trimOpt2) continue;
+          var normOpt2 = normalizeValidationToken(trimOpt2);
+          if (normOpt2.indexOf(normTarget) > -1 || normTarget.indexOf(normOpt2) > -1) {
+            return rawOpt2;
           }
         }
       }
@@ -15119,12 +15291,13 @@ function matchValidationValue(cell, targetVal, fallbackList) {
 
   if (fallbackList && fallbackList.length > 0) {
     for (var k = 0; k < fallbackList.length; k++) {
-      if (fallbackList[k].toUpperCase() === normTarget) {
+      if (normalizeValidationToken(fallbackList[k]) === normTarget) {
         return fallbackList[k];
       }
     }
     for (var m = 0; m < fallbackList.length; m++) {
-      if (fallbackList[m].toUpperCase().indexOf(normTarget) > -1 || normTarget.indexOf(fallbackList[m].toUpperCase()) > -1) {
+      var normFb = normalizeValidationToken(fallbackList[m]);
+      if (normFb.indexOf(normTarget) > -1 || normTarget.indexOf(normFb) > -1) {
         return fallbackList[m];
       }
     }
@@ -16785,8 +16958,8 @@ async function autoSyncSaleToSheets(saleRecord, logActivity = true) {
 
   const posSellerSelect = document.getElementById('saleSellerSelect');
   const selPosVal = (posSellerSelect && posSellerSelect.value) ? posSellerSelect.value.trim() : '';
-  let finalSeller = (selPosVal || saleRecord.seller || saleRecord.vendedor || (state.currentUser ? (state.currentUser.sellerName || state.currentUser.fullName || state.currentUser.username) : '') || 'JENNIFER').trim().toUpperCase();
-  if (finalSeller === 'TIENDA PRINCIPAL' || finalSeller === 'ADMIN' || finalSeller === 'GERENCIA') {
+  let finalSeller = (saleRecord.vendedor || saleRecord.seller || selPosVal || (state.currentUser ? (state.currentUser.sellerName || state.currentUser.fullName || state.currentUser.username) : '') || 'JENNIFER').trim().toUpperCase();
+  if (finalSeller === 'TIENDA PRINCIPAL' || finalSeller === 'ADMIN' || finalSeller === 'GERENCIA' || finalSeller === 'GENERAL') {
     finalSeller = selPosVal ? selPosVal.toUpperCase() : 'JENNIFER';
   }
 
@@ -16795,10 +16968,11 @@ async function autoSyncSaleToSheets(saleRecord, logActivity = true) {
   const img = specs.image || primaryItem.image || saleRecord.image || '';
 
   const total = Number(saleRecord.totalAmount || saleRecord.total) || 0;
-  const qty = Number(primaryItem.quantity) || (saleRecord.items ? saleRecord.items.reduce((acc, i) => acc + (Number(i.quantity) || 1), 0) : 1);
+  const qty = Number(primaryItem.quantity) || 1;
   const unitPrice = Number(primaryItem.unitPrice) || (qty > 0 ? (total / qty) : total);
-  const collected = Number(saleRecord.creditAbono || saleRecord.creditPaid) || (saleRecord.paymentType === 'contado' ? total : 0);
-  const pending = Number(saleRecord.creditBalance || saleRecord.creditRemaining) || Math.max(0, total - collected);
+  const isContado = (saleRecord.paymentType || '').toLowerCase().startsWith('contado');
+  const collected = isContado ? total : (Number(saleRecord.creditAbono || saleRecord.creditPaid) || 0);
+  const pending = isContado ? 0 : Math.max(0, total - collected);
 
   const clientNameVal = (saleRecord.clientName || saleRecord.client || 'CLIENTE GENERAL').trim().toUpperCase();
 
@@ -16816,9 +16990,9 @@ async function autoSyncSaleToSheets(saleRecord, logActivity = true) {
     modelo: specs.model,
     color: specs.color,
     image: img,
-    quantity: qty,
+    quantity: 1,
     unitPrice: unitPrice,
-    totalAmount: total,
+    totalAmount: unitPrice,
     collectedAmount: collected,
     pendingAmount: pending,
     paymentType: saleRecord.paymentType || 'contado',
@@ -16829,7 +17003,7 @@ async function autoSyncSaleToSheets(saleRecord, logActivity = true) {
 
   try {
     // Send as text/plain to avoid CORS preflight restriction in Apps Script
-    fetch(url, {
+    await fetch(url, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
@@ -16837,7 +17011,7 @@ async function autoSyncSaleToSheets(saleRecord, logActivity = true) {
     }).catch(e => console.warn('Background sync fetch dispatch:', e));
 
     if (logActivity) {
-      appendSheetsSyncLog(`[Auto-Sync] Venta #${saleRecord.id} ($${total.toFixed(2)}) enviada a Google Sheets.`);
+      appendSheetsSyncLog(`[Auto-Sync] Venta individual #${saleRecord.id} (${specs.productLine} - $${unitPrice.toFixed(2)} - Resp: ${finalSeller}) enviada a Google Sheets.`);
     }
   } catch (err) {
     console.error('Error enviando venta a Google Sheets:', err);
