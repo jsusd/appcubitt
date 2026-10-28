@@ -493,6 +493,11 @@ function loadSalesFromStorage() {
       state.sales = state.sales.map(s => {
         if (s.isBajoPedido === undefined) s.isBajoPedido = false;
         if (!s.orderStatus) s.orderStatus = s.isBajoPedido ? 'PENDIENTE_COMPRA' : 'ENTREGADO';
+        if (s.date === '2026-10-28' && s.rowNumber >= 355 && s.rowNumber <= 360 && (s.client === 'TANIA' || s.client === 'ALFONSO')) {
+          s.client = 'Cliente General';
+          s.clientName = 'Cliente General';
+          s.clientId = null;
+        }
         return sanitizeSaleRecord(s);
       });
       sanitizeSalesState();
@@ -14673,8 +14678,10 @@ function doGet(e) {
     const notes = dataRange.getNotes();
 
     const salesList = [];
-    const colResponsable = findColIndex(headers, ['responsable', 'vendedor', 'seller', 'asesor']);
-    const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
+    const foundResp = findColIndex(headers, ['responsable', 'vendedor', 'seller', 'asesor']);
+    const colResponsable = foundResp >= 0 ? foundResp : 0;
+    const foundCli = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
+    const colCliente = foundCli >= 0 ? foundCli : 1;
     const colProducto = findColIndex(headers, ['producto', 'product', 'descripcion', 'artículo']);
     const colCodigo = findColIndex(headers, ['codigo', 'código', 'code', 'sku']);
     const colModelo = findColIndex(headers, ['modelo', 'model']);
@@ -16472,6 +16479,11 @@ async function syncFromGoogleSheets(showToastNotification = true) {
     }
 
     const fetchedSales = data.sales;
+    const isLegacyScriptVersion = fetchedSales.length > 0 && !('responsable' in fetchedSales[0]);
+    if (isLegacyScriptVersion) {
+      appendSheetsSyncLog(`⚠️ [AVISO] La URL de Google Sheets conectada sigue ejecutando el script antiguo (no envía la Columna A "Responsable"). En Apps Script usa "Implementar > Administrar implementaciones > Editar (lápiz) > Nueva versión", o si creaste una "Nueva implementación", copia y pega la nueva URL aquí.`);
+      showToast('⚠️ La URL de Sheets conectada aún ejecuta el script antiguo (no lee Columna A "Responsable"). Publica "Nueva versión" o actualiza la URL.', 'warning');
+    }
     appendSheetsSyncLog(`[Descarga] Recibidas ${fetchedSales.length} ventas desde la hoja "${data.sheetName || 'ventas'}". Procesando...`);
 
     // Ingest and map fetched sales
@@ -16537,7 +16549,7 @@ async function syncFromGoogleSheets(showToastNotification = true) {
 
       // Manejo inteligente de Cliente y Vendedor (incluyendo Cashea y Bull)
       let rawClient = (item.client || '').trim();
-      let rawSeller = (item.seller || '').trim();
+      let rawSeller = (item.responsable || item.seller || '').trim();
       let client = rawClient;
       let seller = rawSeller;
       let isCasheaSale = false;
@@ -16547,12 +16559,12 @@ async function syncFromGoogleSheets(showToastNotification = true) {
       if (upperClient.includes('CASHEA')) {
         isCasheaSale = true;
         let worker = rawClient.replace(/cashea/gi, '').replace(/bull/gi, '').trim();
-        seller = worker || rawSeller || 'CASHEA';
+        seller = rawSeller || worker || 'CASHEA';
         client = 'Cliente Cashea';
       } else if (upperClient.includes('BULL')) {
         isBullSale = true;
         let worker = rawClient.replace(/bull/gi, '').trim();
-        seller = worker || rawSeller || 'BULL';
+        seller = rawSeller || worker || 'BULL';
         client = 'Cliente Bull';
       } else {
         if (!client) {
@@ -16650,32 +16662,19 @@ async function syncFromGoogleSheets(showToastNotification = true) {
         }];
       }
 
-      // Check if this sale already exists locally by rowNumber or previous deterministic ID
-      const existingIdx = (state.sales || []).findIndex(s =>
-        s && (
-          s.rowNumber === rowNum ||
-          s.id === `SHEETS-R${rowNum}` ||
-          (typeof s.id === 'string' && s.id.startsWith(`SHEETS-R${rowNum}-`))
-        )
-      );
-
-      const existingSale = existingIdx >= 0 ? state.sales[existingIdx] : null;
-
-      // Resolver cliente canónico
+      // Resolver cliente canónico estrictamente desde el texto de la celda de Google Sheets
+      // (NUNCA heredar clientId por número de fila desplazado si la celda de Cliente está vacía en la hoja)
       let resolvedClientObj = null;
       const trimmedClient = (client || '').trim();
       const isGenericClient = !trimmedClient ||
-        ['cliente general', 'general', 'consumidor final', 'cliente'].includes(trimmedClient.toLowerCase());
+        ['cliente general', 'general', 'consumidor final', 'cliente', 'sin cliente'].includes(trimmedClient.toLowerCase());
 
       if (!isGenericClient) {
         resolvedClientObj = findClientByAnyNameOrAlias(trimmedClient, null);
-      } else if (existingSale && existingSale.clientId) {
-        // Solo si la fila de Sheets no trae nombre pero localmente ya se le había vinculado uno
-        resolvedClientObj = (state.clients || []).find(c => c && c.id === existingSale.clientId) || null;
       }
 
       const canonicalClientName = resolvedClientObj ? resolvedClientObj.name : (trimmedClient || 'Cliente General');
-      const canonicalClientId = resolvedClientObj ? resolvedClientObj.id : (existingSale?.clientId || null);
+      const canonicalClientId = resolvedClientObj ? resolvedClientObj.id : null;
 
       const saleObj = sanitizeSaleRecord({
         id: saleId,

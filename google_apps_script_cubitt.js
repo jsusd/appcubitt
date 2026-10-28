@@ -79,8 +79,10 @@ function doGet(e) {
     const notes = dataRange.getNotes();
 
     const salesList = [];
-    const colResponsable = findColIndex(headers, ['responsable', 'vendedor', 'seller', 'asesor']);
-    const colCliente = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
+    const foundResp = findColIndex(headers, ['responsable', 'vendedor', 'seller', 'asesor']);
+    const colResponsable = foundResp >= 0 ? foundResp : 0;
+    const foundCli = findColIndex(headers, ['cliente', 'client', 'comprador', 'nombre']);
+    const colCliente = foundCli >= 0 ? foundCli : 1;
     const colProducto = findColIndex(headers, ['producto', 'product', 'descripcion', 'artículo']);
     const colCodigo = findColIndex(headers, ['codigo', 'código', 'code', 'sku']);
     const colModelo = findColIndex(headers, ['modelo', 'model']);
