@@ -24,7 +24,7 @@
       </div>
       <div class="header-stats">
         <div class="header-stat-box">
-          <div class="stat-label">Total Ventas</div>
+          <div class="stat-label">Unidades Vendidas</div>
           <div class="stat-val" id="topTotalSalesCount">0</div>
         </div>
         <div class="header-stat-box">
@@ -795,6 +795,45 @@
               <button class="btn btn-outline" onclick="clearCart()" title="Vaciar Pedido" style="color: #ef4444;">
                 🗑️
               </button>
+            </div>
+          </div>
+
+          <!-- Resumen de Hoy: información clave a la mano -->
+          <div class="app-card daily-summary-card" id="dailySummaryCard" style="margin-bottom: 1.5rem;">
+            <div class="card-title">
+              <span>📌 Resumen de Hoy</span>
+              <span class="daily-summary-date" id="dailySummaryDate"></span>
+            </div>
+            <div id="dailySummaryNotice" class="daily-summary-notice" style="display: none;"></div>
+            <div class="daily-summary-grid">
+              <div class="daily-kpi">
+                <div class="daily-kpi-label">Vendido hoy</div>
+                <div class="daily-kpi-value" id="dailySalesToday">$0.00</div>
+                <div class="daily-kpi-sub" id="dailySalesTodaySub">0 ventas</div>
+              </div>
+              <div class="daily-kpi">
+                <div class="daily-kpi-label">Cobrado hoy</div>
+                <div class="daily-kpi-value daily-kpi-good" id="dailyCollectedToday">$0.00</div>
+                <div class="daily-kpi-sub">Contado + abonos del día</div>
+              </div>
+              <div class="daily-kpi">
+                <div class="daily-kpi-label">Vendido este mes</div>
+                <div class="daily-kpi-value" id="dailySalesMonth">$0.00</div>
+                <div class="daily-kpi-sub" id="dailySalesMonthSub">0 ventas</div>
+              </div>
+              <div class="daily-kpi daily-kpi-link" onclick="switchTab('credits')" title="Ver créditos pendientes">
+                <div class="daily-kpi-label">Por cobrar</div>
+                <div class="daily-kpi-value daily-kpi-warn" id="dailyPendingCredit">$0.00</div>
+                <div class="daily-kpi-sub" id="dailyPendingCreditSub">0 créditos</div>
+              </div>
+            </div>
+            <div class="daily-alerts" id="dailyAlerts"></div>
+            <div class="daily-debtors">
+              <div class="daily-debtors-title">
+                <span>Clientes con mayor saldo pendiente</span>
+                <button type="button" class="btn btn-outline btn-xs" onclick="switchTab('credits')">Ver todos →</button>
+              </div>
+              <div id="dailyTopDebtors" class="daily-debtors-list"></div>
             </div>
           </div>
 
@@ -2140,7 +2179,7 @@
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
           <button type="button" class="btn btn-sm" onclick="syncFromGoogleSheets(true)" style="background: rgba(255,255,255,0.18); color: #ffffff; border: 1px solid rgba(255,255,255,0.35);">
-            🔄 Sincronizar Google Sheets ($21,262.23)
+            🔄 Sincronizar Google Sheets
           </button>
           <button type="button" class="btn btn-sm btn-success" onclick="openExpenseModal()">
             ➕ Registrar Gasto / Egreso
@@ -2157,15 +2196,7 @@
           <div>
             <label class="form-label" style="font-size: 0.72rem; margin-bottom: 2px;">Periodo / Rango:</label>
             <select id="analyticsPeriodSelect" class="form-control" style="font-size: 0.82rem; padding: 6px 10px;" onchange="handleAnalyticsFilterChange()">
-              <option value="all" selected>Todo el Histórico ($21,262.23)</option>
-              <option value="2026">Año 2026 Completo ($21,262.23)</option>
-              <option value="2026-10">Octubre 2026 ($3,658.00)</option>
-              <option value="2026-09">Septiembre 2026 ($6,220.01)</option>
-              <option value="2026-08">Agosto 2026 ($5,341.72)</option>
-              <option value="2026-07">Julio 2026 ($3,857.88)</option>
-              <option value="2026-06">Junio 2026 ($609.62)</option>
-              <option value="2026-05">Mayo 2026 ($1,351.00)</option>
-              <option value="2026-04">Abril 2026 ($224.00)</option>
+              <option value="all" selected>Todo el Histórico</option>
             </select>
           </div>
 
@@ -4262,10 +4293,7 @@
       <div class="login-brand-badge">Cubitt Retail POS</div>
       <h1 class="login-title">Acceso al Sistema</h1>
       <p class="login-subtitle">
-        Ingresa con tus credenciales o accede directamente con un clic.<br>
-        <span style="display: inline-block; margin-top: 6px; padding: 4px 10px; background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.35); border-radius: 6px; font-size: 0.8rem; color: #93c5fd;">
-          🔑 <strong>Credenciales:</strong> Usuario: <strong style="color: #ffffff;">admin</strong> | Clave: <strong style="color: #ffffff;">123</strong>
-        </span>
+        Ingresa con tu usuario y contraseña. La sesión queda guardada en este dispositivo hasta que pulses «Salir».
       </p>
 
       <div id="loginErrorMsg" class="login-error-alert"></div>
@@ -4273,13 +4301,13 @@
       <form id="loginForm" onsubmit="event.preventDefault(); handleLoginSubmit();">
         <div class="login-input-group">
           <label class="login-input-label" for="loginUsernameInput">Nombre de Usuario</label>
-          <input type="text" id="loginUsernameInput" class="login-input" placeholder="Ej: admin o juan.perez" autocomplete="username" value="admin">
+          <input type="text" id="loginUsernameInput" class="login-input" placeholder="Ej: admin o juan.perez" autocomplete="username" autocapitalize="none" spellcheck="false">
         </div>
 
         <div class="login-input-group">
           <label class="login-input-label" for="loginPasswordInput">Contraseña</label>
           <div class="password-input-wrapper">
-            <input type="password" id="loginPasswordInput" class="login-input" placeholder="Tu contraseña..." autocomplete="current-password" value="123">
+            <input type="password" id="loginPasswordInput" class="login-input" placeholder="Tu contraseña..." autocomplete="current-password">
             <button type="button" class="toggle-eye-btn" onclick="togglePasswordVisibility('loginPasswordInput', 'loginPasswordEyeIcon')" title="Ver/Ocultar clave" style="color: #94a3b8;">
               <span id="loginPasswordEyeIcon">👁️</span>
             </button>
@@ -4290,32 +4318,8 @@
           <span>🚀 Iniciar Sesión</span>
         </button>
 
-        <button type="button" class="btn btn-outline" onclick="quickLoginDemo('admin')" style="width: 100%; margin-top: 10px; border-color: rgba(255, 255, 255, 0.2); color: #f1f5f9; font-size: 0.88rem; padding: 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.05); font-weight: 600;">
-          👑 Entrar Directo como Gerencia (admin)
-        </button>
       </form>
 
-      <!-- Quick Demo Access for Fast Testing -->
-      <div class="login-demo-section">
-        <div class="login-demo-title">⚡ O selecciona un rol con 1 clic:</div>
-        <div class="login-demo-chips">
-          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('admin')" title="Acceso total directivo">
-            👑 Gerencia (admin)
-          </button>
-          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('inversor')" title="Supervisión financiera">
-            💼 Inversor (inversor)
-          </button>
-          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('juan.perez')" title="Ventas individuales">
-            👔 Vendedor Juan
-          </button>
-          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('ana.silva')" title="Ventas individuales">
-            👔 Vendedora Ana
-          </button>
-          <button type="button" class="login-demo-chip" onclick="quickLoginDemo('pedro.gomez')" title="Ventas individuales">
-            👔 Vendedor Pedro
-          </button>
-        </div>
-      </div>
     </div>
   </div>
 

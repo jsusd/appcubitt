@@ -356,30 +356,35 @@ function getDeletedSaleKeys() {
   }
 }
 
+function getSaleFingerprint(sale) {
+  if (!sale) return '';
+  // La fecha no se incluye: al importar, las fechas vacías de la hoja se rellenan con la anterior
+  const sTotal = Number(sale.totalAmount || sale.total || 0).toFixed(2);
+  const sCode = String(sale.productCode || (sale.items && sale.items[0] && sale.items[0].code) || '').trim().toUpperCase();
+  return `${sTotal}|${sCode}`;
+}
+
+function getLastKnownSheetSize() {
+  if (state.currentImportSheetSize) return state.currentImportSheetSize;
+  try {
+    return parseInt(localStorage.getItem('cubitt_last_sheet_size_v1') || '0', 10) || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
 function recordDeletedSale(sale) {
   if (!sale) return;
   const deletedSet = getDeletedSaleKeys();
 
   if (sale.id) deletedSet.add(sale.id);
 
-  if (sale.rowNumber) {
-    deletedSet.add(`ROW-${sale.rowNumber}`);
-    deletedSet.add(`SHEETS-R${sale.rowNumber}`);
-  }
-  if (typeof sale.id === 'string' && sale.id.startsWith('SHEETS-R')) {
-    deletedSet.add(sale.id);
-    const rNum = parseInt(sale.id.replace('SHEETS-R', ''));
-    if (!isNaN(rNum)) {
-      deletedSet.add(`ROW-${rNum}`);
-      deletedSet.add(`SHEETS-R${rNum}`);
-    }
-  }
-
-  const sDate = (sale.date || (sale.timestamp || '').slice(0, 10)).trim();
-  const sTotal = Number(sale.totalAmount || sale.total || 0).toFixed(2);
-  const sCode = (sale.productCode || (sale.items && sale.items[0] && sale.items[0].code) || '').trim().toUpperCase();
-  if (sDate && sTotal && sCode) {
-    deletedSet.add(`SIG-${sDate}-${sTotal}-${sCode}`);
+  // Para filas de Google Sheets: guardar fila + contenido. Solo se oculta una fila importada si
+  // coinciden AMBOS (si la fila se desplazó y ahora contiene otra venta, NO se oculta).
+  const rowNum = sale.rowNumber || (typeof sale.id === 'string' && sale.id.startsWith('SHEETS-R') ? parseInt(sale.id.replace('SHEETS-R', ''), 10) : null);
+  if (rowNum) {
+    // "@<n>" = tamaño de la hoja al momento de borrar; si luego la hoja es más corta, el borrado ya se aplicó allá
+    deletedSet.add(`ROWSIG-${rowNum}-${getSaleFingerprint(sale)}@${getLastKnownSheetSize() || 0}`);
   }
 
   try {
@@ -394,22 +399,22 @@ function isSaleDeleted(saleOrItem) {
   const deletedSet = getDeletedSaleKeys();
   if (deletedSet.size === 0) return false;
 
-  if (saleOrItem.id && deletedSet.has(saleOrItem.id)) return true;
-  if (saleOrItem.rowNumber && (deletedSet.has(`ROW-${saleOrItem.rowNumber}`) || deletedSet.has(`SHEETS-R${saleOrItem.rowNumber}`))) return true;
-
-  if (typeof saleOrItem.id === 'string' && saleOrItem.id.startsWith('SHEETS-R')) {
-    const rNum = parseInt(saleOrItem.id.replace('SHEETS-R', ''));
-    if (!isNaN(rNum) && (deletedSet.has(`ROW-${rNum}`) || deletedSet.has(`SHEETS-R${rNum}`))) return true;
+  const rowNum = saleOrItem.rowNumber || (typeof saleOrItem.id === 'string' && saleOrItem.id.startsWith('SHEETS-R') ? parseInt(saleOrItem.id.replace('SHEETS-R', ''), 10) : null);
+  if (rowNum) {
+    // Filas de Sheets: el id "SHEETS-R<n>" se reutiliza cuando las filas se desplazan, así que se valida el contenido
+    const prefix = `ROWSIG-${rowNum}-${getSaleFingerprint(saleOrItem)}`;
+    const currentSize = state.currentImportSheetSize || 0;
+    for (const key of deletedSet) {
+      if (key !== prefix && !key.startsWith(prefix + '@')) continue;
+      const ref = parseInt(key.slice(prefix.length + 1), 10) || 0;
+      // La hoja ya se achicó desde el borrado: la fila original ya no existe y esta es otra venta que se desplazó
+      if (ref && currentSize && currentSize < ref) continue;
+      return true;
+    }
+    return false;
   }
 
-  const sDate = (saleOrItem.date || (saleOrItem.timestamp || '').slice(0, 10)).trim();
-  const sTotal = Number(saleOrItem.totalAmount || saleOrItem.total || 0).toFixed(2);
-  const sCode = (saleOrItem.productCode || (saleOrItem.items && saleOrItem.items[0] && saleOrItem.items[0].code) || '').trim().toUpperCase();
-  if (sDate && sTotal && sCode && deletedSet.has(`SIG-${sDate}-${sTotal}-${sCode}`)) {
-    return true;
-  }
-
-  return false;
+  return !!(saleOrItem.id && deletedSet.has(saleOrItem.id));
 }
 
 // Purga ventas simuladas, duplicadas o eliminadas y asegura unicidad estricta de IDs
@@ -481,7 +486,9 @@ function loadSalesFromStorage() {
       if (rawDel) {
         const parsedDel = JSON.parse(rawDel);
         if (Array.isArray(parsedDel)) {
-          const filteredDel = parsedDel.filter(k => k === 'ROW-524' || k === 'SHEETS-R524');
+          // Conservar solo claves seguras: ids de ventas locales y firmas fila+contenido.
+          // Las antiguas (ROW-n, SHEETS-Rn, SIG-fecha-monto-código) ocultaban ventas legítimas tras desplazamientos de filas.
+          const filteredDel = parsedDel.filter(k => typeof k === 'string' && !/^(ROW-|SHEETS-R|SIG-)/.test(k));
           localStorage.setItem('cubitt_deleted_sales_v1', JSON.stringify(filteredDel));
         }
       }
@@ -770,6 +777,7 @@ function renderTopStats() {
   if (usersBadge) usersBadge.textContent = state.users ? state.users.length : 0;
 
   updateGoalsBonusBadge();
+  try { renderDailySummary(); } catch (e) { console.warn('renderDailySummary:', e); }
 }
 
 // Tab Switching
@@ -1670,15 +1678,22 @@ function stepQty(delta) {
 
 // Sale ID Generator
 function generateSaleId() {
-  let maxId = 1000;
-  if (state.sales && state.sales.length > 0) {
-    state.sales.forEach(s => {
-      if (s.id && typeof s.id === 'string' && s.id.startsWith('CUB-')) {
-        const num = parseInt(s.id.replace('CUB-', ''), 10);
-        if (!isNaN(num) && num > maxId) maxId = num;
-      }
-    });
-  }
+  // Empieza en 1003: CUB-1001..1003 eran ventas demo y se purgan automáticamente
+  let maxId = 1003;
+  const consider = (id) => {
+    if (id && typeof id === 'string' && /^CUB-\d+$/.test(id)) {
+      const num = parseInt(id.replace('CUB-', ''), 10);
+      if (!isNaN(num) && num > maxId) maxId = num;
+    }
+  };
+  (state.sales || []).forEach(s => consider(s && s.id));
+  // No reutilizar ids de ventas eliminadas (estarían en la lista negra y la venta nueva desaparecería)
+  getDeletedSaleKeys().forEach(consider);
+  try {
+    const last = parseInt(localStorage.getItem('cubitt_last_sale_seq_v1') || '0', 10);
+    if (!isNaN(last) && last > maxId) maxId = last;
+    localStorage.setItem('cubitt_last_sale_seq_v1', String(maxId + 1));
+  } catch (e) {}
   return `CUB-${maxId + 1}`;
 }
 
@@ -4349,18 +4364,29 @@ function handleSaveAbono() {
     return;
   }
 
+  const currentBalance = Number(sale.creditBalance) || 0;
+  if (amount - currentBalance > 0.009) {
+    showToast(`El abono ($${amount.toFixed(2)}) supera el saldo pendiente ($${currentBalance.toFixed(2)}). Ajusta el monto.`, 'danger');
+    return;
+  }
+
   const method = document.getElementById('abonoMethodSelect').value;
   const note = (document.getElementById('abonoNotesInput').value || '').trim();
 
-  sale.creditBalance = Math.max(0, sale.creditBalance - amount);
-  sale.creditAbono = (sale.creditAbono || 0) + amount;
+  // Redondear a centavos para evitar saldos "fantasma" como 0.0000001
+  sale.creditBalance = Math.max(0, Math.round((currentBalance - amount) * 100) / 100);
+  sale.creditRemaining = sale.creditBalance;
+  sale.creditAbono = Math.round(((Number(sale.creditAbono) || 0) + amount) * 100) / 100;
+  sale.creditPaid = sale.creditAbono;
   if (sale.creditBalance <= 0) {
     sale.creditStatus = 'PAGADO';
   }
 
   if (!sale.paymentsHistory) sale.paymentsHistory = [];
+  const nowAbono = new Date();
   sale.paymentsHistory.push({
-    date: formatDateTime(new Date()),
+    isoDate: getLocalDateKey(nowAbono),
+    date: formatDateTime(nowAbono),
     amount: amount,
     method: method,
     note: note || 'Abono registrado'
@@ -7225,10 +7251,11 @@ function loadUsersFromStorage() {
     console.error('Error loading users from storage:', e);
   }
 
-  if (Array.isArray(loaded) && loaded.length > 0 && loaded.some(u => u.username === 'admin')) {
+  const hasActiveManager = Array.isArray(loaded) && loaded.some(u => u && u.role === 'gerencia' && u.status === 'ACTIVO');
+  if (Array.isArray(loaded) && loaded.length > 0 && hasActiveManager) {
     state.users = loaded;
   } else {
-    // Si no existía, estaba vacío o no incluía a admin, inicializar usuarios por defecto
+    // Si no existía, estaba vacío o no quedaba ningún usuario de Gerencia activo, inicializar usuarios por defecto
     state.users = getDefaultUsers();
     saveUsersToStorage();
   }
@@ -7844,8 +7871,7 @@ function getAccessiblePayables() {
 }
 
 function loadSessionFromStorage() {
-  // Asegurar que state.users tenga los usuarios por defecto
-  if (!state.users || state.users.length === 0 || !state.users.some(u => u.username === 'admin')) {
+  if (!state.users || state.users.length === 0) {
     loadUsersFromStorage();
   }
 
@@ -7866,19 +7892,6 @@ function loadSessionFromStorage() {
     console.error('Error loading session from storage:', e);
   }
 
-  // Si no hay sesión activa previa, auto-iniciar inmediatamente como Gerencia (admin)
-  const defaultAdmin = (state.users || []).find(u => u.username === 'admin') || getDefaultUsers()[0];
-  if (defaultAdmin) {
-    state.currentUser = defaultAdmin;
-    try {
-      localStorage.setItem('cubitt_session_user_v1', JSON.stringify({ id: defaultAdmin.id, username: defaultAdmin.username }));
-    } catch (e) {}
-    hideLoginOverlay();
-    updateHeaderUserProfile();
-    try { applyUserRoleUI(); } catch (e) {}
-    return;
-  }
-
   state.currentUser = null;
   showLoginOverlay();
 }
@@ -7891,8 +7904,8 @@ function showLoginOverlay() {
     const uInput = document.getElementById('loginUsernameInput');
     const pInput = document.getElementById('loginPasswordInput');
     const errBox = document.getElementById('loginErrorMsg');
-    if (uInput) uInput.value = 'admin';
-    if (pInput) pInput.value = '123';
+    if (uInput) uInput.value = '';
+    if (pInput) pInput.value = '';
     if (errBox) {
       errBox.style.display = 'none';
       errBox.textContent = '';
@@ -7916,55 +7929,37 @@ function handleLoginSubmit() {
   const uInput = document.getElementById('loginUsernameInput');
   const pInput = document.getElementById('loginPasswordInput');
   const errBox = document.getElementById('loginErrorMsg');
-
-  // Asegurar que state.users tenga los usuarios cargados
-  if (!state.users || state.users.length === 0 || !state.users.some(u => u.username === 'admin')) {
-    state.users = getDefaultUsers();
-    saveUsersToStorage();
-  }
-
-  let username = (uInput?.value || '').trim().toLowerCase();
-  let password = (pInput?.value || '').trim();
-
-  // Si hace clic en iniciar sesión sin escribir nada, entrar como admin por defecto
-  if (!username) {
-    username = 'admin';
-    password = '123';
-    if (uInput) uInput.value = 'admin';
-    if (pInput) pInput.value = '123';
-  }
-
-  let user = (state.users || []).find(u => (u.username || '').toLowerCase() === username);
-
-  if (!user) {
-    if (username === 'admin' || username === 'gerencia') {
-      user = getDefaultUsers()[0];
-      state.users.unshift(user);
-      saveUsersToStorage();
-    } else {
-      if (errBox) {
-        errBox.textContent = `El usuario "${username}" no existe. Usa "admin" (clave: 123) o haz clic en los accesos rápidos abajo.`;
-        errBox.style.display = 'block';
-      }
-      return;
-    }
-  }
-
-  if (user.status !== 'ACTIVO') {
+  const showError = (msg) => {
     if (errBox) {
-      errBox.textContent = 'Esta cuenta se encuentra INACTIVA. Contacta a Gerencia.';
+      errBox.textContent = msg;
       errBox.style.display = 'block';
     }
+  };
+
+  if (!state.users || state.users.length === 0) {
+    loadUsersFromStorage();
+  }
+
+  const username = (uInput?.value || '').trim().toLowerCase();
+  const password = (pInput?.value || '').trim();
+
+  if (!username || !password) {
+    showError('Ingresa tu usuario y tu contraseña.');
+    (username ? pInput : uInput)?.focus();
     return;
   }
 
-  // Permitir ingresar si es admin o coincide contraseña (por defecto: 123)
-  if (user.password !== password && password !== '123' && password !== 'admin') {
-    if (errBox) {
-      errBox.textContent = 'Contraseña incorrecta. (La contraseña por defecto es: 123)';
-      errBox.style.display = 'block';
-    }
+  const user = (state.users || []).find(u => (u.username || '').toLowerCase() === username);
+
+  if (!user || user.password !== password) {
+    showError('Usuario o contraseña incorrectos.');
+    if (pInput) pInput.value = '';
     pInput?.focus();
+    return;
+  }
+
+  if (user.status !== 'ACTIVO') {
+    showError('Esta cuenta se encuentra INACTIVA. Contacta a Gerencia.');
     return;
   }
 
@@ -7988,32 +7983,19 @@ function handleLoginSubmit() {
   try { renderGoalsTab(); } catch (e) { console.warn('renderGoalsTab:', e); }
   try { renderUsersTab(); } catch (e) { console.warn('renderUsersTab:', e); }
 
+  if (pInput) pInput.value = '';
+  if (errBox) errBox.style.display = 'none';
   showToast(`¡Bienvenido, ${user.fullName}! 👋 (${getUserRoleLabel(user.role)})`, 'success');
+  warnIfDefaultPassword(user);
 }
 
-function quickLoginDemo(username) {
-  if (!state.users || state.users.length === 0 || !state.users.some(u => u.username === (username || '').toLowerCase())) {
-    loadUsersFromStorage();
-  }
-
-  const user = (state.users || []).find(u => (u.username || '').toLowerCase() === (username || '').toLowerCase());
-  if (!user) {
-    const def = getDefaultUsers().find(u => (u.username || '').toLowerCase() === (username || '').toLowerCase());
-    if (def) {
-      state.users.push(def);
-      saveUsersToStorage();
-      return quickLoginDemo(username);
-    }
-    showToast(`Usuario ${username} no encontrado`, 'danger');
-    return;
-  }
-
-  const uInput = document.getElementById('loginUsernameInput');
-  const pInput = document.getElementById('loginPasswordInput');
-  if (uInput) uInput.value = user.username;
-  if (pInput) pInput.value = user.password;
-
-  handleLoginSubmit();
+// Las contraseñas de fábrica ("123") son públicas: pedir que se cambien al entrar
+function warnIfDefaultPassword(user) {
+  if (!user || user.password !== '123') return;
+  setTimeout(() => {
+    showToast('🔐 Tu contraseña es la de fábrica ("123"). Cámbiala ahora para proteger la información.', 'warning');
+    try { openChangePasswordModal(user.id); } catch (e) {}
+  }, 600);
 }
 
 function handleLogout() {
@@ -13346,6 +13328,86 @@ function resetAnalyticsFilters() {
   showToast('Filtros del dashboard restablecidos', 'info');
 }
 
+// --------------------------------------------------------------------------
+// Helpers de métricas: todo se calcula a partir de las ventas y egresos reales
+// --------------------------------------------------------------------------
+function getSaleDateKey(sale) {
+  if (!sale) return '';
+  if (sale.date && /^\d{4}-\d{2}-\d{2}/.test(sale.date)) return sale.date.slice(0, 10);
+  if (sale.timestamp) {
+    const d = new Date(sale.timestamp);
+    if (!isNaN(d.getTime())) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+  }
+  return '';
+}
+
+function getSaleChannel(sale) {
+  const p = (sale.plataforma || sale.platform || '').toLowerCase();
+  if (p === 'mercadolibre' || sale.paymentType === 'contado_mercadolibre' || sale.paymentMethod === 'Contado - MercadoLibre') return 'mercadolibre';
+  if (p === 'facebook_marketplace' || p === 'facebook') return 'facebook_marketplace';
+  const sub = (sale.creditSubtype || '').toLowerCase();
+  if (p === 'cashea' || sub.startsWith('cashea')) return 'cashea';
+  return 'tienda';
+}
+
+function getSaleUnits(sale) {
+  if (sale.items && sale.items.length) {
+    return sale.items.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+  }
+  return Number(sale.quantity) || 1;
+}
+
+function getSalePending(sale) {
+  return (sale.paymentType === 'credito' && (sale.creditStatus || '').toUpperCase() === 'PENDIENTE')
+    ? (Number(sale.creditBalance) || 0)
+    : 0;
+}
+
+function formatMoney(value) {
+  return `$${(Number(value) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+const MONTH_NAMES_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+// Reconstruye el selector de períodos con los meses que realmente tienen ventas
+function populateAnalyticsPeriodSelect() {
+  const select = document.getElementById('analyticsPeriodSelect');
+  if (!select) return;
+  const sales = typeof getAccessibleSales === 'function' ? getAccessibleSales() : (state.sales || []);
+  const byMonth = new Map();
+  const byYear = new Map();
+  let total = 0;
+  sales.forEach(s => {
+    const key = getSaleDateKey(s);
+    const amt = Number(s.totalAmount) || 0;
+    total += amt;
+    if (!key) return;
+    byMonth.set(key.slice(0, 7), (byMonth.get(key.slice(0, 7)) || 0) + amt);
+    byYear.set(key.slice(0, 4), (byYear.get(key.slice(0, 4)) || 0) + amt);
+  });
+  const current = state.analyticsPeriod || 'all';
+  const opts = [`<option value="all">Todo el Histórico (${formatMoney(total)})</option>`];
+  Array.from(byYear.keys()).sort().reverse().forEach(y => {
+    opts.push(`<option value="${y}">Año ${y} Completo (${formatMoney(byYear.get(y))})</option>`);
+  });
+  Array.from(byMonth.keys()).sort().reverse().forEach(m => {
+    const [y, mm] = m.split('-');
+    opts.push(`<option value="${m}">${MONTH_NAMES_ES[Number(mm) - 1] || mm} ${y} (${formatMoney(byMonth.get(m))})</option>`);
+  });
+  select.innerHTML = opts.join('');
+  const values = Array.from(select.options).map(o => o.value);
+  select.value = values.includes(current) ? current : 'all';
+  state.analyticsPeriod = select.value;
+}
+
+function matchesAnalyticsPeriod(dateKey, period) {
+  if (!period || period === 'all') return true;
+  if (!dateKey) return false;
+  return dateKey.startsWith(period);
+}
+
 // Filter Engine: Extracts metrics and aggregated datasets according to active filters
 function getFilteredAnalyticsData() {
   const period = state.analyticsPeriod || 'all';
@@ -13353,115 +13415,157 @@ function getFilteredAnalyticsData() {
   const channel = state.analyticsChannel || 'all';
 
   const accessibleSales = typeof getAccessibleSales === 'function' ? getAccessibleSales() : (state.sales || []);
-  let filteredSales = accessibleSales;
+  const filteredSales = accessibleSales.filter(s => {
+    if (!matchesAnalyticsPeriod(getSaleDateKey(s), period)) return false;
+    if (warehouse !== 'all' && (s.almacen || s.warehouse || 'barquisimeto_trinitarias') !== warehouse) return false;
+    if (channel !== 'all' && getSaleChannel(s) !== channel) return false;
+    return true;
+  });
 
-  // Period filtering
-  if (period !== 'all' && period !== '2026') {
-    filteredSales = accessibleSales.filter(s => {
-      const d = s.timestamp ? new Date(s.timestamp) : (s.date ? new Date(s.date) : null);
-      if (!d || isNaN(d.getTime())) return false;
-      const m = d.toLocaleString('es-ES', { month: 'short' }).toLowerCase();
-      return m.startsWith(period.slice(0, 3).toLowerCase()) || (s.date || '').slice(0, 7) === period;
-    });
-  }
-
-  // Calculate live sales metrics
+  // Ventas, cobranza y unidades
   let salesTotal = 0;
-  let collectedTotal = 0;
   let pendingTotal = 0;
   let totalUnits = 0;
+  let cogsSold = 0;
+  filteredSales.forEach(s => {
+    salesTotal += Number(s.totalAmount) || 0;
+    pendingTotal += getSalePending(s);
+    totalUnits += getSaleUnits(s);
+    cogsSold += Number(s.totalMayor) || 0;
+  });
+  const collectedTotal = Math.max(0, salesTotal - pendingTotal);
 
-  if (filteredSales && filteredSales.length > 0) {
-    salesTotal = filteredSales.reduce((acc, s) => acc + (Number(s.totalAmount) || 0), 0);
-    pendingTotal = filteredSales
-      .filter(s => s.paymentType === 'credito' && (s.creditStatus || '').toUpperCase() === 'PENDIENTE')
-      .reduce((acc, s) => acc + (Number(s.creditBalance) || 0), 0);
-    collectedTotal = Math.max(0, salesTotal - pendingTotal);
-    totalUnits = filteredSales.reduce((acc, s) => {
-      if (s.items && s.items.length) {
-        return acc + s.items.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
-      }
-      return acc + (Number(s.quantity) || 1);
-    }, 0);
-
-    // Si estamos viendo todo el histórico sin filtros de mes/almacén/canal, alinear el conteo de unidades con la fila oficial de totales de Google Sheets (487)
-    const isUnfilteredAll = (period === 'all' || period === '2026') && warehouse === 'all' && channel === 'all' && (!state.currentUser || state.currentUser.role !== 'vendedor');
-    if (isUnfilteredAll) {
-      if (state.sheetsOfficialSummary && state.sheetsOfficialSummary.totalUnits) {
-        totalUnits = state.sheetsOfficialSummary.totalUnits;
-      } else if (Math.abs(salesTotal - DRIVE_HISTORICAL_DATASET.totalSales) < 1 && totalUnits < DRIVE_HISTORICAL_DATASET.totalUnits) {
-        totalUnits = DRIVE_HISTORICAL_DATASET.totalUnits;
-      }
-    }
-  } else {
-    salesTotal = DRIVE_HISTORICAL_DATASET.totalSales;
-    collectedTotal = DRIVE_HISTORICAL_DATASET.totalCollected;
-    pendingTotal = DRIVE_HISTORICAL_DATASET.totalPending;
-    totalUnits = DRIVE_HISTORICAL_DATASET.totalUnits || 487;
+  // Si no hay filtros y la hoja oficial trae su fila de totales, usar ese conteo de unidades
+  const isUnfiltered = period === 'all' && warehouse === 'all' && channel === 'all'
+    && (!state.currentUser || state.currentUser.role !== 'vendedor');
+  if (isUnfiltered && state.sheetsOfficialSummary && state.sheetsOfficialSummary.totalUnits) {
+    totalUnits = state.sheetsOfficialSummary.totalUnits;
   }
 
-  let monthlyData = JSON.parse(JSON.stringify(DRIVE_HISTORICAL_DATASET.monthly));
-  let sellersData = JSON.parse(JSON.stringify(DRIVE_HISTORICAL_DATASET.sellers));
-  let productsData = JSON.parse(JSON.stringify(DRIVE_HISTORICAL_DATASET.products));
-  let expensesData = (state.expenses || []).slice();
+  // Vendedores
+  const sellersMap = new Map();
+  filteredSales.forEach(s => {
+    const sName = (s.seller || s.vendedor || 'General').toUpperCase().trim() || 'GENERAL';
+    if (!sellersMap.has(sName)) sellersMap.set(sName, { name: sName, units: 0, sales: 0, collected: 0, pending: 0, rate: 0 });
+    const rec = sellersMap.get(sName);
+    const sTotal = Number(s.totalAmount) || 0;
+    const sPending = getSalePending(s);
+    rec.units += getSaleUnits(s);
+    rec.sales += sTotal;
+    rec.pending += sPending;
+    rec.collected += Math.max(0, sTotal - sPending);
+  });
+  const sellersData = Array.from(sellersMap.values()).map(sel => ({
+    ...sel,
+    sales: Math.round(sel.sales * 100) / 100,
+    collected: Math.round(sel.collected * 100) / 100,
+    pending: Math.round(sel.pending * 100) / 100,
+    rate: sel.sales > 0 ? Math.round((sel.collected / sel.sales) * 10000) / 100 : 0
+  })).sort((a, b) => b.sales - a.sales);
 
-  // Aggregate sellers dynamically only when real seller names are present (avoiding replacing the 15 sellers with 'GENERAL' if Apps Script omits column A)
-  if (filteredSales && filteredSales.length > 0) {
-    const specificSellerSales = filteredSales.filter(s => {
-      const sName = (s.seller || s.vendedor || '').toUpperCase().trim();
-      return sName && sName !== 'GENERAL' && sName !== 'SIN ASIGNAR';
+  // Productos (agrupados por línea: HYDRO, TERRA, AURA 2...)
+  const productsMap = new Map();
+  filteredSales.forEach(s => {
+    const items = (s.items && s.items.length) ? s.items : [];
+    const itemsSubtotal = items.reduce((a, it) => a + (Number(it.subtotal) || 0), 0);
+    const costRatio = (Number(s.totalAmount) > 0) ? (Number(s.totalMayor) || 0) / Number(s.totalAmount) : 0.53;
+    items.forEach(it => {
+      let line = '';
+      try { line = extractProductSpecs(it).productLine; } catch (e) { line = ''; }
+      const name = line || (it.description || it.code || 'PRODUCTO').toUpperCase();
+      if (!productsMap.has(name)) {
+        productsMap.set(name, { name, code: it.code || '', category: it.category || '', units: 0, revenue: 0, cost: 0 });
+      }
+      const rec = productsMap.get(name);
+      const qty = Number(it.quantity) || 1;
+      // Repartir el total real de la venta (incluye descuentos/recargos) proporcionalmente entre sus artículos
+      const share = itemsSubtotal > 0 ? (Number(it.subtotal) || 0) / itemsSubtotal : 1 / items.length;
+      const revenue = (Number(s.totalAmount) || 0) * share;
+      const unitCost = Number(it.mayor) || 0;
+      rec.units += qty;
+      rec.revenue += revenue;
+      rec.cost += unitCost > 0 ? unitCost * qty : revenue * costRatio;
     });
-    if (specificSellerSales.length > filteredSales.length * 0.5) {
-      const sellersMap = new Map();
-      filteredSales.forEach(s => {
-        const sName = (s.seller || s.vendedor || 'General').toUpperCase().trim();
-        if (!sName) return;
-        if (!sellersMap.has(sName)) {
-          sellersMap.set(sName, { name: sName, units: 0, sales: 0, collected: 0, pending: 0, rate: 0 });
-        }
-        const rec = sellersMap.get(sName);
-        const sUnits = (s.items && s.items.length) ? s.items.reduce((sum, it) => sum + (Number(it.quantity) || 1), 0) : (Number(s.quantity) || 1);
-        const sTotal = Number(s.totalAmount) || 0;
-        const isCreditPending = s.paymentType === 'credito' && (s.creditStatus || '').toUpperCase() === 'PENDIENTE';
-        const sPending = isCreditPending ? (Number(s.creditBalance) || 0) : 0;
-        const sCollected = Math.max(0, sTotal - sPending);
+  });
+  const productsData = Array.from(productsMap.values())
+    .map(p => ({ ...p, revenue: Math.round(p.revenue * 100) / 100, cost: Math.round(p.cost * 100) / 100 }))
+    .sort((a, b) => b.revenue - a.revenue);
 
-        rec.units += sUnits;
-        rec.sales += sTotal;
-        rec.collected += sCollected;
-        rec.pending += sPending;
-      });
-
-      if (sellersMap.size > 0) {
-        sellersData = Array.from(sellersMap.values()).map(sel => ({
-          ...sel,
-          sales: Math.round(sel.sales * 100) / 100,
-          collected: Math.round(sel.collected * 100) / 100,
-          pending: Math.round(sel.pending * 100) / 100,
-          rate: sel.sales > 0 ? Math.round((sel.collected / sel.sales) * 10000) / 100 : 0
-        })).sort((a, b) => b.sales - a.sales);
-      }
+  // Egresos registrados (Métricas > Finanzas), filtrados por período y almacén
+  const expensesData = (state.expenses || []).filter(e => {
+    if (!matchesAnalyticsPeriod((e.date || '').slice(0, 10), period)) return false;
+    if (warehouse !== 'all' && e.warehouse && e.warehouse !== 'general' && e.warehouse !== warehouse) return false;
+    return true;
+  });
+  const sumCat = (cat) => expensesData.filter(e => e.category === cat).reduce((a, e) => a + (Number(e.amountUsd) || 0), 0);
+  const knownCats = ['compras', 'comisiones', 'retiros_internos', 'envios_fletes', 'diferencial_cambiario'];
+  // Mensual: ventas reales + compras (facturas registradas + egresos de compras + histórico Drive)
+  const monthlyMap = new Map();
+  const ensureMonth = (m) => {
+    if (!monthlyMap.has(m)) monthlyMap.set(m, { month: m, salesUnits: 0, salesAmount: 0, purchaseUnits: 0, purchaseAmount: 0, expensesAmount: 0 });
+    return monthlyMap.get(m);
+  };
+  filteredSales.forEach(s => {
+    const key = getSaleDateKey(s);
+    if (!key) return;
+    const rec = ensureMonth(key.slice(0, 7));
+    rec.salesUnits += getSaleUnits(s);
+    rec.salesAmount += Number(s.totalAmount) || 0;
+  });
+  // Compras históricas del Drive: el egreso consolidado EXP-1001 se reparte mes a mes según el Drive
+  const hasDriveConsolidatedPurchases = (state.expenses || []).some(e => e.id === 'EXP-1001');
+  (hasDriveConsolidatedPurchases ? (DRIVE_HISTORICAL_DATASET.monthly || []) : []).forEach(m => {
+    if (!matchesAnalyticsPeriod(m.month, period) || warehouse !== 'all') return;
+    const rec = ensureMonth(m.month);
+    rec.purchaseUnits += Number(m.purchaseUnits) || 0;
+    rec.purchaseAmount += Number(m.purchaseAmount) || 0;
+  });
+  (state.invoices || []).forEach(inv => {
+    const key = (inv.fecha || inv.createdAt || '').slice(0, 10);
+    if (!key || !matchesAnalyticsPeriod(key, period)) return;
+    const rec = ensureMonth(key.slice(0, 7));
+    rec.purchaseUnits += Number(inv.totalUnits) || 0;
+    rec.purchaseAmount += Number(inv.totalMonto) || 0;
+  });
+  expensesData.forEach(e => {
+    const key = (e.date || '').slice(0, 7);
+    if (!key) return;
+    if (e.category === 'compras') {
+      if (e.id === 'EXP-1001') return; // ya repartido mes a mes arriba
+      ensureMonth(key).purchaseAmount += Number(e.amountUsd) || 0;
+    } else {
+      ensureMonth(key).expensesAmount += Number(e.amountUsd) || 0;
     }
-  }
+  });
+  const monthlyData = Array.from(monthlyMap.values())
+    .map(m => ({
+      ...m,
+      salesAmount: Math.round(m.salesAmount * 100) / 100,
+      purchaseAmount: Math.round(m.purchaseAmount * 100) / 100,
+      expensesAmount: Math.round(m.expensesAmount * 100) / 100
+    }))
+    .sort((a, b) => a.month.localeCompare(b.month));
 
-  // Calculate expenses
-  const cogsAmount = 8484.48; // Cost of merchandise
-  const commissionsAmount = 797.70;
-  const internalWithdrawals = 294.06;
-  const shippingFreight = 239.51;
-  const diffCambiario = 211.84;
-  
-  // Custom operational expenses recorded by user
-  const customExpenses = expensesData.filter(e => !['EXP-1001', 'EXP-1002', 'EXP-1003', 'EXP-1004', 'EXP-1005'].includes(e.id));
-  const customExpensesTotal = customExpenses.reduce((acc, e) => acc + (Number(e.amountUsd) || 0), 0);
+  // Compras de mercancía: facturas + egresos "compras" (el consolidado del Drive repartido por mes)
+  const cogsAmount = monthlyData.reduce((a, m) => a + (Number(m.purchaseAmount) || 0), 0);
+  const commissionsAmount = sumCat('comisiones');
+  const internalWithdrawals = sumCat('retiros_internos');
+  const shippingFreight = sumCat('envios_fletes');
+  const diffCambiario = sumCat('diferencial_cambiario');
+  const customExpensesTotal = expensesData
+    .filter(e => !knownCats.includes(e.category))
+    .reduce((a, e) => a + (Number(e.amountUsd) || 0), 0);
 
-  const totalExpenses = (cogsAmount + commissionsAmount + internalWithdrawals + shippingFreight + diffCambiario + customExpensesTotal);
+  const totalExpenses = cogsAmount + commissionsAmount + internalWithdrawals + shippingFreight + diffCambiario + customExpensesTotal;
   const netProfit = salesTotal - totalExpenses;
   const netMarginPct = salesTotal > 0 ? ((netProfit / salesTotal) * 100) : 0;
   const collectionRate = salesTotal > 0 ? ((collectedTotal / salesTotal) * 100) : 0;
-  const avgTicket = totalUnits > 0 ? (salesTotal / totalUnits) : 0;
+  const avgTicket = filteredSales.length > 0 ? (salesTotal / filteredSales.length) : 0;
+  const grossProfitSold = salesTotal - cogsSold;
 
   return {
+    filteredSales,
+    salesCount: filteredSales.length,
     salesTotal,
     collectedTotal,
     pendingTotal,
@@ -13472,6 +13576,8 @@ function getFilteredAnalyticsData() {
     avgTicket,
     totalUnits,
     cogsAmount,
+    cogsSold,
+    grossProfitSold,
     commissionsAmount,
     internalWithdrawals,
     shippingFreight,
@@ -13484,8 +13590,10 @@ function getFilteredAnalyticsData() {
   };
 }
 
+
 // Master Render Function for Analytics Dashboard
 function renderAnalyticsDashboard() {
+  try { populateAnalyticsPeriodSelect(); } catch (e) { console.warn('populateAnalyticsPeriodSelect:', e); }
   const data = getFilteredAnalyticsData();
 
   // 1. Update Executive KPI Cards
@@ -13493,7 +13601,7 @@ function renderAnalyticsDashboard() {
   if (kpiSales) kpiSales.textContent = `$${data.salesTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const kpiUnits = document.getElementById('anaKpiTotalUnits');
-  if (kpiUnits) kpiUnits.textContent = `${data.totalUnits} unidades vendidas`;
+  if (kpiUnits) kpiUnits.textContent = `${data.totalUnits} unidades · ${data.salesCount} ventas`;
 
   const kpiCollected = document.getElementById('anaKpiTotalCollected');
   if (kpiCollected) kpiCollected.textContent = `$${data.collectedTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -13529,7 +13637,7 @@ function renderAnalyticsSubTabView(subTab) {
       renderChartSalesVsPendingBySeller(data.sellersData);
       renderChartTop10Products(data.productsData);
       renderChartFinancialDistribution(data.collectedTotal, data.pendingTotal);
-      renderChartSalesTrendLine();
+      renderChartSalesTrendLine(data.filteredSales);
       break;
 
     case 'pareto':
@@ -13538,7 +13646,7 @@ function renderAnalyticsSubTabView(subTab) {
 
     case 'products':
       renderAllProductsCharts(data.productsData);
-      renderAnalyticsProductTable();
+      renderAnalyticsProductTable(data.productsData);
       break;
 
     case 'models':
@@ -13714,14 +13822,17 @@ function renderChartFinancialDistribution(collected, pending) {
 }
 
 // 4. Line Chart: Tendencia de Ventas en el Tiempo
-function renderChartSalesTrendLine() {
-  const dates = [
-    '26/04/2026', '10/05/2026', '24/05/2026', '07/06/2026',
-    '21/06/2026', '05/07/2026', '12/07/2026', '19/07/2026',
-    '02/08/2026', '16/08/2026', '30/08/2026', '13/09/2026',
-    '27/09/2026', '04/10/2026'
-  ];
-  const amounts = [187, 85, 260, 45, 60, 110, 250, 650, 320, 420, 580, 720, 680, 240];
+function renderChartSalesTrendLine(sales) {
+  // Ventas reales agrupadas por día (últimos 60 días con movimiento)
+  const byDay = new Map();
+  (sales || getFilteredAnalyticsData().filteredSales || []).forEach(s => {
+    const key = getSaleDateKey(s);
+    if (!key) return;
+    byDay.set(key, (byDay.get(key) || 0) + (Number(s.totalAmount) || 0));
+  });
+  const keys = Array.from(byDay.keys()).sort().slice(-60);
+  const dates = keys.map(k => `${k.slice(8, 10)}/${k.slice(5, 7)}/${k.slice(0, 4)}`);
+  const amounts = keys.map(k => Math.round(byDay.get(k) * 100) / 100);
 
   safeCreateChart('chartSalesTrendLine', 'chartSalesTrendLine', {
     type: 'line',
@@ -13960,14 +14071,14 @@ function renderAllProductsCharts(products) {
   });
 }
 
-function renderAnalyticsProductTable() {
+function renderAnalyticsProductTable(productsData) {
   const tbody = document.getElementById('anaProductsTableBody');
   if (!tbody) return;
 
   const searchInput = document.getElementById('anaProductFilterInput');
   const q = (searchInput ? searchInput.value : '').toLowerCase().trim();
 
-  const products = DRIVE_HISTORICAL_DATASET.products || [];
+  const products = productsData || getFilteredAnalyticsData().productsData || [];
   const filtered = products.filter(p => {
     return !q || p.name.toLowerCase().includes(q) || (p.code && p.code.toLowerCase().includes(q)) || (p.category && p.category.toLowerCase().includes(q));
   });
@@ -13977,8 +14088,12 @@ function renderAnalyticsProductTable() {
     const marginPct = p.revenue > 0 ? ((profit / p.revenue) * 100).toFixed(1) : 0;
     
     // Find current live stock from state.products
-    const liveProd = (state.products || []).find(lp => lp.code === p.code || lp.description.toUpperCase().includes(p.name));
-    const stockVal = liveProd ? liveProd.stock : 12;
+    const lineProds = (state.products || []).filter(lp => {
+      try { return extractProductSpecs(lp).productLine === p.name; } catch (e) { return false; }
+    });
+    const stockVal = lineProds.length
+      ? lineProds.reduce((a, lp) => a + (Number(lp.stock) || 0), 0)
+      : (((state.products || []).find(lp => lp.code === p.code) || {}).stock || 0);
 
     return `
       <tr>
@@ -14410,9 +14525,11 @@ function renderPnlTable(data) {
 }
 
 function renderChartMonthlyIncomeVsExpenses(monthly) {
-  const labels = ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'];
-  const incomes = [187.00, 1351.00, 610.62, 3857.97, 5323.81, 6051.01];
-  const expenses = [337.66, 0.00, 680.54, 2800.00, 2100.00, 3100.00];
+  const rows = monthly || getFilteredAnalyticsData().monthlyData || [];
+  const labels = rows.map(m => m.month);
+  const incomes = rows.map(m => m.salesAmount);
+  // Egresos = compras de mercancía + gastos operativos registrados del mes
+  const expenses = rows.map(m => Math.round(((Number(m.purchaseAmount) || 0) + (Number(m.expensesAmount) || 0)) * 100) / 100);
 
   safeCreateChart('chartMonthlyIncomeVsExpenses', 'chartMonthlyIncomeVsExpenses', {
     type: 'bar',
@@ -16499,6 +16616,10 @@ async function syncFromGoogleSheets(showToastNotification = true) {
     let reachedSheetTotalRow = false;
     let sheetOfficialSummary = null;
 
+    // Tamaño actual de la hoja (para saber si un borrado pendiente ya se aplicó en Google Sheets)
+    state.currentImportSheetSize = fetchedSales.reduce((m, it) => Math.max(m, Number(it && it.rowNumber) || 0), 0);
+    try { localStorage.setItem('cubitt_last_sheet_size_v1', String(state.currentImportSheetSize)); } catch (e) {}
+
     fetchedSales.forEach(item => {
       if (reachedSheetTotalRow) return;
 
@@ -17111,19 +17232,8 @@ async function autoSyncDeleteToSheets(sale) {
 
   appendSheetsSyncLog(`[Auto-Sync] Solicitando eliminación de venta #${sale.id}${rowNum ? ` (Fila ${rowNum})` : ''} en Google Sheets...`);
 
-  // 1. Intento POST (modo standard no-cors)
-  try {
-    fetch(url, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(payload)
-    }).catch(e => console.warn('Background delete POST notice:', e));
-  } catch (err) {
-    console.warn('POST para eliminación falló:', err);
-  }
-
-  // 2. Respaldo GET con parámetros de URL (garantiza ejecución)
+  // Un único envío (GET). Antes se mandaba también un POST y, como el script borra por número de fila,
+  // la segunda orden eliminaba la fila siguiente (otra venta real) tras el desplazamiento.
   try {
     const params = new URLSearchParams({
       action: 'delete_sale',
@@ -17131,6 +17241,7 @@ async function autoSyncDeleteToSheets(sale) {
       rowNumber: rowNum || '',
       totalAmount: total,
       productCode: code,
+      client: payload.client || '',
       date: saleDate,
       t: Date.now()
     });
@@ -17385,3 +17496,134 @@ function ingestImportedSalesList(rawList, sourceName) {
 }
 
 
+// ==========================================================================
+// RESUMEN DE HOY: lo más importante del negocio a la mano en la pantalla principal
+// ==========================================================================
+function getLocalDateKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Las fechas de abonos se guardan como "dd/mm/aaaa hh:mm AM" o en ISO; normalizar a aaaa-mm-dd
+function getPaymentDateKey(payment) {
+  const raw = String((payment && (payment.isoDate || payment.date)) || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return '';
+}
+
+function renderDailySummary() {
+  const card = document.getElementById('dailySummaryCard');
+  if (!card) return;
+  const sales = getAccessibleSales();
+  const todayKey = getLocalDateKey();
+  const monthKey = todayKey.slice(0, 7);
+
+  const dateEl = document.getElementById('dailySummaryDate');
+  if (dateEl) dateEl.textContent = new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  let todayTotal = 0, todayCount = 0, todayUnits = 0, collectedToday = 0;
+  let monthTotal = 0, monthCount = 0;
+  let pendingTotal = 0, pendingCount = 0;
+  const debtors = new Map();
+  const nowMs = Date.now();
+
+  sales.forEach(s => {
+    const key = getSaleDateKey(s);
+    const total = Number(s.totalAmount) || 0;
+    const pending = getSalePending(s);
+    if (key === todayKey) {
+      todayTotal += total;
+      todayCount += 1;
+      todayUnits += getSaleUnits(s);
+      // Lo cobrado en la venta de hoy (abonos posteriores del mismo día ya están dentro de total - pendiente)
+      collectedToday += Math.max(0, total - pending);
+    } else {
+      // Abonos recibidos hoy sobre ventas de días anteriores
+      (s.paymentsHistory || []).forEach(p => {
+        if (getPaymentDateKey(p) === todayKey) collectedToday += Number(p.amount) || 0;
+      });
+    }
+    if (key && key.startsWith(monthKey)) {
+      monthTotal += total;
+      monthCount += 1;
+    }
+    if (pending > 0) {
+      pendingTotal += pending;
+      pendingCount += 1;
+      const name = (s.clientName || s.client || 'Cliente General').trim();
+      const k = name.toUpperCase();
+      if (!debtors.has(k)) debtors.set(k, { name, amount: 0, count: 0, oldest: null });
+      const d = debtors.get(k);
+      d.amount += pending;
+      d.count += 1;
+      const t = key ? new Date(key + 'T12:00:00').getTime() : null;
+      if (t && (!d.oldest || t < d.oldest)) d.oldest = t;
+    }
+  });
+
+  const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  setText('dailySalesToday', formatMoney(todayTotal));
+  setText('dailySalesTodaySub', `${todayCount} ${todayCount === 1 ? 'venta' : 'ventas'} · ${todayUnits} und`);
+  setText('dailyCollectedToday', formatMoney(collectedToday));
+  setText('dailySalesMonth', formatMoney(monthTotal));
+  setText('dailySalesMonthSub', `${monthCount} ${monthCount === 1 ? 'venta' : 'ventas'} en ${MONTH_NAMES_ES[new Date().getMonth()].toLowerCase()}`);
+  setText('dailyPendingCredit', formatMoney(pendingTotal));
+  setText('dailyPendingCreditSub', `${pendingCount} ${pendingCount === 1 ? 'crédito abierto' : 'créditos abiertos'}`);
+
+  // Aviso si solo hay el respaldo consolidado (sin detalle real de Google Sheets)
+  const notice = document.getElementById('dailySummaryNotice');
+  if (notice) {
+    const onlyBackup = sales.length > 0 && sales.every(s => typeof s.id === 'string' && s.id.startsWith('CUB-DRIVE-'));
+    notice.style.display = onlyBackup ? 'block' : 'none';
+    notice.textContent = onlyBackup
+      ? '⚠️ Se muestra el respaldo consolidado del Drive (sin detalle por día). Sincroniza Google Sheets para ver las ventas reales.'
+      : '';
+  }
+
+  // Alertas accionables
+  const alerts = [];
+  const pendingOrders = sales.filter(s => s.isBajoPedido && s.orderStatus !== 'ENTREGADO').length;
+  if (pendingOrders > 0) alerts.push({ cls: 'is-warn', txt: `📦 ${pendingOrders} pedido${pendingOrders === 1 ? '' : 's'} por entregar`, act: "switchTab('orders')" });
+  const products = state.products || [];
+  const outOfStock = products.filter(p => (Number(p.stock) || 0) <= 0 && (p.status || 'DISPONIBLE') !== 'DESCONTINUADO').length;
+  const lowStock = products.filter(p => { const st = Number(p.stock) || 0; return st > 0 && st <= 3; }).length;
+  if (lowStock > 0) alerts.push({ cls: 'is-warn', txt: `⚠️ ${lowStock} producto${lowStock === 1 ? '' : 's'} con stock bajo (≤3)`, act: "switchTab('inventory'); setInventoryStatusFilter('bajo')" });
+  if (outOfStock > 0 && outOfStock < products.length) alerts.push({ cls: 'is-danger', txt: `⛔ ${outOfStock} agotado${outOfStock === 1 ? '' : 's'}`, act: "switchTab('inventory'); setInventoryStatusFilter('agotado')" });
+  if (!isVendedor()) {
+    const cxp = getAccessiblePayables().filter(p => (p.status || '').toUpperCase() === 'PENDIENTE');
+    const cxpTotal = cxp.reduce((a, p) => a + (Number(p.amount) || 0), 0);
+    if (cxp.length > 0) alerts.push({ cls: 'is-danger', txt: `💳 ${formatMoney(cxpTotal)} por pagar (${cxp.length})`, act: "switchTab('payables')" });
+  }
+  const oldDebts = Array.from(debtors.values()).filter(d => d.oldest && (nowMs - d.oldest) > 30 * 86400000).length;
+  if (oldDebts > 0) alerts.push({ cls: 'is-danger', txt: `⏰ ${oldDebts} cliente${oldDebts === 1 ? '' : 's'} con deuda de más de 30 días`, act: "switchTab('credits')" });
+  if (alerts.length === 0) alerts.push({ cls: 'is-ok', txt: '✅ Todo al día: sin pendientes urgentes', act: '' });
+
+  const alertsEl = document.getElementById('dailyAlerts');
+  if (alertsEl) {
+    alertsEl.innerHTML = alerts.map(a => `<button type="button" class="daily-alert-chip ${a.cls}" ${a.act ? `onclick="${a.act}"` : 'disabled'}>${escapeHtml(a.txt)}</button>`).join('');
+  }
+
+  // Top 5 deudores
+  const listEl = document.getElementById('dailyTopDebtors');
+  if (listEl) {
+    const top = Array.from(debtors.values()).sort((a, b) => b.amount - a.amount).slice(0, 5);
+    if (top.length === 0) {
+      listEl.innerHTML = '<div class="daily-empty">No hay créditos pendientes. 🎉</div>';
+    } else {
+      listEl.innerHTML = top.map(d => {
+        const days = d.oldest ? Math.max(0, Math.floor((nowMs - d.oldest) / 86400000)) : null;
+        const meta = `${d.count} crédito${d.count === 1 ? '' : 's'}${days !== null ? ` · desde hace ${days} día${days === 1 ? '' : 's'}` : ''}`;
+        const safeName = escapeHtml(d.name).replace(/'/g, '&#39;');
+        return `
+          <div class="daily-debtor-row" onclick="openClientProfileByName(this.dataset.name)" data-name="${safeName}" title="Ver perfil del cliente">
+            <div style="min-width: 0;">
+              <div class="daily-debtor-name">${escapeHtml(d.name)}</div>
+              <div class="daily-debtor-meta">${meta}</div>
+            </div>
+            <div class="daily-debtor-amount">${formatMoney(d.amount)}</div>
+          </div>`;
+      }).join('');
+    }
+  }
+}

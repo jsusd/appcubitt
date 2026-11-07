@@ -4332,3 +4332,123 @@ html, body {
 .pill-cat-otro { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
 
 
+
+
+/* ==========================================================================
+   Resumen de Hoy (pantalla Registrar Venta)
+   ========================================================================== */
+.daily-summary-date {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+.daily-summary-notice {
+  font-size: 0.78rem;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 0.9rem;
+}
+.daily-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.daily-kpi {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  min-width: 0;
+}
+.daily-kpi-link {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.daily-kpi-link:hover {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+.daily-kpi-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.daily-kpi-value {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.daily-kpi-good { color: #047857; }
+.daily-kpi-warn { color: #b45309; }
+.daily-kpi-sub {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+.daily-alerts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 0.9rem;
+}
+.daily-alert-chip {
+  border: 1px solid var(--border);
+  background: #ffffff;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+.daily-alert-chip:hover { background: #f1f5f9; }
+.daily-alert-chip.is-warn { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
+.daily-alert-chip.is-danger { border-color: #fca5a5; background: #fef2f2; color: #b91c1c; }
+.daily-alert-chip.is-ok { border-color: #a7f3d0; background: #ecfdf5; color: #047857; cursor: default; }
+.daily-debtors { margin-top: 1rem; }
+.daily-debtors-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 6px;
+}
+.daily-debtors-list { display: flex; flex-direction: column; }
+.daily-debtor-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 4px;
+  border-bottom: 1px dashed var(--border);
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+.daily-debtor-row:last-child { border-bottom: none; }
+.daily-debtor-row:hover { background: #f8fafc; }
+.daily-debtor-name {
+  font-weight: 600;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.daily-debtor-meta { font-size: 0.72rem; color: var(--text-muted); font-weight: 500; }
+.daily-debtor-amount { font-weight: 800; color: #b45309; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.daily-empty { font-size: 0.8rem; color: var(--text-muted); padding: 6px 0; }
+@media (max-width: 420px) {
+  .daily-summary-grid { grid-template-columns: 1fr; }
+}
+/* Evitar que las columnas del POS se desborden en pantallas angostas */
+.pos-layout > * { min-width: 0; }

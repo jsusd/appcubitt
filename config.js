@@ -1,10 +1,13 @@
 /**
  * Configuracion global de la aplicacion Cubitt POS
- * Contiene la API Key de Google Gemini preconfigurada para escaneo inteligente de facturas.
+ *
+ * IMPORTANTE: este repositorio es PÚBLICO. No pongas aquí claves secretas.
+ * La API Key de Google Gemini se pega desde la app (Inventario > Facturas > Configurar IA)
+ * y queda guardada solo en el navegador de ese dispositivo.
  */
 window.CUBITT_CONFIG = {
-  // Clave oficial de Google Gemini
-  GEMINI_API_KEY: 'AQ.Ab8RN6LzqX9A5nkNrrU1B-2ritm4zgA4sBzU7FgsGpzLeJmKNA',
+  // Dejar vacío: la clave se configura desde la interfaz (se guarda en localStorage)
+  GEMINI_API_KEY: '',
   // Modelo por defecto: Gemini 3.7 Flash (ultra estable y rapido, con fallback a 3.8 y 3.5)
   GEMINI_DEFAULT_MODEL: 'gemini-3.7-flash',
   // Configuracion de Base de Datos Principal en Google Sheets

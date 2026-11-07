@@ -804,15 +804,17 @@ function handleDeleteSale(ss, payload, e) {
 
   const rowNumber = parseInt(payload.rowNumber);
   const lastRow = sheet.getLastRow();
-
-  if (rowNumber && rowNumber > 1 && rowNumber <= lastRow) {
-    sheet.deleteRow(rowNumber);
-    return jsonResponse({ status: 'success', message: 'Fila ' + rowNumber + ' eliminada de Google Sheets' }, e);
-  }
-
   const lastCol = sheet.getLastColumn();
   if (lastRow <= 1 || lastCol < 1) {
     return jsonResponse({ status: 'error', message: 'Hoja vacía' }, e);
+  }
+
+  // Idempotencia: si la misma venta ya se borró hace poco (petición repetida), no borrar otra fila
+  const saleId = (payload.saleId || '').toString().trim();
+  const cache = CacheService.getScriptCache();
+  const cacheKey = saleId ? 'deleted_sale_' + saleId : '';
+  if (cacheKey && cache.get(cacheKey)) {
+    return jsonResponse({ status: 'success', message: 'La venta ' + saleId + ' ya había sido eliminada' }, e);
   }
 
   const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) { return (h || '').toString().trim(); });
@@ -823,6 +825,20 @@ function handleDeleteSale(ss, payload, e) {
   const targetCode = (payload.productCode || '').toString().trim().toUpperCase();
   const targetMonto = parseFloat(payload.totalAmount) || 0;
   const targetClient = (payload.client || '').toString().trim().toUpperCase();
+
+  // Borrar por número de fila SOLO si el contenido de esa fila coincide con la venta (las filas se desplazan al borrar)
+  if (rowNumber && rowNumber > 1 && rowNumber <= lastRow) {
+    const rowVals = sheet.getRange(rowNumber, 1, 1, lastCol).getValues()[0];
+    const rCode = colCodigo >= 0 ? (rowVals[colCodigo] || '').toString().trim().toUpperCase() : '';
+    const rMonto = colMonto >= 0 ? (parseFloat(rowVals[colMonto]) || 0) : 0;
+    const codeOk = !targetCode || colCodigo < 0 || rCode === targetCode;
+    const montoOk = !targetMonto || colMonto < 0 || Math.abs(rMonto - targetMonto) < 0.05;
+    if (codeOk && montoOk) {
+      sheet.deleteRow(rowNumber);
+      if (cacheKey) cache.put(cacheKey, '1', 600);
+      return jsonResponse({ status: 'success', message: 'Fila ' + rowNumber + ' eliminada de Google Sheets' }, e);
+    }
+  }
 
   const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   for (let r = data.length - 1; r >= 0; r--) {
@@ -838,6 +854,7 @@ function handleDeleteSale(ss, payload, e) {
     if (codeMatches && montoMatches && clientMatches && (targetCode || targetMonto > 0)) {
       const targetRowIdx = r + 2;
       sheet.deleteRow(targetRowIdx);
+      if (cacheKey) cache.put(cacheKey, '1', 600);
       return jsonResponse({ status: 'success', message: 'Fila coincidente ' + targetRowIdx + ' eliminada de Google Sheets' }, e);
     }
   }
