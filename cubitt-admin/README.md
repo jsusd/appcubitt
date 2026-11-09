@@ -54,6 +54,10 @@ Así la URL se mantiene.
      pendiente que no cuadra, pagos con fecha estimada…).
    - Puedes repetirla las veces que quieras mientras corriges la hoja: reemplaza solo lo migrado. Se bloquea sola si ya
      registraste abonos o liquidaciones sobre el histórico en la app (para no perderlos).
+   - Con la casilla marcada, el stock queda igual al **INVENTARIO REAL** de BDD (columna M), en la ubicación que elijas.
+   - Las fotos salen de la columna **IMAGEN** de BDD (las fórmulas `=IMAGE("…")`).
+   - Si ya migraste antes, usa **Actualizar desde BDD** (misma pestaña): trae fotos, precios vacíos y productos nuevos,
+     y opcionalmente ajusta el stock al inventario real, sin volver a migrar.
 2. **Ajustes ▸ Comisión por línea**: revisa el monto fijo por unidad de cada línea (HYDRO, AURA 2…). La migración propone
    el más frecuente de la hoja. Un producto puede tener su propia comisión (Ajustes ▸ Productos).
 3. **Ajustes ▸ Vendedores / Usuarios**: crea un usuario para cada vendedor (rol Vendedor, vinculado a su nombre).
@@ -74,6 +78,8 @@ Así la URL se mantiene.
 - **Vender**: cliente, vendedor, ubicación de donde sale, productos (la comisión se sugiere sola y se puede cambiar),
   contado o crédito con pago inicial, y si se emitió factura fiscal con su número. No deja vender más de lo que hay
   en esa ubicación (el administrador puede forzarlo; quedará marcado en la conciliación).
+- **Disponible**: los productos con stock, con su foto y precio de venta, agrupados por línea. Botones para
+  **copiar la lista para WhatsApp** y para generar un **PDF con fotos** (queda en tu Drive, carpeta «Cubitt Admin — Catálogos»).
 - **Cobranza**: quién debe, cuánto y hace cuántos días, con botón para abonar y recordatorio por WhatsApp.
 - **Ventas**: filtros por fecha, vendedor, estado, tipo y fiscal; en el detalle se registran abonos, se corrigen fechas
   estimadas, se edita o se anula.

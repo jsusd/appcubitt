@@ -282,3 +282,50 @@ test('migración: comentarios de pago por celda, reporte y re-migración segura'
   assert.equal(r.ok, false);
   assert.match(r.error, /bloqueada/);
 });
+
+test('BDD: imágenes de =IMAGE(), inventario real (col. M) y catálogo de disponibles en PDF', () => {
+  const pdfPedidos = [];
+  const env = crearEntorno({ fetch: (url) => { pdfPedidos.push(url); return { getResponseCode: () => 200, getBlob: () => ({ setName() { return this; } }) }; } });
+  const g = cargar(env.globales);
+  const codigo = g.instalar().match(/CÓDIGO DE INSTALACIÓN: (\d+)/)[1];
+  const tk = g.crearAdministradorInicial(codigo, { usuario: 'admin1', nombre: 'A', clave: 'clave-segura' }).data.token;
+  const ok = (a, d) => { const r = g.api(tk, a, d); assert.ok(r.ok, a + ': ' + r.error); return JSON.parse(JSON.stringify(r.data)); };
+  const enc = ['ARTICULO', 'IMAGEN', 'CATEGORIA', 'MODELO', 'COLOR', 'DISPONIBLE', 'MAYOR BS', 'MAYOR $', '', 'PVP TIENDA', 'PEDIDO', '', 'INVENTARIO REAL', 'TRANSITO'];
+  env.SpreadsheetApp._registrar('origen', 'Cubitt', {
+    BDD: [['x'], enc,
+      ['CT-AURA2-1', '', 'RELOJ', 'OBSIDIAN BLACK', 'NEGRO', 'DISPONIBLE', '', 71.5, '', 130, '', '', 2, 1],
+      ['CTHB24-7', '', 'TERMO', 'SNOW WHITE', 'BLANCO', 'DISPONIBLE', '', 14.5, '', 37, '', '', 0, ''],
+      ['CTBPK-1', '', 'BOLSO', 'BLACK', 'NEGRO', 'DISPONIBLE', '', 30, '', 69, '', '', '', '']]
+  }, { BDD: [[], [], ['', '=image("https://cubitt.com.ve/cdn/shop/files/CT-AURA2-1-Black.webp?v=1&width=1000")'], ['', '=IMAGE("https://cubitt.com.ve/x/CTHB24-7.webp")']] });
+  ok('guardarLinea', { nombre: 'AURA 2', comision: 14 });
+  ok('guardarProducto', { sku: 'CTHB24-7', linea: 'HYDRO', pvp: '' });
+  // Stock previo en el sistema: 3 en Trinitarias, 1 en Maracay
+  ok('crearCompra', { fecha: g.hoyIso(), proveedor: 'P', nro_factura: '1', ubicacion_id: 'UB-TRINITARIAS', items: [{ sku: 'CTHB24-7', cantidad: 3, costo_unit: 10 }] });
+  ok('crearCompra', { fecha: g.hoyIso(), proveedor: 'P', nro_factura: '2', ubicacion_id: 'UB-MARACAY', items: [{ sku: 'CTHB24-7', cantidad: 1, costo_unit: 10 }] });
+
+  const r = ok('sincronizarBDD', { hoja_id: 'origen', inventario_real: true, ubicacion_inventario: 'UB-TRINITARIAS' });
+  assert.equal(r.productosNuevos, 2);
+  assert.equal(r.imagenes, 1); // CTHB24-7 ya existía sin imagen
+  assert.equal(r.precios, 1);   // y sin PVP
+  assert.equal(r.inventarioReal.unidades, 2);
+  const st = ok('stock', {}).filas;
+  const aura = st.find(f => f.sku === 'CT-AURA2-1'), hydro = st.find(f => f.sku === 'CTHB24-7'), bpk = st.find(f => f.sku === 'CTBPK-1');
+  assert.equal(aura.porUbicacion['UB-TRINITARIAS'], 2);
+  assert.equal(hydro.total, 0); // inventario real 0: se ajustan Trinitarias y Maracay
+  assert.equal(bpk.total, 0);   // celda vacía en M: no se toca
+  assert.match(aura.imagen, /CT-AURA2-1-Black\.webp/);
+  // Repetirlo no duplica ajustes
+  assert.equal(ok('sincronizarBDD', { hoja_id: 'origen', inventario_real: true }).ajustes.length, 0);
+  const conc = ok('conciliacion', {});
+  assert.match(conc.filas.find(f => f.sku === 'CT-AURA2-1').alertas.join(' '), /falta registrar facturas/);
+
+  const disp = ok('disponible', {});
+  assert.deepEqual(disp.items.map(i => [i.sku, i.stock, i.pvp]), [['CT-AURA2-1', 2, 130]]);
+  assert.equal(ok('disponible', { incluirAgotados: true }).items.length, 3);
+  const pdf = ok('generarCatalogoPdf', {});
+  assert.equal(pdf.productos, 1);
+  assert.match(pdfPedidos[0], /export\?format=pdf/);
+  const hojaCat = env.SpreadsheetApp.openById(pdf.hoja_url.split('/').pop()).getSheets()[0];
+  assert.ok(hojaCat.formulas.some(f => f && /^=IMAGE\("https:\/\/cubitt\.com\.ve/.test(f[0])));
+  assert.ok(JSON.stringify(hojaCat.datos).includes('130'));
+});

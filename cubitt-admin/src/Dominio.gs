@@ -201,7 +201,8 @@ function conciliar(productos, movimientos) {
     var alertas = [];
     if (f.stock < 0) alertas.push('Se vendió más de lo comprado: faltan ' + (-f.stock) + ' und por registrar en compras');
     if (!p) alertas.push('SKU no está en el catálogo de productos');
-    if (f.ajustes !== 0) alertas.push('Ajustes por conteo físico: ' + (f.ajustes > 0 ? '+' : '') + f.ajustes);
+    if (f.ajustes > 0) alertas.push('Hay ' + f.ajustes + ' und más de lo que explican las compras (ajuste por inventario real): probablemente falta registrar facturas de compra');
+    else if (f.ajustes < 0) alertas.push('Faltan ' + (-f.ajustes) + ' und según el inventario real (pérdida, regalo o venta no registrada)');
     f.negativoEn = Object.keys(porUbic).filter(function (key) { return key.split('|')[0] === k && porUbic[key] < 0; })
       .map(function (key) { return { ubicacion_id: key.split('|')[1], stock: porUbic[key] }; });
     if (f.stock >= 0 && f.negativoEn.length) {
@@ -219,6 +220,35 @@ function conciliar(productos, movimientos) {
     return acc;
   }, { comprado: 0, vendido: 0, ajustes: 0, stock: 0, skusNegativos: 0, unidadesSinCompra: 0, skusNegativosPorUbicacion: 0 });
   return { filas: filas, resumen: resumen };
+}
+
+/** Saca la URL de una celda de imagen: =IMAGE("https://...") o una URL suelta. */
+function extraerUrlImagen(v) {
+  var t = texto(v);
+  if (!t) return '';
+  var m = t.match(/https?:\/\/[^"'\s)]+/i);
+  return m ? m[0] : '';
+}
+
+/**
+ * Ajustes para que el stock del sistema sea igual al inventario físico real.
+ * reales = { SKU: cantidad }. Todo el inventario real se asigna a ubicacionDestino;
+ * en las demás ubicaciones el stock de esos productos queda en 0.
+ * Devuelve [{ sku, ubicacion_id, sistema, real, diferencia }] solo donde hay diferencia.
+ */
+function ajustesInventarioReal(stockPorClave, reales, ubicacionDestino, ubicacionIds) {
+  var out = [];
+  Object.keys(reales).forEach(function (sku) {
+    var s = normSku(sku);
+    var real = num(reales[sku]);
+    (ubicacionIds || []).forEach(function (ub) {
+      var sistema = stockPorClave[claveStock(s, ub)] || 0;
+      var objetivo = ub === ubicacionDestino ? real : 0;
+      var dif = r2(objetivo - sistema);
+      if (dif !== 0) out.push({ sku: s, ubicacion_id: ub, sistema: sistema, real: objetivo, diferencia: dif });
+    });
+  });
+  return out;
 }
 
 /** Valida y normaliza los datos de una venta nueva. Lanza Error con mensaje claro. */
@@ -278,6 +308,7 @@ if (typeof module !== 'undefined') {
     r2: r2, num: num, texto: texto, normSku: normSku, isoFecha: isoFecha, serialAFecha: serialAFecha,
     interpretarComentarioPago: interpretarComentarioPago, calcularEstadoVenta: calcularEstadoVenta,
     comisionSugerida: comisionSugerida, calcularStock: calcularStock, conciliar: conciliar,
-    validarVentaNueva: validarVentaNueva, resumirComisiones: resumirComisiones, MOV: MOV
+    validarVentaNueva: validarVentaNueva, resumirComisiones: resumirComisiones, MOV: MOV,
+    extraerUrlImagen: extraerUrlImagen, ajustesInventarioReal: ajustesInventarioReal
   };
 }

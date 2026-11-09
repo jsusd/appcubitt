@@ -168,6 +168,25 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
 .rel { position: relative; }
 .barra-progreso { height: 8px; border-radius: 99px; background: var(--bg); overflow: hidden; }
 .barra-progreso > div { height: 100%; background: var(--brand); }
+
+/* Fotos de producto */
+.foto { display: block; object-fit: cover; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
+.foto.mini { width: 40px; height: 40px; }
+.foto.peq { width: 28px; height: 28px; border-radius: 6px; }
+.foto.grande { width: 100%; aspect-ratio: 1 / 1; height: auto; max-width: 100%; border-radius: 10px; }
+.foto.sin-foto { background: repeating-linear-gradient(45deg, var(--bg), var(--bg) 6px, var(--border) 6px, var(--border) 7px); }
+.con-foto { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.con-foto > div { min-width: 0; }
+
+/* Catálogo de disponibles */
+.catalogo { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.prod-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.prod-card .linea-tag { font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); }
+.prod-card .nombre { font-weight: 700; font-size: .9rem; line-height: 1.25; overflow-wrap: anywhere; }
+.prod-card .sku { font-size: .72rem; color: var(--muted); }
+.prod-card .precio { font-size: 1.25rem; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: auto; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.grupo-linea { font-size: .8rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+@media (max-width: 480px) { .catalogo { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } }
 </style>
 
 </head>
@@ -225,6 +244,16 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
     }
     return r2((c || 0) * (n(q) || 1));
   }
+  function foto(url, clase, px) {
+    var st = px ? ' style="width:' + px + 'px;height:' + px + 'px"' : '';
+    return url ? '<img class="foto ' + (clase || 'mini') + '"' + st + ' src="' + esc(url) + '" loading="lazy" alt="" referrerpolicy="no-referrer">'
+      : '<span class="foto ' + (clase || 'mini') + ' sin-foto"' + st + ' aria-hidden="true"></span>';
+  }
+  // Si una foto no carga, se muestra el recuadro vacío en vez del ícono roto
+  document.addEventListener('error', function (e) {
+    var t = e.target;
+    if (t && t.tagName === 'IMG' && t.classList.contains('foto')) { t.removeAttribute('src'); t.classList.add('sin-foto'); }
+  }, true);
   function tagEstado(e) {
     var m = { PAGADA: ['ok', 'Pagada'], ABONADA: ['warn', 'Abonada'], PENDIENTE: ['bad', 'Pendiente'], ANULADA: ['gris', 'Anulada'], PAGO_DE_MAS: ['info', 'Pago de más'] }[e] || ['gris', e];
     return '<span class="tag ' + m[0] + '">' + m[1] + '</span>';
@@ -370,8 +399,8 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
       sel = actuales.length ? 0 : -1;
       var html = actuales.map(function (p, i) {
         var st = cfg.ubicacion ? (p.stock[cfg.ubicacion()] || 0) : p.stockTotal;
-        return '<div data-i="' + i + '" class="' + (i === sel ? 'sel' : '') + '"><b>' + esc(p.sku) + '</b> · ' + esc(descProducto(p)) +
-          ' <span class="tag ' + (st > 0 ? 'ok' : st < 0 ? 'bad' : 'gris') + '">' + st + ' und</span>' + (p.pvp ? ' <span class="muted">' + dinero(p.pvp) + '</span>' : '') + '</div>';
+        return '<div data-i="' + i + '" class="con-foto' + (i === sel ? ' sel' : '') + '">' + foto(p.imagen, 'peq') + '<span><b>' + esc(p.sku) + '</b> · ' + esc(descProducto(p)) +
+          ' <span class="tag ' + (st > 0 ? 'ok' : st < 0 ? 'bad' : 'gris') + '">' + st + ' und</span>' + (p.pvp ? ' <span class="muted">' + dinero(p.pvp) + '</span>' : '') + '</span></div>';
       }).join('');
       if (cfg.permitirNuevo && /^[A-Z0-9][A-Z0-9\-_.\/]{2,}$/.test(q.replace(/\s+/g, '')) && !productoPorSku(q.replace(/\s+/g, ''))) {
         html += '<div data-nuevo="1">➕ Usar código nuevo <b>' + esc(q.replace(/\s+/g, '')) + '</b></div>';
@@ -396,7 +425,7 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
       }
     });
     caja.addEventListener('mousedown', function (e) {
-      var d = e.target.closest('div');
+      var d = e.target.closest('.sugerencias > div');
       if (!d) return;
       e.preventDefault();
       if (d.getAttribute('data-nuevo')) elegir({ sku: input.value.trim().toUpperCase().replace(/\s+/g, ''), nuevo: true });
@@ -491,12 +520,13 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
     { id: 'cobranza', t: 'Cobranza', ico: '💵' },
     { id: 'compras', t: 'Compras y facturas', ico: '📦', admin: true },
     { id: 'inventario', t: 'Inventario', ico: '🏬' },
+    { id: 'disponible', t: 'Disponible', ico: '🛍️' },
     { id: 'conciliacion', t: 'Conciliación', ico: '⚖️', admin: true },
     { id: 'comisiones', t: 'Comisiones', ico: '🏅' },
     { id: 'ajustes', t: 'Ajustes', ico: '⚙️', admin: true },
     { id: 'cuenta', t: 'Mi cuenta', ico: '👤' }
   ];
-  var INFERIOR = ['inicio', 'vender', 'ventas', 'cobranza'];
+  var INFERIOR = ['inicio', 'vender', 'ventas', 'cobranza', 'disponible'];
 
   function menuVisible() { return MENU.filter(function (m) { return !m.admin || esAdmin(); }); }
 
@@ -661,8 +691,8 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
     cont.innerHTML = v.items.length ? '<div class="linea-prod muted peq" style="border:0"><span>Producto</span><span>Cant.</span><span>Precio</span><span class="solo-escritorio">Comisión</span><span></span></div>' + v.items.map(function (it, i) {
       var p = productoPorSku(it.sku);
       var st = p ? (p.stock[v.ubicacion_id] || 0) : 0;
-      return '<div class="linea-prod"><div class="desc"><b>' + esc(it.sku) + '</b><span class="muted">' + esc(it.descripcion) + '</span> ' +
-        '<span class="tag ' + (st >= n(it.cantidad) ? 'ok' : 'bad') + '">stock ' + st + '</span></div>' +
+      return '<div class="linea-prod"><div class="desc con-foto">' + foto(p && p.imagen) + '<div><b>' + esc(it.sku) + '</b><span class="muted">' + esc(it.descripcion) + '</span> ' +
+        '<span class="tag ' + (st >= n(it.cantidad) ? 'ok' : 'bad') + '">stock ' + st + '</span></div></div>' +
         '<input class="input" type="number" min="1" step="1" inputmode="numeric" data-linea="' + i + '" data-c="cantidad" value="' + esc(it.cantidad) + '">' +
         '<input class="input" type="number" min="0" step="0.01" inputmode="decimal" data-linea="' + i + '" data-c="precio_unit" value="' + esc(it.precio_unit) + '" placeholder="Precio">' +
         '<div class="col-com"><span class="solo-movil muted peq">Comisión</span><input class="input" type="number" min="0" step="0.01" inputmode="decimal" data-linea="' + i + '" data-c="comision" value="' + esc(it.comision) + '" title="Comisión del vendedor por esta línea"></div>' +
@@ -1162,10 +1192,10 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
       var ubs = f.ubicacion_id ? r.ubicaciones.filter(function (u) { return u.id === f.ubicacion_id; }) : r.ubicaciones;
       var h = '<div class="grid g4" style="margin-bottom:14px">' + kpi('Unidades en stock', r.resumen.unidades) + (r.resumen.valorCosto !== undefined ? kpi('Valor al costo', dinero(r.resumen.valorCosto)) : '') +
         kpi('Valor a precio de venta', dinero(r.resumen.valorPvp)) + kpi('Productos en negativo', r.resumen.negativos, 'vendidos sin compra/traslado', r.resumen.negativos ? 'bad' : '') + '</div>';
-      h += '<div class="card">' + (r.filas.length ? '<div class="tabla-env"><table class="tabla"><thead><tr><th>Código</th><th>Producto</th>' + ubs.map(function (u) { return '<th class="num">' + esc(u.nombre) + '</th>'; }).join('') + (ubs.length > 1 ? '<th class="num">Total</th>' : '') + '<th class="num">PVP</th></tr></thead><tbody>' +
+      h += '<div class="card">' + (r.filas.length ? '<div class="tabla-env"><table class="tabla"><thead><tr><th></th><th>Código</th><th>Producto</th>' + ubs.map(function (u) { return '<th class="num">' + esc(u.nombre) + '</th>'; }).join('') + (ubs.length > 1 ? '<th class="num">Total</th>' : '') + '<th class="num">PVP</th></tr></thead><tbody>' +
         r.filas.map(function (p) {
           var celda = function (v) { return '<td class="num' + (v < 0 ? '" style="color:var(--bad);font-weight:800' : v === 0 ? ' muted' : ' fuerte') + '">' + v + '</td>'; };
-          return '<tr class="clic" data-a="kardex" data-sku="' + esc(p.sku) + '"><td class="peq">' + esc(p.sku) + '</td><td>' + esc(descProducto(p)) + (p.activo ? '' : ' <span class="tag gris">inactivo</span>') + '</td>' +
+          return '<tr class="clic" data-a="kardex" data-sku="' + esc(p.sku) + '"><td>' + foto(p.imagen) + '</td><td class="peq">' + esc(p.sku) + '</td><td>' + esc(descProducto(p)) + (p.activo ? '' : ' <span class="tag gris">inactivo</span>') + '</td>' +
             ubs.map(function (u) { return celda(p.porUbicacion[u.id] || 0); }).join('') + (ubs.length > 1 ? celda(p.total) : '') + '<td class="num">' + (p.pvp ? dinero(p.pvp) : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>' : '<div class="vacio">No hay productos con estos filtros.</div>') + '</div>';
       $('invRes').innerHTML = h;
@@ -1175,7 +1205,8 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
   A.kardex = function (el) {
     api('kardex', { sku: el.getAttribute('data-sku') }).then(function (r) {
       var nombres = { COMPRA: 'Compra', VENTA: 'Venta', ANULACION_VENTA: 'Venta anulada', ANULACION_COMPRA: 'Compra anulada', TRASLADO_SALIDA: 'Traslado (sale)', TRASLADO_ENTRADA: 'Traslado (entra)', AJUSTE: 'Ajuste por conteo', INICIAL: 'Inicial' };
-      abrirModal('Movimientos de ' + r.producto.sku, '<div class="peq muted" style="margin-bottom:8px">' + esc(descProducto(r.producto)) + '</div>' +
+      abrirModal('Movimientos de ' + r.producto.sku, '<div class="con-foto" style="margin-bottom:10px">' + foto(r.producto.imagen, '', 96) + '<div><div class="fuerte">' + esc(descProducto(r.producto)) + '</div>' +
+        (r.producto.pvp ? '<div class="peq">Precio de venta: <b>' + dinero(r.producto.pvp) + '</b></div>' : '') + '</div></div>' +
         tablaSimple(['Fecha', 'Movimiento', 'Ubicación', 'Cant.', 'Saldo ahí', 'Referencia'], r.movimientos.map(function (m) {
           return [fecha(m.fecha), esc(nombres[m.tipo] || m.tipo), esc(m.ubicacion), (m.cantidad > 0 ? '+' : '') + m.cantidad, m.saldoUbicacion, '<span class="peq">' + esc(m.ref_id) + ' ' + esc(m.nota) + '</span>'];
         }), [3, 4]), true);
@@ -1240,6 +1271,74 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
       toast(r.ajustes.length ? r.ajustes.length + ' productos ajustados' : r.mensaje, 'ok');
       refrescarInicial().then(recargarVista);
     }).catch(function (e) { mostrarError(e, $('conteoError')); });
+  };
+
+  // ======================================================================
+  // DISPONIBLE: lo que hay para vender, con foto y precio, para compartir
+  // ======================================================================
+  VISTAS.disponible = function (c) {
+    var f = S.filtroDisp || { ubicacion_id: '', linea: '', q: '', mostrarCantidad: true };
+    S.filtroDisp = f;
+    var lineas = {};
+    S.ini.productos.forEach(function (p) { if (p.linea && p.stockTotal > 0) lineas[p.linea] = 1; });
+    c.innerHTML = '<div class="card"><form data-submit="filtrarDisp" class="fila">' +
+      '<label class="campo">Ubicación<select class="input" name="ubicacion_id">' + optUbicaciones(f.ubicacion_id, 'Todas') + '</select></label>' +
+      '<label class="campo">Línea<select class="input" name="linea">' + opciones(Object.keys(lineas).sort().map(function (l) { return { v: l, t: l }; }), f.linea, 'Todas') + '</select></label>' +
+      '<label class="campo" style="flex:2 1 180px">Buscar<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Modelo, color…"></label>' +
+      '<label class="check" style="flex:0 0 auto"><input type="checkbox" name="mostrarCantidad"' + (f.mostrarCantidad ? ' checked' : '') + '> Ver cantidades</label>' +
+      '<div style="flex:0 0 auto"><button class="btn">Filtrar</button></div></form></div><div id="dispRes"><div class="vacio">Cargando…</div></div>';
+    return api('disponible', f).then(function (r) {
+      S.dispActual = r;
+      if (!r.items.length) { $('dispRes').innerHTML = '<div class="card vacio">No hay productos con stock con estos filtros.</div>'; return; }
+      var h = '<div class="card"><div class="fila" style="align-items:center"><div style="flex:2 1 220px"><b>' + r.items.length + ' productos</b> · ' + r.unidades + ' unidades · ' + esc(r.ubicacion) +
+        (r.sinPrecio ? '<br><span class="peq" style="color:var(--warn)">' + r.sinPrecio + ' sin precio de venta (sale «Consultar»)</span>' : '') +
+        (r.sinImagen ? '<br><span class="peq muted">' + r.sinImagen + ' sin foto</span>' : '') + '</div>' +
+        '<div class="acciones" style="flex:3 1 300px"><button class="btn" data-a="copiarDisponible">📋 Copiar lista para WhatsApp</button><button class="btn prim" data-a="pdfDisponible">📄 PDF con fotos</button></div></div><div id="pdfRes"></div></div>';
+      var linea = null;
+      h += r.items.map(function (it) {
+        var cab = '';
+        if ((it.linea || 'OTROS') !== linea) { cab = (linea === null ? '' : '</div>') + '<div class="grupo-linea">' + esc(it.linea || 'Otros') + '</div><div class="catalogo">'; linea = it.linea || 'OTROS'; }
+        return cab + '<div class="prod-card">' + foto(it.imagen, 'grande') + '<div class="linea-tag">' + esc(it.linea || '') + '</div>' +
+          '<div class="nombre">' + esc([it.modelo, it.color].filter(Boolean).join(' · ') || it.descripcion || it.sku) + '</div><div class="sku">' + esc(it.sku) + '</div>' +
+          '<div class="precio"><span>' + (it.pvp === '' ? '<span class="peq muted">Consultar</span>' : dinero(it.pvp)) + '</span>' + (f.mostrarCantidad ? '<span class="tag ok">' + it.stock + ' disp.</span>' : '') + '</div></div>';
+      }).join('') + '</div>';
+      $('dispRes').innerHTML = h;
+    });
+  };
+  A.filtrarDisp = function (form) { S.filtroDisp = datosForm(form); recargarVista(); };
+
+  function textoDisponible(r) {
+    var lineas = ['*' + r.negocio + ' — Disponible al ' + fecha(r.fecha) + '*', ''];
+    var actual = null;
+    r.items.forEach(function (it) {
+      var l = it.linea || 'Otros';
+      if (l !== actual) { if (actual !== null) lineas.push(''); lineas.push('*' + l + '*'); actual = l; }
+      var nom = it.modelo ? it.modelo + (it.color ? ' (' + it.color.toLowerCase() + ')' : '') : (it.color || it.descripcion || it.sku);
+      lineas.push('• ' + nom + ' — ' + (it.pvp === '' ? 'consultar' : dinero(it.pvp)));
+    });
+    lineas.push('', 'Precios en USD. ¡Pregunta por tu favorito!');
+    return lineas.join('\n');
+  }
+  A.copiarDisponible = function () {
+    var t = textoDisponible(S.dispActual);
+    var mostrar = function (copiado) {
+      abrirModal('Lista para WhatsApp', (copiado ? '<div class="aviso ok">Copiada. Pégala en el chat de WhatsApp.</div>' : '<div class="aviso info">Selecciona el texto y cópialo.</div>') +
+        '<textarea class="input" style="min-height:260px;font-size:.85rem" readonly id="txtDisp">' + esc(t) + '</textarea>' +
+        '<div class="acciones" style="margin-top:10px"><a class="btn prim" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(t) + '">Abrir WhatsApp</a></div>');
+      if (!copiado) { var ta = $('txtDisp'); ta.focus(); ta.select(); }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function () { mostrar(true); }, function () { mostrar(false); });
+    else mostrar(false);
+  };
+  A.pdfDisponible = function (el) {
+    $('pdfRes').innerHTML = '<div class="aviso info" style="margin-top:12px">Armando el PDF con las fotos… (20 a 60 segundos)</div>';
+    var f = Object.assign({}, S.filtroDisp);
+    conBoton(el, api('generarCatalogoPdf', f)).then(function (r) {
+      $('pdfRes').innerHTML = '<div class="aviso ok" style="margin-top:12px">PDF listo con ' + r.productos + ' productos. Quedó en tu Drive, carpeta «Cubitt Admin — Catálogos».' +
+        '<div class="acciones" style="justify-content:flex-start;margin-top:8px"><a class="btn prim" target="_blank" rel="noopener" href="' + esc(r.pdf_url) + '">Abrir PDF</a>' +
+        '<a class="btn" target="_blank" rel="noopener" href="' + esc(r.hoja_url) + '">Abrir como hoja</a></div>' +
+        '<div class="peq" style="margin-top:6px">Para enviarlo: ábrelo, descárgalo y compártelo en WhatsApp como documento.</div></div>';
+    }).catch(function (e) { mostrarError(e, $('pdfRes')); });
   };
 
   // ======================================================================
@@ -1352,9 +1451,9 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
     var lista = S.ini.productos.filter(function (p) { return !q || (p.sku + ' ' + descProducto(p) + ' ' + p.descripcion).toUpperCase().indexOf(q.toUpperCase()) !== -1; });
     c.innerHTML = '<div class="card"><div class="fila" style="margin-bottom:10px"><input class="input" id="qProd" placeholder="Buscar producto…" value="' + esc(q) + '" style="flex:3 1 220px"><div style="flex:0 0 auto"><button class="btn prim" data-a="editarProducto">➕ Nuevo producto</button></div></div>' +
       '<div class="muted peq" style="margin-bottom:6px">' + lista.length + ' productos. La comisión vacía usa la de su línea.</div>' +
-      '<div class="tabla-env"><table class="tabla"><thead><tr><th>Código</th><th>Línea</th><th>Modelo / color</th><th class="num">Costo</th><th class="num">PVP</th><th class="num">Comisión</th><th class="num">Stock</th></tr></thead><tbody>' +
+      '<div class="tabla-env"><table class="tabla"><thead><tr><th></th><th>Código</th><th>Línea</th><th>Modelo / color</th><th class="num">Costo</th><th class="num">PVP</th><th class="num">Comisión</th><th class="num">Stock</th></tr></thead><tbody>' +
       lista.slice(0, 400).map(function (p) {
-        return '<tr class="clic" data-a="editarProducto" data-sku="' + esc(p.sku) + '"><td class="peq">' + esc(p.sku) + (p.activo === 'NO' ? ' <span class="tag gris">inactivo</span>' : '') + '</td><td>' + esc(p.linea) + (p.linea ? '' : '<span class="tag warn">sin línea</span>') + '</td><td class="peq">' + esc([p.modelo, p.color].filter(Boolean).join(' · ') || p.descripcion) + '</td>' +
+        return '<tr class="clic" data-a="editarProducto" data-sku="' + esc(p.sku) + '"><td>' + foto(p.imagen, 'peq') + '</td><td class="peq">' + esc(p.sku) + (p.activo === 'NO' ? ' <span class="tag gris">inactivo</span>' : '') + '</td><td>' + esc(p.linea) + (p.linea ? '' : '<span class="tag warn">sin línea</span>') + '</td><td class="peq">' + esc([p.modelo, p.color].filter(Boolean).join(' · ') || p.descripcion) + '</td>' +
           '<td class="num">' + (p.costo !== '' ? dinero(p.costo) : '') + '</td><td class="num">' + (p.pvp !== '' ? dinero(p.pvp) : '') + '</td><td class="num">' + (p.comision !== '' ? dinero(p.comision) : '<span class="muted">línea ' + dinero(comisionSugerida(p, 1)) + '</span>') + '</td><td class="num">' + p.stockTotal + '</td></tr>';
       }).join('') + '</tbody></table></div></div>';
     $('qProd').addEventListener('change', function () { S.qProd = this.value; AJ.productos(c); });
@@ -1371,9 +1470,21 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
       '<label class="campo" style="grid-column:1/-1">Descripción<input class="input" name="descripcion" value="' + esc(p.descripcion) + '"></label>' +
       '<label class="campo">Costo (USD)<input class="input" type="number" step="0.01" min="0" name="costo" value="' + esc(p.costo) + '"></label><label class="campo">Precio de venta (USD)<input class="input" type="number" step="0.01" min="0" name="pvp" value="' + esc(p.pvp) + '"></label>' +
       '<label class="campo">Comisión por unidad (vacío = la de la línea)<input class="input" type="number" step="0.01" min="0" name="comision" value="' + esc(p.comision) + '"></label>' +
+      '<div class="con-foto" style="grid-column:1/-1;align-items:flex-start"><span id="prodFotoPrev">' + foto(p.imagen, '', 88) + '</span><div style="flex:1" class="grid">' +
+      '<label class="campo">Foto (enlace de la imagen)<input class="input" name="imagen" id="prodImagen" value="' + esc(p.imagen) + '" placeholder="https://…"></label>' +
+      '<label class="campo">o sube una foto<input class="input" type="file" accept="image/jpeg,image/png,image/webp" id="prodFotoArchivo"></label></div></div>' +
       '<label class="check"><input type="checkbox" name="activo"' + (p.activo !== 'NO' ? ' checked' : '') + '> Activo</label>' +
       '<div class="acciones" style="grid-column:1/-1"><button class="btn prim">Guardar</button></div></form>');
   };
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'prodImagen') $('prodFotoPrev').innerHTML = foto(e.target.value.trim(), '', 88);
+    if (e.target.id === 'prodFotoArchivo' && e.target.files[0]) {
+      var sku = document.querySelector('[data-submit=guardarProducto] [name=sku]').value;
+      leerArchivo(e.target.files[0]).then(function (d) { return api('subirImagenProducto', { sku: sku, mime: d.mime, base64: d.base64 }); }).then(function (r) {
+        $('prodImagen').value = r.imagen; $('prodFotoPrev').innerHTML = foto(r.imagen, '', 88); toast('Foto subida', 'ok');
+      }).catch(function (err) { mostrarError(err); });
+    }
+  });
   A.guardarProducto = function (form) {
     var d = datosForm(form); d.nuevo = !!d.nuevo;
     conBoton(form.querySelector('button'), api('guardarProducto', d)).then(function () { toast('Producto guardado', 'ok'); cerrarModal(); return refrescarInicial(); }).then(recargarVista)
@@ -1480,8 +1591,16 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
     return api('config').then(function (cf) {
       c.innerHTML = '<div class="card"><h2>Migrar el histórico desde la hoja «Cubitt»</h2>' +
         '<p class="peq">Importa las pestañas <b>Ventas</b> (con PAGO 1–5 y las fechas que dejaste como comentarios), <b>BDD</b> (catálogo) y <b>Compras_Nueva</b> (facturas). Primero pulsa <b>Analizar</b>: verás un reporte sin guardar nada. Si todo se ve bien, pulsa <b>Migrar</b>. Puedes repetirla: reemplaza solo lo migrado antes.</p>' +
-        '<form data-submit="analizarMig" class="fila"><label class="campo" style="flex:3 1 260px">Enlace o ID de la hoja<input class="input" name="hoja_id" value="' + esc(cf.HOJA_ORIGEN_ID) + '"></label>' +
-        '<div style="flex:0 0 auto" class="acciones"><button class="btn">Analizar</button><button class="btn prim" type="button" data-a="ejecutarMig">Migrar</button></div></form></div><div id="migRes"></div>';
+        '<form data-submit="analizarMig" class="grid"><label class="campo">Enlace o ID de la hoja<input class="input" name="hoja_id" value="' + esc(cf.HOJA_ORIGEN_ID) + '"></label>' +
+        '<div class="fila"><label class="check" style="flex:2 1 260px"><input type="checkbox" name="inventario_real" checked> Dejar el stock igual al <b>INVENTARIO REAL</b> de BDD (columna M)</label>' +
+        '<label class="campo">Ese inventario está en<select class="input" name="ubicacion_inventario">' + optUbicaciones(cf.UBICACION_POR_DEFECTO || 'UB-TRINITARIAS') + '</select></label></div>' +
+        '<div class="acciones"><button class="btn">Analizar</button><button class="btn prim" type="button" data-a="ejecutarMig">Migrar</button></div></form></div>' +
+        '<div class="card"><h2>Actualizar desde BDD (sin volver a migrar)</h2><p class="peq" style="margin-top:-6px">Trae las fotos de la columna IMAGEN, los precios que falten y los productos nuevos de BDD. Opcionalmente ajusta el stock al INVENTARIO REAL (columna M). Puedes usarlo cada vez que actualices BDD.</p>' +
+        '<form data-submit="sincronizarBDD" class="grid"><input type="hidden" name="hoja_id" value="' + esc(cf.HOJA_ORIGEN_ID) + '">' +
+        '<div class="fila"><label class="check"><input type="checkbox" name="imagenes" checked> Fotos</label><label class="check"><input type="checkbox" name="reemplazar_imagenes"> Reemplazar fotos que ya tengan</label><label class="check"><input type="checkbox" name="precios" checked> Precios y costos vacíos</label></div>' +
+        '<div class="fila"><label class="check" style="flex:2 1 260px"><input type="checkbox" name="inventario_real"> Ajustar el stock al INVENTARIO REAL (columna M)</label>' +
+        '<label class="campo">Ese inventario está en<select class="input" name="ubicacion_inventario">' + optUbicaciones(cf.UBICACION_POR_DEFECTO || 'UB-TRINITARIAS') + '</select></label></div>' +
+        '<div class="acciones"><button class="btn prim">Actualizar desde BDD</button></div></form><div id="syncRes"></div></div><div id="migRes"></div>';
     });
   };
   A.analizarMig = function (form) {
@@ -1496,13 +1615,27 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
       return conBoton(el, api('ejecutarMigracion', datosForm(form))).then(function (r) { pintarReporteMig(r); toast('Migración completada', 'ok'); return refrescarInicial(); });
     }).catch(function (e) { mostrarError(e, $('migRes')); });
   };
+  A.sincronizarBDD = function (form) {
+    var d = datosForm(form);
+    $('syncRes').innerHTML = '<div class="vacio">Leyendo BDD…</div>';
+    conBoton(form.querySelector('button'), api('sincronizarBDD', d)).then(function (r) {
+      var h = '<div class="aviso ok">Listo: ' + r.imagenes + ' fotos, ' + r.precios + ' precios y ' + r.productosNuevos + ' productos nuevos.' +
+        (r.inventarioReal ? '\nInventario real: ' + r.inventarioReal.unidades + ' und en ' + r.inventarioReal.productos + ' productos (' + nombreUbicacion(r.inventarioReal.ubicacion) + '). ' + r.ajustes.length + ' ajustes de stock.' : '') + '</div>';
+      if (r.ajustes.length) h += tablaSimple(['Código', 'Ubicación', 'Sistema', 'Real', 'Ajuste'], r.ajustes.slice(0, 300).map(function (a) {
+        return [esc(a.sku), esc(nombreUbicacion(a.ubicacion_id)), a.sistema, a.real, (a.diferencia > 0 ? '+' : '') + a.diferencia];
+      }), [2, 3, 4]);
+      $('syncRes').innerHTML = h;
+      return refrescarInicial();
+    }).catch(function (e) { mostrarError(e, $('syncRes')); });
+  };
   function pintarReporteMig(r) {
     var v = r.ventas, p = r.pagos, c = r.compras, k = r.comprobacion || {};
     var h = '<div class="aviso ' + (r.simulacion ? 'info' : 'ok') + '">' + (r.simulacion ? 'Simulación: no se guardó nada.' : 'Migración guardada.') + ' Hoja: «' + esc(r.hoja) + '» · comentarios leídos en ' + r.comentariosLeidos + ' celdas.' + (r.yaHabiaMigracion ? '\nYa existía una migración: se reemplazará.' : '') + '</div>';
     h += '<div class="grid g4" style="margin-bottom:14px">' + kpi('Ventas', v.filas, v.unidades + ' und · ' + v.vendedores + ' vendedores') + kpi('Total vendido', dinero(v.total), v.contado + ' contado · ' + v.credito + ' crédito') +
       kpi('Cobrado', dinero(v.cobrado), p.total + ' pagos', 'ok') + kpi('Pendiente', dinero(v.pendiente), '', 'warn') +
       kpi('Pagos con fecha real', p.conFechaDeComentario, 'leída del comentario', 'ok') + kpi('Pagos con fecha estimada', p.sinFecha, 'sin comentario de fecha', p.sinFecha ? 'warn' : '') +
-      kpi('Compras', c.facturas, c.unidades + ' und · ' + dinero(c.total)) + kpi('Productos nuevos', r.productos.nuevos, r.productos.sinLinea + ' sin línea') + '</div>';
+      kpi('Compras', c.facturas, c.unidades + ' und · ' + dinero(c.total)) + kpi('Productos nuevos', r.productos.nuevos, r.productos.sinLinea + ' sin línea · ' + (r.productos.conImagen || 0) + ' con foto') +
+      (r.inventarioReal ? kpi('Inventario real (BDD)', r.inventarioReal.unidades + ' und', r.inventarioReal.productos + ' productos · ' + r.inventarioReal.ajustes + ' ajustes', 'ok') : '') + '</div>';
     if (k.filaTotales) {
       h += '<div class="card"><h2>Comprobación con la fila de totales de la hoja (fila ' + k.filaTotales + ')</h2>' + tablaSimple(['', 'Hoja', 'Sistema', 'Diferencia'], [
         ['Total vendido', dinero(k.totalHoja), dinero(k.totalMigrado), '<b>' + dinero(k.diferenciaTotal) + '</b>'],

@@ -76,7 +76,11 @@ function acciones() {
 
     // Migración desde la hoja "Cubitt"
     analizarMigracion: function (u, d) { exigirAdmin(u); return Migracion.ejecutar(u, Object.assign({}, d, { simular: true })); },
-    ejecutarMigracion: function (u, d) { exigirAdmin(u); return Migracion.ejecutar(u, Object.assign({}, d, { simular: false })); }
+    ejecutarMigracion: function (u, d) { exigirAdmin(u); return Migracion.ejecutar(u, Object.assign({}, d, { simular: false })); },
+    sincronizarBDD: Migracion.sincronizarBDD,
+    disponible: Catalogo.disponible,
+    generarCatalogoPdf: Catalogo.generarCatalogoPdf,
+    subirImagenProducto: Catalogo.subirImagenProducto
     };
   }
 

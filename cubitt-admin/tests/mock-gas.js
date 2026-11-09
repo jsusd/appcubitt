@@ -3,6 +3,7 @@ const crypto = require('crypto');
 
 function crearEntorno(opciones = {}) {
   const hojasDeCalculo = {};
+  const archivosDrive = {};
   let seq = 0;
   const props = {};
 
@@ -38,12 +39,42 @@ function crearEntorno(opciones = {}) {
       }
       return this;
     }
+    getFormulas() {
+      const out = [];
+      for (let i = 0; i < this.nf; i++) {
+        const f = this.hoja.formulas[this.fila - 1 + i] || [];
+        const r = [];
+        for (let j = 0; j < this.nc; j++) r.push(f[this.col - 1 + j] || '');
+        out.push(r);
+      }
+      return out;
+    }
+    setFormulas(vals) {
+      vals.forEach((r, i) => r.forEach((v, j) => {
+        const idx = this.fila - 1 + i;
+        (this.hoja.formulas[idx] = this.hoja.formulas[idx] || [])[this.col - 1 + j] = v;
+        if (v) { while (this.hoja.datos.length <= idx) this.hoja.datos.push([]); this.hoja.datos[idx][this.col - 1 + j] = this.hoja.datos[idx][this.col - 1 + j] || ''; }
+      }));
+      return this;
+    }
     setNumberFormat() { return this; }
     setFontWeight() { return this; }
+    setFontSize() { return this; }
+    setFontColor() { return this; }
+    setBackground() { return this; }
+    setHorizontalAlignment() { return this; }
+    setVerticalAlignment() { return this; }
+    setWrap() { return this; }
+    merge() { return this; }
   }
 
   class Hoja {
-    constructor(nombre, datos) { this.nombre = nombre; this.datos = datos || []; }
+    constructor(nombre, datos, formulas) { this.nombre = nombre; this.datos = datos || []; this.formulas = formulas || []; this.id = ++seq; }
+    getSheetId() { return this.id; }
+    setName(n) { this.nombre = n; return this; }
+    setRowHeights() { return this; }
+    setColumnWidth() { return this; }
+    setHiddenGridlines() { return this; }
     getName() { return this.nombre; }
     getLastRow() {
       for (let i = this.datos.length - 1; i >= 0; i--) if ((this.datos[i] || []).some(v => v !== '' && v !== undefined && v !== null)) return i + 1;
@@ -67,11 +98,15 @@ function crearEntorno(opciones = {}) {
   }
 
   const SpreadsheetApp = {
-    create(nombre) { const id = 'ss' + (++seq); const l = new Libro(nombre, id); hojasDeCalculo[id] = l; return l; },
+    create(nombre) {
+      const id = 'ss' + (++seq); const l = new Libro(nombre, id); hojasDeCalculo[id] = l;
+      archivosDrive[id] = { getId: () => id, getUrl: () => l.getUrl(), getName: () => nombre, moveTo() { return this; }, setSharing() { return this; } };
+      return l;
+    },
     openById(id) { if (!hojasDeCalculo[id]) throw new Error('No existe la hoja ' + id); return hojasDeCalculo[id]; },
     flush() {},
-    _registrar(id, nombre, pestañas) {
-      const l = new Libro(nombre, id); l.hojas = Object.keys(pestañas).map(n => new Hoja(n, pestañas[n].map(f => f.slice())));
+    _registrar(id, nombre, pestañas, formulas) {
+      const l = new Libro(nombre, id); l.hojas = Object.keys(pestañas).map(n => new Hoja(n, pestañas[n].map(f => f.slice()), (formulas || {})[n]));
       hojasDeCalculo[id] = l; return l;
     }
   };
@@ -125,12 +160,12 @@ function crearEntorno(opciones = {}) {
     }
   };
 
-  const archivosDrive = {};
   const DriveApp = {
+    Access: { ANYONE_WITH_LINK: 'ANYONE_WITH_LINK' }, Permission: { VIEW: 'VIEW' },
     createFolder(n) {
       const id = 'carpeta' + (++seq);
       const carpeta = { id, n, archivos: [], getId: () => id, getName: () => n, getFiles() { const l = carpeta.archivos.slice(); return { hasNext: () => l.length > 0, next: () => l.shift() }; },
-        createFile(blob) { const fid = 'archivo' + (++seq); const f = { getId: () => fid, getName: () => blob.nombre, getUrl: () => 'https://drive.google.com/file/d/' + fid, getMimeType: () => blob.mime, getBlob: () => blob, getDateCreated: () => new Date() }; archivosDrive[fid] = f; carpeta.archivos.push(f); return f; } };
+        createFile(blob) { const fid = 'archivo' + (++seq); const f = { setSharing() { return f; }, moveTo() { return f; }, getId: () => fid, getName: () => blob.nombre, getUrl: () => 'https://drive.google.com/file/d/' + fid, getMimeType: () => blob.mime, getBlob: () => blob, getDateCreated: () => new Date() }; archivosDrive[fid] = f; carpeta.archivos.push(f); return f; } };
       archivosDrive[id] = carpeta; return carpeta;
     },
     getFolderById(id) { if (!archivosDrive[id]) throw new Error('carpeta no encontrada'); return archivosDrive[id]; },
@@ -151,7 +186,7 @@ function crearEntorno(opciones = {}) {
       ScriptApp: { getOAuthToken: () => 'token-de-prueba' },
       HtmlService: {}
     },
-    props, SpreadsheetApp, Blob
+    props, SpreadsheetApp, Blob, archivosDrive
   };
 }
 

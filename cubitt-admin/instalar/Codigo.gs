@@ -207,7 +207,8 @@ function conciliar(productos, movimientos) {
     var alertas = [];
     if (f.stock < 0) alertas.push('Se vendió más de lo comprado: faltan ' + (-f.stock) + ' und por registrar en compras');
     if (!p) alertas.push('SKU no está en el catálogo de productos');
-    if (f.ajustes !== 0) alertas.push('Ajustes por conteo físico: ' + (f.ajustes > 0 ? '+' : '') + f.ajustes);
+    if (f.ajustes > 0) alertas.push('Hay ' + f.ajustes + ' und más de lo que explican las compras (ajuste por inventario real): probablemente falta registrar facturas de compra');
+    else if (f.ajustes < 0) alertas.push('Faltan ' + (-f.ajustes) + ' und según el inventario real (pérdida, regalo o venta no registrada)');
     f.negativoEn = Object.keys(porUbic).filter(function (key) { return key.split('|')[0] === k && porUbic[key] < 0; })
       .map(function (key) { return { ubicacion_id: key.split('|')[1], stock: porUbic[key] }; });
     if (f.stock >= 0 && f.negativoEn.length) {
@@ -225,6 +226,35 @@ function conciliar(productos, movimientos) {
     return acc;
   }, { comprado: 0, vendido: 0, ajustes: 0, stock: 0, skusNegativos: 0, unidadesSinCompra: 0, skusNegativosPorUbicacion: 0 });
   return { filas: filas, resumen: resumen };
+}
+
+/** Saca la URL de una celda de imagen: =IMAGE("https://...") o una URL suelta. */
+function extraerUrlImagen(v) {
+  var t = texto(v);
+  if (!t) return '';
+  var m = t.match(/https?:\/\/[^"'\s)]+/i);
+  return m ? m[0] : '';
+}
+
+/**
+ * Ajustes para que el stock del sistema sea igual al inventario físico real.
+ * reales = { SKU: cantidad }. Todo el inventario real se asigna a ubicacionDestino;
+ * en las demás ubicaciones el stock de esos productos queda en 0.
+ * Devuelve [{ sku, ubicacion_id, sistema, real, diferencia }] solo donde hay diferencia.
+ */
+function ajustesInventarioReal(stockPorClave, reales, ubicacionDestino, ubicacionIds) {
+  var out = [];
+  Object.keys(reales).forEach(function (sku) {
+    var s = normSku(sku);
+    var real = num(reales[sku]);
+    (ubicacionIds || []).forEach(function (ub) {
+      var sistema = stockPorClave[claveStock(s, ub)] || 0;
+      var objetivo = ub === ubicacionDestino ? real : 0;
+      var dif = r2(objetivo - sistema);
+      if (dif !== 0) out.push({ sku: s, ubicacion_id: ub, sistema: sistema, real: objetivo, diferencia: dif });
+    });
+  });
+  return out;
 }
 
 /** Valida y normaliza los datos de una venta nueva. Lanza Error con mensaje claro. */
@@ -284,7 +314,8 @@ if (typeof module !== 'undefined') {
     r2: r2, num: num, texto: texto, normSku: normSku, isoFecha: isoFecha, serialAFecha: serialAFecha,
     interpretarComentarioPago: interpretarComentarioPago, calcularEstadoVenta: calcularEstadoVenta,
     comisionSugerida: comisionSugerida, calcularStock: calcularStock, conciliar: conciliar,
-    validarVentaNueva: validarVentaNueva, resumirComisiones: resumirComisiones, MOV: MOV
+    validarVentaNueva: validarVentaNueva, resumirComisiones: resumirComisiones, MOV: MOV,
+    extraerUrlImagen: extraerUrlImagen, ajustesInventarioReal: ajustesInventarioReal
   };
 }
 
@@ -1660,6 +1691,16 @@ var Reportes = {
  * usuarios y configuración.
  */
 
+function _carpetaConfig(clave, nombre) {
+  var id = Db.config()[clave];
+  if (id) {
+    try { return DriveApp.getFolderById(id); } catch (e) { /* se recrea */ }
+  }
+  var c = DriveApp.createFolder(nombre);
+  conBloqueo(function () { Db.guardarConfig(clave, c.getId()); });
+  return c;
+}
+
 var Catalogo = {
   /** Todo lo que la app necesita al abrir. */
   inicial: function (u) {
@@ -1845,6 +1886,118 @@ var Catalogo = {
     });
   },
 
+  /** Productos disponibles (con stock) con foto y precio, para responder "¿qué hay disponible?". */
+  disponible: function (u, f) {
+    f = f || {};
+    var stock = _stockActual();
+    var ubics = Db.leer('Ubicaciones').filter(function (x) { return x.activo !== 'NO'; });
+    var q = normNombre(f.q);
+    var linea = normNombre(f.linea);
+    var items = Db.leer('Productos').filter(function (p) { return p.activo !== 'NO'; }).map(function (p) {
+      var s = normSku(p.sku);
+      var porUbicacion = {}, total = 0;
+      ubics.forEach(function (ub) { var n = stock[claveStock(s, ub.id)] || 0; porUbicacion[ub.id] = n; total += n; });
+      return {
+        sku: s, linea: p.linea, modelo: p.modelo, color: p.color, descripcion: p.descripcion, imagen: p.imagen,
+        pvp: texto(p.pvp) === '' ? '' : num(p.pvp), porUbicacion: porUbicacion,
+        stock: f.ubicacion_id ? (porUbicacion[f.ubicacion_id] || 0) : r2(total)
+      };
+    }).filter(function (it) {
+      if (!f.incluirAgotados && !(it.stock > 0)) return false;
+      if (linea && normNombre(it.linea) !== linea) return false;
+      if (q && [it.sku, it.linea, it.modelo, it.color, it.descripcion].join(' ').toUpperCase().indexOf(q) === -1) return false;
+      return true;
+    });
+    items.sort(function (a, b) { return (a.linea || 'ZZZ').localeCompare(b.linea || 'ZZZ') || (a.modelo || '').localeCompare(b.modelo || '') || a.sku.localeCompare(b.sku); });
+    var ub = f.ubicacion_id ? Db.porId('Ubicaciones', f.ubicacion_id) : null;
+    return {
+      negocio: Db.config().NOMBRE_NEGOCIO || 'Cubitt', fecha: hoyIso(), ubicacion: ub ? ub.nombre : 'Todas las ubicaciones',
+      items: items, unidades: r2(items.reduce(function (a, it) { return a + Math.max(0, it.stock); }, 0)),
+      sinPrecio: items.filter(function (it) { return it.pvp === ''; }).length,
+      sinImagen: items.filter(function (it) { return !texto(it.imagen); }).length
+    };
+  },
+
+  /**
+   * Genera el catálogo de disponibles como PDF con fotos y precio de venta.
+   * Se arma una hoja de Google con =IMAGE() (Google muestra bien las fotos .webp de la web de Cubitt)
+   * y se exporta a PDF. Ambos archivos quedan en la carpeta "Cubitt Admin — Catálogos" de tu Drive.
+   */
+  generarCatalogoPdf: function (u, f) {
+    f = f || {};
+    var d = Catalogo.disponible(u, f);
+    if (!d.items.length) throw new Error('No hay productos disponibles con esos filtros.');
+    var mostrarCantidad = !!f.mostrarCantidad;
+    var titulo = d.negocio + ' — Disponible al ' + d.fecha.split('-').reverse().join('/');
+    var ss = SpreadsheetApp.create(titulo);
+    var sh = ss.getSheets()[0];
+    sh.setName('Disponible');
+    var nCol = mostrarCantidad ? 5 : 4;
+    var filas = [], formulas = [], tipos = [];
+    var fila = function (vals, tipo, formula) {
+      while (vals.length < nCol) vals.push('');
+      filas.push(vals); formulas.push([formula || '']); tipos.push(tipo);
+    };
+    fila([titulo], 'titulo');
+    fila(['Precios de venta en USD · ' + d.ubicacion + ' · ' + d.items.length + ' productos'], 'sub');
+    fila(mostrarCantidad ? ['Foto', 'Producto', 'Código', 'Precio', 'Disponibles'] : ['Foto', 'Producto', 'Código', 'Precio'], 'enc');
+    var lineaActual = null;
+    d.items.forEach(function (it) {
+      var l = it.linea || 'OTROS';
+      if (l !== lineaActual) { fila(['', l], 'linea'); lineaActual = l; }
+      var nombre = [it.modelo, it.color].filter(function (x) { return texto(x); }).join(' · ') || it.descripcion || it.sku;
+      var vals = ['', (it.linea ? it.linea + '\n' : '') + nombre, it.sku, it.pvp === '' ? 'Consultar' : it.pvp];
+      if (mostrarCantidad) vals.push(it.stock);
+      var url = texto(it.imagen).replace(/"/g, '');
+      fila(vals, 'prod', url ? '=IMAGE("' + url + '")' : '');
+    });
+    sh.getRange(1, 1, filas.length, nCol).setValues(filas);
+    sh.getRange(1, 1, formulas.length, 1).setFormulas(formulas);
+    // Formato
+    sh.setColumnWidth(1, 120); sh.setColumnWidth(2, 280); sh.setColumnWidth(3, 120); sh.setColumnWidth(4, 90);
+    if (mostrarCantidad) sh.setColumnWidth(5, 90);
+    sh.getRange(1, 1, 1, nCol).merge().setFontSize(16).setFontWeight('bold');
+    sh.getRange(2, 1, 1, nCol).merge().setFontColor('#555555');
+    sh.getRange(3, 1, 1, nCol).setFontWeight('bold').setBackground('#0f766e').setFontColor('#ffffff');
+    sh.getRange(4, 1, filas.length - 3, nCol).setVerticalAlignment('middle').setWrap(true);
+    sh.getRange(4, 4, filas.length - 3, 1).setNumberFormat('"$"#,##0.00').setFontWeight('bold').setHorizontalAlignment('right');
+    tipos.forEach(function (t, i) {
+      if (t === 'prod') sh.setRowHeights(i + 1, 1, 110);
+      if (t === 'linea') sh.getRange(i + 1, 1, 1, nCol).setBackground('#e6f4f2').setFontWeight('bold');
+    });
+    sh.setHiddenGridlines(true);
+    SpreadsheetApp.flush();
+    Utilities.sleep(2500); // dar tiempo a que carguen las imágenes antes de exportar
+
+    var carpeta = _carpetaConfig('CARPETA_CATALOGOS_ID', 'Cubitt Admin — Catálogos');
+    DriveApp.getFileById(ss.getId()).moveTo(carpeta);
+    var url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=pdf&size=letter&portrait=true&fitw=true&gridlines=false' +
+      '&printtitle=false&sheetnames=false&pagenum=CENTER&top_margin=0.4&bottom_margin=0.4&left_margin=0.4&right_margin=0.4&gid=' + sh.getSheetId();
+    var resp = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    if (resp.getResponseCode() !== 200) throw new Error('No se pudo crear el PDF (código ' + resp.getResponseCode() + '). La hoja con el catálogo sí quedó en tu Drive: ' + ss.getUrl());
+    var pdf = carpeta.createFile(resp.getBlob().setName(titulo.replace(/[\/:*?"<>|]/g, '-') + '.pdf'));
+    if (f.compartir) pdf.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    auditar(u, 'CATALOGO_PDF', d.items.length + ' productos · ' + d.ubicacion);
+    return { pdf_url: pdf.getUrl(), hoja_url: ss.getUrl(), productos: d.items.length, compartido: !!f.compartir };
+  },
+
+  /** Sube una foto de producto a Drive (visible con el enlace, para que se vea en la app y en el catálogo). */
+  subirImagenProducto: function (u, d) {
+    exigirAdmin(u);
+    var mime = texto(d.mime).toLowerCase();
+    if (!/^image\/(jpeg|png|webp)$/.test(mime)) throw new Error('Usa una foto JPG, PNG o WEBP.');
+    var bytes = Utilities.base64Decode(texto(d.base64));
+    if (bytes.length > 8 * 1024 * 1024) throw new Error('La foto supera 8 MB.');
+    var carpeta = _carpetaConfig('CARPETA_FOTOS_ID', 'Cubitt Admin — Fotos de productos');
+    var archivo = carpeta.createFile(Utilities.newBlob(bytes, mime, (normSku(d.sku) || 'producto') + '.' + mime.split('/')[1]));
+    archivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    var url = 'https://drive.google.com/thumbnail?id=' + archivo.getId() + '&sz=w1000';
+    if (normSku(d.sku) && Db.porId('Productos', normSku(d.sku), 'sku')) {
+      conBloqueo(function () { Db.actualizar('Productos', normSku(d.sku), { imagen: url, actualizado_en: ahoraIso() }, 'sku'); });
+    }
+    return { imagen: url };
+  },
+
   auditoria: function (u) {
     exigirAdmin(u);
     return Db.leer('Auditoria').slice(-300).reverse().map(_limpio);
@@ -1970,13 +2123,49 @@ function _moda(lista) {
 }
 
 /**
+ * Lee la pestaña BDD (catálogo). formulas = mismas dimensiones que valores (para las =IMAGE()).
+ * Devuelve { filas: [{ sku, modelo, color, descripcion, costo, pvp, comision, activo, imagen, real }], encontrada }.
+ * real = INVENTARIO REAL (columna M) o null si la celda está vacía.
+ */
+function leerBDD(bdd, formulas) {
+  bdd = bdd || []; formulas = formulas || [];
+  var filaEnc = -1;
+  for (var i = 0; i < Math.min(15, bdd.length); i++) if (_indiceEncabezados(bdd[i])['ARTICULO'] !== undefined) { filaEnc = i; break; }
+  if (filaEnc < 0) return { encontrada: false, filas: [] };
+  var ib = _indiceEncabezados(bdd[filaEnc]);
+  var cSku = ib['ARTICULO'], cCat = _col(ib, ['CATEGORIA']), cMod = _col(ib, ['MODELO']), cCol = _col(ib, ['COLOR']), cImg = _col(ib, ['IMAGEN', 'FOTO']);
+  var cCosto = _col(ib, ['MAYOR $', 'COSTO']), cPvp = _col(ib, ['PVP TIENDA', 'PVP']), cCom = _col(ib, ['COMISION']), cDisp = _col(ib, ['DISPONIBLE']);
+  var cReal = _col(ib, ['INVENTARIO REAL', 'INVENTARIO FISICO', 'STOCK REAL']);
+  var vistos = {};
+  var filas = [];
+  for (var r = filaEnc + 1; r < bdd.length; r++) {
+    var f = bdd[r];
+    var sku = normSku(f[cSku]);
+    if (!sku || !/^[A-Z0-9][A-Z0-9\-_.\/]{2,}$/.test(sku) || vistos[sku]) continue;
+    vistos[sku] = 1;
+    var fr = formulas[r] || [];
+    filas.push({
+      fila: r + 1, sku: sku, modelo: texto(f[cMod]).toUpperCase(), color: texto(f[cCol]).toUpperCase(), descripcion: texto(f[cCat]),
+      costo: cCosto >= 0 && num(f[cCosto]) > 0 ? r2(num(f[cCosto])) : '',
+      pvp: cPvp >= 0 && num(f[cPvp]) > 0 ? r2(num(f[cPvp])) : '',
+      comision: cCom >= 0 && texto(f[cCom]) !== '' ? r2(num(f[cCom])) : '',
+      activo: cDisp >= 0 && /DESCONTINUADO/i.test(texto(f[cDisp])) ? 'NO' : 'SI',
+      imagen: cImg >= 0 ? (extraerUrlImagen(fr[cImg]) || extraerUrlImagen(f[cImg])) : '',
+      real: cReal >= 0 && texto(f[cReal]) !== '' ? num(f[cReal]) : null
+    });
+  }
+  return { encontrada: true, filas: filas, tieneInventarioReal: cReal >= 0, tieneImagenes: cImg >= 0 };
+}
+
+/**
  * Construye todos los registros a partir de los datos crudos de la hoja.
  * fuentes = { ventas: [[...]], bdd: [[...]], compras: [[...]], comentarios: {ref: [txt]} }
  * existentes = { vendedores: [...], productos: [...], lineas: [...] } (para no duplicar)
  * Función pura: se prueba sin Google.
  */
-function construirMigracion(fuentes, existentes, hoy) {
+function construirMigracion(fuentes, existentes, hoy, opciones) {
   existentes = existentes || {};
+  opciones = opciones || {};
   var rep = { avisos: [], errores: [], ventas: {}, pagos: {}, compras: {}, productos: {}, comprobacion: {} };
   var aviso = function (fila, msg) { if (rep.avisos.length < 400) rep.avisos.push((fila ? 'Fila ' + fila + ': ' : '') + msg); };
   var comentarios = fuentes.comentarios || {};
@@ -1986,26 +2175,17 @@ function construirMigracion(fuentes, existentes, hoy) {
   var productos = {};
   (existentes.productos || []).forEach(function (p) { productos[normSku(p.sku)] = { existente: true, p: p }; });
   var nuevosProductos = [];
-  var bdd = fuentes.bdd || [];
-  var filaEnc = -1;
-  for (var i = 0; i < Math.min(15, bdd.length); i++) if (_indiceEncabezados(bdd[i])['ARTICULO'] !== undefined) { filaEnc = i; break; }
-  if (filaEnc >= 0) {
-    var ib = _indiceEncabezados(bdd[filaEnc]);
-    var cSku = ib['ARTICULO'], cCat = _col(ib, ['CATEGORIA']), cMod = _col(ib, ['MODELO']), cCol = _col(ib, ['COLOR']);
-    var cCosto = _col(ib, ['MAYOR $', 'COSTO']), cPvp = _col(ib, ['PVP TIENDA', 'PVP']), cCom = _col(ib, ['COMISION']), cDisp = _col(ib, ['DISPONIBLE']);
-    for (var r = filaEnc + 1; r < bdd.length; r++) {
-      var f = bdd[r];
-      var sku = normSku(f[cSku]);
-      if (!sku || !/^[A-Z0-9][A-Z0-9\-_.\/]{2,}$/.test(sku) || productos[sku]) continue;
+  var bddLeida = leerBDD(fuentes.bdd, fuentes.bddFormulas);
+  if (bddLeida.encontrada) {
+    bddLeida.filas.forEach(function (b) {
+      if (productos[b.sku]) return;
       var np = {
-        sku: sku, linea: '', modelo: texto(f[cMod]).toUpperCase(), color: texto(f[cCol]).toUpperCase(),
-        descripcion: texto(f[cCat]), costo: cCosto >= 0 && num(f[cCosto]) > 0 ? r2(num(f[cCosto])) : '',
-        pvp: cPvp >= 0 && num(f[cPvp]) > 0 ? r2(num(f[cPvp])) : '', comision: cCom >= 0 && texto(f[cCom]) !== '' ? r2(num(f[cCom])) : '',
-        activo: cDisp >= 0 && /DESCONTINUADO/i.test(texto(f[cDisp])) ? 'NO' : 'SI', imagen: '', actualizado_en: ahora
+        sku: b.sku, linea: '', modelo: b.modelo, color: b.color, descripcion: b.descripcion, costo: b.costo, pvp: b.pvp,
+        comision: b.comision, activo: b.activo, imagen: b.imagen, actualizado_en: ahora
       };
-      productos[sku] = { existente: false, p: np };
+      productos[b.sku] = { existente: false, p: np };
       nuevosProductos.push(np);
-    }
+    });
   } else {
     aviso(null, 'No se encontró la pestaña BDD (catálogo) o su encabezado "ARTICULO". Los productos se crearán desde las ventas y compras.');
   }
@@ -2306,7 +2486,30 @@ function construirMigracion(fuentes, existentes, hoy) {
     };
     if (Math.abs(rep.comprobacion.diferenciaTotal) > 0.01) aviso(null, 'El total migrado ($' + totVentas + ') difiere de la fila de totales de la hoja ($' + filaTotales.total + ') por $' + rep.comprobacion.diferenciaTotal + '. Revisa la fórmula de totales de la hoja.');
   }
-  var conc = conciliar(nuevosProductos.concat((existentes.productos || [])), movs);
+  // ---------- Inventario real (BDD, columna "INVENTARIO REAL") ----------
+  if (opciones.inventarioReal && bddLeida.encontrada) {
+    if (!bddLeida.tieneInventarioReal) {
+      aviso(null, 'BDD no tiene la columna "INVENTARIO REAL"; el stock queda como compras − ventas.');
+    } else {
+      var reales = {};
+      bddLeida.filas.forEach(function (b) { if (b.real !== null) reales[b.sku] = b.real; });
+      var stockAntes = calcularStock((existentes.movimientos || []).concat(movs));
+      var ajustes = ajustesInventarioReal(stockAntes, reales, opciones.ubicacionInventario || UB_PRINCIPAL, opciones.ubicaciones || [UB_PRINCIPAL, UB_TMANIA, UB_MARACAY]);
+      ajustes.forEach(function (a) {
+        movs.push({ id: 'H-M-AJ-' + a.sku + '-' + a.ubicacion_id, fecha: hoy, sku: a.sku, ubicacion_id: a.ubicacion_id, cantidad: a.diferencia, tipo: MOV.AJUSTE, ref_id: 'H-AJ-BDD',
+          nota: 'Inventario real de BDD (sistema ' + a.sistema + ', real ' + a.real + ')', creado_por: 'migracion', creado_en: ahora });
+      });
+      rep.inventarioReal = {
+        productos: Object.keys(reales).length,
+        unidades: r2(Object.keys(reales).reduce(function (acc, k) { return acc + reales[k]; }, 0)),
+        ajustes: ajustes.length,
+        ubicacion: opciones.ubicacionInventario || UB_PRINCIPAL
+      };
+    }
+  }
+  rep.productos.conImagen = nuevosProductos.filter(function (p) { return p.imagen; }).length;
+
+  var conc = conciliar(nuevosProductos.concat((existentes.productos || [])), (existentes.movimientos || []).concat(movs));
   rep.conciliacion = conc.resumen;
   if (rep.compras.unidadesMaracay) aviso(null, rep.compras.unidadesMaracay + ' unidades se compraron en Maracay, pero la hoja de ventas no dice desde qué ubicación se vendió; todas las ventas se asignaron a Trinitarias (o T-Mania). Haz un conteo físico por ubicación después de migrar.');
 
@@ -2333,6 +2536,13 @@ function _xmlDeLaHojaExportada(hojaId) {
   return archivos;
 }
 
+function _formulas(ss, nombre) {
+  var sh = ss.getSheetByName(nombre);
+  if (!sh) return [];
+  var lr = sh.getLastRow(), lc = sh.getLastColumn();
+  return lr && lc ? sh.getRange(1, 1, lr, lc).getFormulas() : [];
+}
+
 function _valores(ss, nombre) {
   var sh = ss.getSheetByName(nombre);
   if (!sh) return [];
@@ -2343,6 +2553,65 @@ function _valores(ss, nombre) {
 var TABLAS_MIGRADAS = ['Ventas', 'VentaItems', 'Pagos', 'Compras', 'CompraItems', 'Movimientos'];
 
 var Migracion = {
+  /**
+   * Actualiza desde BDD sin re-migrar: imágenes (y PVP/costo vacíos) de los productos, productos nuevos
+   * de BDD, y opcionalmente ajusta el stock al INVENTARIO REAL. Se puede repetir cuando quieras.
+   */
+  sincronizarBDD: function (u, d) {
+    exigirAdmin(u);
+    d = d || {};
+    var hojaId = texto(d.hoja_id) || Db.config().HOJA_ORIGEN_ID;
+    var m = hojaId.match(/\/d\/([A-Za-z0-9_-]+)/);
+    if (m) hojaId = m[1];
+    if (!hojaId) throw new Error('Indica el enlace o el ID de la hoja "Cubitt".');
+    var origen = SpreadsheetApp.openById(hojaId);
+    var bdd = leerBDD(_valores(origen, 'BDD'), _formulas(origen, 'BDD'));
+    if (!bdd.encontrada) throw new Error('No se encontró la pestaña BDD con el encabezado "ARTICULO".');
+    return conBloqueo(function () {
+      var ahora = ahoraIso();
+      var res = { imagenes: 0, precios: 0, productosNuevos: 0, ajustes: [], inventarioReal: null };
+      var porSku = _productosPorSku();
+      var nuevos = [];
+      bdd.filas.forEach(function (b) {
+        var p = porSku[b.sku];
+        if (!p) {
+          nuevos.push({ sku: b.sku, linea: '', modelo: b.modelo, color: b.color, descripcion: b.descripcion, costo: b.costo, pvp: b.pvp, comision: b.comision, activo: b.activo, imagen: b.imagen, actualizado_en: ahora });
+          return;
+        }
+        var cambios = {};
+        if (d.imagenes !== false && b.imagen && (d.reemplazar_imagenes || !texto(p.imagen)) && b.imagen !== p.imagen) { cambios.imagen = b.imagen; res.imagenes++; }
+        if (d.precios !== false) {
+          if (b.pvp !== '' && texto(p.pvp) === '') { cambios.pvp = b.pvp; res.precios++; }
+          if (b.costo !== '' && texto(p.costo) === '') cambios.costo = b.costo;
+        }
+        if (Object.keys(cambios).length) { cambios.actualizado_en = ahora; Db.actualizar('Productos', p.sku, cambios, 'sku'); }
+      });
+      if (nuevos.length) { Db.insertar('Productos', nuevos); res.productosNuevos = nuevos.length; }
+      if (d.inventario_real) {
+        if (!bdd.tieneInventarioReal) throw new Error('BDD no tiene la columna "INVENTARIO REAL".');
+        var ubicInv = texto(d.ubicacion_inventario) || UB_PRINCIPAL;
+        var ubics = Db.leer('Ubicaciones').filter(function (x) { return x.activo !== 'NO'; }).map(function (x) { return x.id; });
+        if (ubics.indexOf(ubicInv) === -1) throw new Error('La ubicación elegida no existe.');
+        var reales = {};
+        bdd.filas.forEach(function (b) { if (b.real !== null) reales[b.sku] = b.real; });
+        var ajustes = ajustesInventarioReal(_stockActual(), reales, ubicInv, ubics);
+        if (ajustes.length) {
+          var ref = Db.siguienteId('AJ');
+          var ids = Db.siguienteId('M', ajustes.length);
+          var fecha = hoyIso();
+          Db.insertar('Movimientos', ajustes.map(function (a, i) {
+            return { id: ids[i], fecha: fecha, sku: a.sku, ubicacion_id: a.ubicacion_id, cantidad: a.diferencia, tipo: MOV.AJUSTE, ref_id: ref,
+              nota: 'Inventario real de BDD (sistema ' + a.sistema + ', real ' + a.real + ')', creado_por: u.usuario, creado_en: ahora };
+          }));
+        }
+        res.ajustes = ajustes;
+        res.inventarioReal = { productos: Object.keys(reales).length, unidades: r2(Object.keys(reales).reduce(function (a, k) { return a + reales[k]; }, 0)), ubicacion: ubicInv };
+      }
+      auditar(u, 'SINCRONIZAR_BDD', JSON.stringify({ imagenes: res.imagenes, precios: res.precios, nuevos: res.productosNuevos, ajustes: res.ajustes.length }));
+      return res;
+    });
+  },
+
   ejecutar: function (u, d) {
     d = d || {};
     var hojaId = texto(d.hoja_id) || Db.config().HOJA_ORIGEN_ID;
@@ -2350,6 +2619,8 @@ var Migracion = {
     if (m) hojaId = m[1];
     if (!hojaId) throw new Error('Indica el enlace o el ID de la hoja "Cubitt".');
     var origen = SpreadsheetApp.openById(hojaId);
+    var inventarioReal = d.inventario_real !== false && d.inventario_real !== 'false';
+    var ubicInv = texto(d.ubicacion_inventario) || UB_PRINCIPAL;
     var comentarios = {};
     var avisoComentarios = '';
     try {
@@ -2358,7 +2629,7 @@ var Migracion = {
       avisoComentarios = 'No se pudieron leer los comentarios con fechas de pago: ' + e.message + '. Los pagos quedarán con fecha estimada.';
     }
     var fuentes = {
-      ventas: _valores(origen, 'Ventas'), bdd: _valores(origen, 'BDD'), compras: _valores(origen, 'Compras_Nueva'),
+      ventas: _valores(origen, 'Ventas'), bdd: _valores(origen, 'BDD'), bddFormulas: _formulas(origen, 'BDD'), compras: _valores(origen, 'Compras_Nueva'),
       registroFacturas: _valores(origen, 'Registro_Facturas'), comentarios: comentarios
     };
 
@@ -2373,8 +2644,14 @@ var Migracion = {
           throw new Error('Ya hay movimientos hechos en la app sobre el histórico migrado (' + pagosApp.length + ' pagos, ' + liquidadas.length + ' comisiones liquidadas, ' + editadas.length + ' anulaciones). Repetir la migración los borraría, por eso está bloqueada.');
         }
       }
-      var existentes = { productos: Db.leer('Productos'), vendedores: Db.leer('Vendedores'), lineas: Db.leer('Lineas') };
-      var res = construirMigracion(fuentes, existentes, hoyIso());
+      var existentes = {
+        productos: Db.leer('Productos'), vendedores: Db.leer('Vendedores'), lineas: Db.leer('Lineas'),
+        // movimientos hechos en la app (no migrados): cuentan para calcular el ajuste al inventario real
+        movimientos: Db.leer('Movimientos').filter(function (m) { return !/^H-/.test(String(m.id)); })
+      };
+      var ubics = Db.leer('Ubicaciones').filter(function (x) { return x.activo !== 'NO'; }).map(function (x) { return x.id; });
+      if (inventarioReal && ubics.indexOf(ubicInv) === -1) throw new Error('La ubicación elegida para el inventario real no existe.');
+      var res = construirMigracion(fuentes, existentes, hoyIso(), { inventarioReal: inventarioReal, ubicacionInventario: ubicInv, ubicaciones: ubics });
       res.reporte.hoja = origen.getName();
       res.reporte.comentariosLeidos = Object.keys(comentarios).length;
       if (avisoComentarios) res.reporte.avisos.unshift(avisoComentarios);
@@ -2476,7 +2753,11 @@ function acciones() {
 
     // Migración desde la hoja "Cubitt"
     analizarMigracion: function (u, d) { exigirAdmin(u); return Migracion.ejecutar(u, Object.assign({}, d, { simular: true })); },
-    ejecutarMigracion: function (u, d) { exigirAdmin(u); return Migracion.ejecutar(u, Object.assign({}, d, { simular: false })); }
+    ejecutarMigracion: function (u, d) { exigirAdmin(u); return Migracion.ejecutar(u, Object.assign({}, d, { simular: false })); },
+    sincronizarBDD: Migracion.sincronizarBDD,
+    disponible: Catalogo.disponible,
+    generarCatalogoPdf: Catalogo.generarCatalogoPdf,
+    subirImagenProducto: Catalogo.subirImagenProducto
     };
   }
 

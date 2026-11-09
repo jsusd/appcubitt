@@ -161,4 +161,23 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
 .rel { position: relative; }
 .barra-progreso { height: 8px; border-radius: 99px; background: var(--bg); overflow: hidden; }
 .barra-progreso > div { height: 100%; background: var(--brand); }
+
+/* Fotos de producto */
+.foto { display: block; object-fit: cover; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
+.foto.mini { width: 40px; height: 40px; }
+.foto.peq { width: 28px; height: 28px; border-radius: 6px; }
+.foto.grande { width: 100%; aspect-ratio: 1 / 1; height: auto; max-width: 100%; border-radius: 10px; }
+.foto.sin-foto { background: repeating-linear-gradient(45deg, var(--bg), var(--bg) 6px, var(--border) 6px, var(--border) 7px); }
+.con-foto { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.con-foto > div { min-width: 0; }
+
+/* Catálogo de disponibles */
+.catalogo { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.prod-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.prod-card .linea-tag { font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); }
+.prod-card .nombre { font-weight: 700; font-size: .9rem; line-height: 1.25; overflow-wrap: anywhere; }
+.prod-card .sku { font-size: .72rem; color: var(--muted); }
+.prod-card .precio { font-size: 1.25rem; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: auto; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.grupo-linea { font-size: .8rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+@media (max-width: 480px) { .catalogo { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } }
 </style>

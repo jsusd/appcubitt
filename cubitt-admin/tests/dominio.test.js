@@ -59,3 +59,16 @@ test('migración: venta sin fecha toma la del primer pago con fecha', () => {
   const pagos = r.registros.Pagos.filter(p => p.venta_id === v.id).map(p => [p.fecha, p.fecha_estimada]);
   assert.deepEqual(JSON.parse(JSON.stringify(pagos)), [['2026-06-24', 'NO'], ['2026-07-09', 'NO']]);
 });
+
+test('migración: inventario real de BDD ajusta stock e imágenes vienen de =IMAGE()', () => {
+  const ventas = [['RESPONSABLE', 'CLIENTE', 'PRODUCTO', 'CODIGO', 'FECHA', 'CANTIDAD', 'PRECIO UNIDAD', 'TOTAL', 'PAGO 1', 'PENDIENTE', 'COMISION'],
+    ['V', 'A', 'HYDRO', 'X-1', '02/09/2026', 1, 10, 10, 10, 0, 1]];
+  const bdd = [['ARTICULO', 'IMAGEN', 'INVENTARIO REAL'], ['X-1', '', 4], ['X-2', '', '']];
+  const r = g.construirMigracion({ ventas, bdd, bddFormulas: [[], ['', '=IMAGE("https://cubitt.com.ve/x1.webp")']] }, {}, '2026-11-09',
+    { inventarioReal: true, ubicacionInventario: 'UB-TRINITARIAS', ubicaciones: ['UB-TRINITARIAS', 'UB-MARACAY'] });
+  const aj = r.registros.Movimientos.filter(m => m.tipo === 'AJUSTE');
+  assert.deepEqual(JSON.parse(JSON.stringify(aj.map(m => [m.sku, m.ubicacion_id, m.cantidad]))), [['X-1', 'UB-TRINITARIAS', 5]]); // -1 por la venta → 4
+  assert.equal(r.registros.Productos.find(p => p.sku === 'X-1').imagen, 'https://cubitt.com.ve/x1.webp');
+  assert.equal(r.reporte.inventarioReal.unidades, 4);
+  assert.equal(g.extraerUrlImagen('=image("https://a.b/c.webp?v=1&width=1000")'), 'https://a.b/c.webp?v=1&width=1000');
+});
