@@ -1,5 +1,8 @@
 # Cubitt POS & Ventas
 
+> **Nueva versión:** el sistema administrativo reescrito desde cero (Google Apps Script + Google Sheets como base de datos)
+> está en [`cubitt-admin/`](cubitt-admin/README.md). Esta carpeta raíz contiene la versión anterior.
+
 Aplicación web (HTML + JavaScript, sin servidor) para registrar ventas de Cubitt, controlar créditos,
 inventario por almacén, clientes, vendedores, cuentas por pagar y ver métricas del negocio.
 Los datos se guardan en el navegador y se sincronizan con la hoja de Google Sheets mediante un Apps Script.

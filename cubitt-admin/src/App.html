@@ -1,0 +1,1371 @@
+<script>
+(function () {
+  'use strict';
+
+  // ======================================================================
+  // Estado y utilidades
+  // ======================================================================
+  var S = { token: null, usuario: null, ini: null, vista: 'inicio', ajustesTab: 'productos', filtrosVentas: null, venta: null, compra: null };
+  var CLAVE_TOKEN = 'cubitt_admin_token';
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function n(v) { var x = parseFloat(String(v === undefined || v === null ? '' : v).replace(',', '.')); return isFinite(x) ? x : 0; }
+  function r2(v) { return Math.round((n(v) + 1e-9) * 100) / 100; }
+  function dinero(v) { var x = r2(v); return (x < 0 ? '-$' : '$') + Math.abs(x).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function fecha(iso) { if (!iso) return ''; var p = String(iso).slice(0, 10).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0].slice(2) : iso; }
+  function hoy() {
+    if (S.ini && S.ini.hoy) return S.ini.hoy;
+    var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+  function inicioMes() { return hoy().slice(0, 8) + '01'; }
+  function esAdmin() { return S.usuario && S.usuario.rol === 'ADMIN'; }
+  function guardarToken(t) { try { if (t) localStorage.setItem(CLAVE_TOKEN, t); else localStorage.removeItem(CLAVE_TOKEN); } catch (e) {} }
+  function leerToken() { try { return localStorage.getItem(CLAVE_TOKEN); } catch (e) { return null; } }
+  function opciones(lista, valor, vacio) {
+    return (vacio !== undefined ? '<option value="">' + esc(vacio) + '</option>' : '') + lista.map(function (o) {
+      return '<option value="' + esc(o.v) + '"' + (String(o.v) === String(valor) ? ' selected' : '') + '>' + esc(o.t) + '</option>';
+    }).join('');
+  }
+  function optVendedores(valor, vacio, soloActivos) {
+    return opciones((S.ini.vendedores || []).filter(function (v) { return !soloActivos || v.activo !== 'NO'; }).map(function (v) { return { v: v.id, t: v.nombre }; }), valor, vacio);
+  }
+  function optUbicaciones(valor, vacio) { return opciones(S.ini.ubicaciones.map(function (u) { return { v: u.id, t: u.nombre }; }), valor, vacio); }
+  function nombreUbicacion(id) { var u = (S.ini.ubicaciones || []).filter(function (x) { return x.id === id; })[0]; return u ? u.nombre : id; }
+  function productoPorSku(sku) { sku = String(sku || '').toUpperCase(); return (S.ini.productos || []).filter(function (p) { return p.sku === sku; })[0]; }
+  function descProducto(p) { return p ? ([p.linea, p.modelo, p.color].filter(Boolean).join(' · ') || p.descripcion || p.sku) : ''; }
+  function comisionSugerida(p, q) {
+    if (!p) return 0;
+    var c = p.comision !== '' && p.comision !== undefined && p.comision !== null ? n(p.comision) : null;
+    if (c === null && p.linea) {
+      var l = (S.ini.lineas || []).filter(function (x) { return x.nombre === p.linea; })[0];
+      if (l && l.comision !== '' && l.comision !== undefined) c = n(l.comision);
+    }
+    return r2((c || 0) * (n(q) || 1));
+  }
+  function tagEstado(e) {
+    var m = { PAGADA: ['ok', 'Pagada'], ABONADA: ['warn', 'Abonada'], PENDIENTE: ['bad', 'Pendiente'], ANULADA: ['gris', 'Anulada'], PAGO_DE_MAS: ['info', 'Pago de más'] }[e] || ['gris', e];
+    return '<span class="tag ' + m[0] + '">' + m[1] + '</span>';
+  }
+
+  var nCarga = 0;
+  function cargando(on) { nCarga += on ? 1 : -1; if (nCarga < 0) nCarga = 0; $('cargando').classList.toggle('oculto', nCarga === 0); }
+  function toast(msg, tipo) {
+    var d = document.createElement('div');
+    d.className = 'toast ' + (tipo || '');
+    d.textContent = msg;
+    $('toasts').appendChild(d);
+    setTimeout(function () { d.remove(); }, tipo === 'bad' ? 7000 : 3500);
+  }
+
+  // ======================================================================
+  // Comunicación con el servidor (Apps Script)
+  // ======================================================================
+  function llamar(fn, args) {
+    return new Promise(function (resolve, reject) {
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
+        var r = google.script.run.withSuccessHandler(resolve).withFailureHandler(function (e) { reject(new Error((e && e.message) || 'No hay conexión con el servidor. Revisa tu internet e intenta de nuevo.')); });
+        r[fn].apply(r, args || []);
+      } else if (window.__servidor) {
+        Promise.resolve(window.__servidor(fn, args || [])).then(resolve, reject);
+      } else {
+        reject(new Error('Esta página debe abrirse desde la aplicación publicada en Google Apps Script.'));
+      }
+    });
+  }
+
+  function api(accion, datos) {
+    cargando(true);
+    return llamar('api', [S.token, accion, datos || {}]).then(function (r) {
+      cargando(false);
+      if (r && r.ok) return r.data;
+      var err = (r && r.error) || 'Error desconocido';
+      if (err === 'SESION_VENCIDA') { cerrarSesionLocal(); pantallaLogin('Tu sesión venció. Ingresa de nuevo.'); }
+      if (err === 'DEBE_CAMBIAR_CLAVE') { pantallaCambioClave(true); }
+      throw new Error(err);
+    }, function (e) { cargando(false); throw e; });
+  }
+
+  function mostrarError(e, contenedor) {
+    var msg = (e && e.message) || String(e);
+    if (msg === 'SESION_VENCIDA' || msg === 'DEBE_CAMBIAR_CLAVE') return;
+    msg = msg.replace(/^(STOCK_INSUFICIENTE|DUPLICADO): /, '');
+    if (contenedor) contenedor.innerHTML = '<div class="aviso bad">' + esc(msg) + '</div>';
+    else toast(msg, 'bad');
+  }
+
+  function cerrarSesionLocal() { S.token = null; S.usuario = null; S.ini = null; guardarToken(null); }
+
+  function refrescarInicial() {
+    return api('inicial').then(function (ini) { S.ini = ini; S.usuario = ini.usuario; });
+  }
+
+  // ======================================================================
+  // Delegación de eventos: data-a="accion"
+  // ======================================================================
+  var A = {};
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-a]');
+    if (!el || el.disabled) return;
+    var f = A[el.getAttribute('data-a')];
+    if (f) { e.preventDefault(); f(el, e); }
+  });
+  document.addEventListener('submit', function (e) {
+    var f = A[e.target.getAttribute('data-submit')];
+    if (f) { e.preventDefault(); f(e.target, e); }
+  });
+
+  function datosForm(form) {
+    var o = {};
+    Array.prototype.forEach.call(form.elements, function (el) {
+      if (!el.name) return;
+      o[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    return o;
+  }
+
+  function conBoton(btn, promesa) {
+    if (btn) btn.disabled = true;
+    return promesa.then(function (x) { if (btn) btn.disabled = false; return x; }, function (e) { if (btn) btn.disabled = false; throw e; });
+  }
+
+  // ======================================================================
+  // Modal
+  // ======================================================================
+  function abrirModal(titulo, html, ancho) {
+    $('modal').innerHTML = '<div class="modal-fondo"><div class="modal' + (ancho ? ' ancho' : '') + '" role="dialog" aria-modal="true">' +
+      '<div class="modal-cab"><h3>' + esc(titulo) + '</h3><button class="cerrar" data-a="cerrarModal" aria-label="Cerrar">×</button></div>' +
+      '<div class="modal-cuerpo" id="modalCuerpo">' + html + '</div></div></div>';
+    document.body.style.overflow = 'hidden';
+  }
+  function cerrarModal() { $('modal').innerHTML = ''; document.body.style.overflow = ''; }
+  A.cerrarModal = cerrarModal;
+  // Clic fuera de la ventana la cierra (sin interferir con formularios ni botones de adentro)
+  document.addEventListener('mousedown', function (e) {
+    if (e.target.classList && e.target.classList.contains('modal-fondo') && e.target.parentNode === $('modal')) cerrarModal();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && $('modal').innerHTML) cerrarModal(); });
+
+  // Diálogos propios (prompt/confirm pueden estar bloqueados dentro de Apps Script)
+  function dialogo(titulo, opciones) {
+    opciones = opciones || {};
+    return new Promise(function (resolve) {
+      var capa = document.createElement('div');
+      capa.className = 'modal-fondo';
+      capa.style.zIndex = 70;
+      capa.innerHTML = '<div class="modal" style="max-width:440px"><div class="modal-cab"><h3>' + esc(titulo) + '</h3></div><form class="modal-cuerpo grid">' +
+        (opciones.texto ? '<div class="peq">' + esc(opciones.texto) + '</div>' : '') +
+        (opciones.campo ? '<label class="campo">' + esc(opciones.campo) + '<input class="input" name="valor" type="' + (opciones.tipo || 'text') + '" value="' + esc(opciones.valor || '') + '"' + (opciones.max ? ' max="' + esc(opciones.max) + '"' : '') + (opciones.requerido ? ' required' : '') + '></label>' : '') +
+        '<div class="acciones"><button type="button" class="btn" data-x="no">Cancelar</button><button class="btn ' + (opciones.peligro ? 'peligro' : 'prim') + '">' + esc(opciones.ok || 'Aceptar') + '</button></div></form></div>';
+      document.body.appendChild(capa);
+      var form = capa.querySelector('form'), inp = capa.querySelector('input');
+      var fin = function (v) { capa.remove(); resolve(v); };
+      capa.querySelector('[data-x=no]').addEventListener('click', function () { fin(null); });
+      form.addEventListener('submit', function (e) { e.preventDefault(); e.stopPropagation(); fin(opciones.campo ? inp.value.trim() : true); });
+      (inp || form.querySelector('button:not([data-x])')).focus();
+    });
+  }
+  function pedir(titulo, campo, o) { return dialogo(titulo, Object.assign({ campo: campo, requerido: true }, o || {})); }
+  function confirmar(titulo, texto, o) { return dialogo(titulo, Object.assign({ texto: texto }, o || {})); }
+
+  // ======================================================================
+  // Buscador de productos con sugerencias
+  // ======================================================================
+  function montarBuscador(input, cfg) {
+    var caja = document.createElement('div');
+    caja.className = 'sugerencias oculto';
+    input.parentNode.appendChild(caja);
+    var sel = -1, actuales = [];
+    function filtrar() {
+      var q = input.value.trim().toUpperCase();
+      if (!q) { caja.classList.add('oculto'); return; }
+      var palabras = q.split(/\s+/);
+      actuales = (S.ini.productos || []).filter(function (p) {
+        if (p.activo === 'NO' && !cfg.incluirInactivos) return false;
+        var t = (p.sku + ' ' + p.linea + ' ' + p.modelo + ' ' + p.color + ' ' + p.descripcion).toUpperCase();
+        return palabras.every(function (w) { return t.indexOf(w) !== -1; });
+      }).slice(0, 40);
+      sel = actuales.length ? 0 : -1;
+      var html = actuales.map(function (p, i) {
+        var st = cfg.ubicacion ? (p.stock[cfg.ubicacion()] || 0) : p.stockTotal;
+        return '<div data-i="' + i + '" class="' + (i === sel ? 'sel' : '') + '"><b>' + esc(p.sku) + '</b> · ' + esc(descProducto(p)) +
+          ' <span class="tag ' + (st > 0 ? 'ok' : st < 0 ? 'bad' : 'gris') + '">' + st + ' und</span>' + (p.pvp ? ' <span class="muted">' + dinero(p.pvp) + '</span>' : '') + '</div>';
+      }).join('');
+      if (cfg.permitirNuevo && /^[A-Z0-9][A-Z0-9\-_.\/]{2,}$/.test(q.replace(/\s+/g, '')) && !productoPorSku(q.replace(/\s+/g, ''))) {
+        html += '<div data-nuevo="1">➕ Usar código nuevo <b>' + esc(q.replace(/\s+/g, '')) + '</b></div>';
+      }
+      caja.innerHTML = html || '<div class="muted">Sin coincidencias</div>';
+      caja.classList.remove('oculto');
+    }
+    function elegir(p) { caja.classList.add('oculto'); input.value = ''; cfg.alElegir(p); input.focus(); }
+    input.addEventListener('input', filtrar);
+    input.addEventListener('focus', filtrar);
+    input.addEventListener('blur', function () { setTimeout(function () { caja.classList.add('oculto'); }, 200); });
+    input.addEventListener('keydown', function (e) {
+      if (caja.classList.contains('oculto')) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        sel = Math.max(0, Math.min(actuales.length - 1, sel + (e.key === 'ArrowDown' ? 1 : -1)));
+        Array.prototype.forEach.call(caja.children, function (c, i) { c.classList.toggle('sel', i === sel); });
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (sel >= 0 && actuales[sel]) elegir(actuales[sel]);
+        else if (cfg.permitirNuevo && caja.querySelector('[data-nuevo]')) elegir({ sku: input.value.trim().toUpperCase().replace(/\s+/g, ''), nuevo: true });
+      }
+    });
+    caja.addEventListener('mousedown', function (e) {
+      var d = e.target.closest('div');
+      if (!d) return;
+      e.preventDefault();
+      if (d.getAttribute('data-nuevo')) elegir({ sku: input.value.trim().toUpperCase().replace(/\s+/g, ''), nuevo: true });
+      else if (d.getAttribute('data-i') !== null) elegir(actuales[Number(d.getAttribute('data-i'))]);
+    });
+  }
+
+  // ======================================================================
+  // Pantallas de acceso
+  // ======================================================================
+  function pantallaLogin(mensaje) {
+    $('raiz').innerHTML = '<div class="login"><div class="card">' +
+      '<h1>Cubitt Admin</h1><p class="muted" style="margin-top:0">Ventas, cobranza, compras e inventario.</p>' +
+      (mensaje ? '<div class="aviso info">' + esc(mensaje) + '</div>' : '') +
+      '<div id="loginError"></div>' +
+      '<form data-submit="login" class="grid">' +
+      '<label class="campo">Usuario<input class="input" name="usuario" autocomplete="username" autocapitalize="none" required></label>' +
+      '<label class="campo">Contraseña<input class="input" name="clave" type="password" autocomplete="current-password" required></label>' +
+      '<button class="btn prim bloque" type="submit">Ingresar</button></form></div></div>';
+    var u = document.querySelector('[name=usuario]'); if (u) u.focus();
+  }
+  A.login = function (form) {
+    var d = datosForm(form), btn = form.querySelector('button');
+    conBoton(btn, llamar('login', [d.usuario, d.clave])).then(function (r) {
+      if (!r.ok) {
+        if (r.error === 'NO_INSTALADA') return pantallaNoInstalada();
+        $('loginError').innerHTML = '<div class="aviso bad">' + esc(r.error) + '</div>';
+        return;
+      }
+      S.token = r.data.token; S.usuario = r.data.usuario; guardarToken(S.token);
+      if (S.usuario.debe_cambiar_clave) return pantallaCambioClave(true);
+      return entrar();
+    }).catch(function (e) { $('loginError').innerHTML = '<div class="aviso bad">' + esc(e.message) + '</div>'; });
+  };
+
+  function pantallaNoInstalada() {
+    $('raiz').innerHTML = '<div class="login"><div class="card"><h1>Falta instalar</h1>' +
+      '<p>Abre el editor de Apps Script, elige la función <b>instalar</b> y pulsa <b>Ejecutar</b>. Luego vuelve a abrir esta página.</p></div></div>';
+  }
+
+  function pantallaPrimerAdmin() {
+    $('raiz').innerHTML = '<div class="login"><div class="card"><h1>Crear administrador</h1>' +
+      '<p class="muted" style="margin-top:0">Usa el código de instalación que aparece en el registro de ejecución de la función <b>instalar</b>.</p>' +
+      '<div id="loginError"></div><form data-submit="primerAdmin" class="grid">' +
+      '<label class="campo">Código de instalación<input class="input" name="codigo" inputmode="numeric" required></label>' +
+      '<label class="campo">Tu nombre<input class="input" name="nombre" required></label>' +
+      '<label class="campo">Usuario<input class="input" name="usuario" autocapitalize="none" required></label>' +
+      '<label class="campo">Contraseña (mínimo 6)<input class="input" name="clave" type="password" minlength="6" required></label>' +
+      '<button class="btn prim bloque">Crear y entrar</button></form></div></div>';
+  }
+  A.primerAdmin = function (form) {
+    var d = datosForm(form);
+    conBoton(form.querySelector('button'), llamar('crearAdministradorInicial', [d.codigo, { usuario: d.usuario, nombre: d.nombre, clave: d.clave }])).then(function (r) {
+      if (!r.ok) { $('loginError').innerHTML = '<div class="aviso bad">' + esc(r.error) + '</div>'; return; }
+      S.token = r.data.token; S.usuario = r.data.usuario; guardarToken(S.token); entrar();
+    });
+  };
+
+  function pantallaCambioClave(obligatorio) {
+    var html = '<form data-submit="cambiarClave" class="grid">' +
+      (obligatorio ? '<div class="aviso warn">Por seguridad, cambia la contraseña temporal antes de continuar.</div>' : '') +
+      '<div id="claveError"></div>' +
+      '<label class="campo">Contraseña actual<input class="input" type="password" name="actual" required autocomplete="current-password"></label>' +
+      '<label class="campo">Nueva contraseña (mínimo 6)<input class="input" type="password" name="nueva" minlength="6" required autocomplete="new-password"></label>' +
+      '<label class="campo">Repite la nueva<input class="input" type="password" name="nueva2" minlength="6" required autocomplete="new-password"></label>' +
+      '<button class="btn prim bloque">Guardar contraseña</button></form>';
+    if (obligatorio) $('raiz').innerHTML = '<div class="login"><div class="card"><h1>Nueva contraseña</h1>' + html + '</div></div>';
+    else abrirModal('Cambiar contraseña', html);
+    S.claveObligatoria = !!obligatorio;
+  }
+  A.cambiarClave = function (form) {
+    var d = datosForm(form);
+    if (d.nueva !== d.nueva2) { $('claveError').innerHTML = '<div class="aviso bad">Las contraseñas no coinciden.</div>'; return; }
+    conBoton(form.querySelector('button'), api('cambiarClave', { actual: d.actual, nueva: d.nueva })).then(function () {
+      toast('Contraseña actualizada', 'ok');
+      if (S.claveObligatoria) { S.claveObligatoria = false; entrar(); } else cerrarModal();
+    }).catch(function (e) { if (e.message !== 'DEBE_CAMBIAR_CLAVE') $('claveError').innerHTML = '<div class="aviso bad">' + esc(e.message) + '</div>'; });
+  };
+
+  A.salir = function () {
+    llamar('logout', [S.token]).catch(function () {});
+    cerrarSesionLocal(); cerrarModal(); pantallaLogin('Sesión cerrada.');
+  };
+
+  // ======================================================================
+  // Estructura principal y navegación
+  // ======================================================================
+  var MENU = [
+    { id: 'inicio', t: 'Inicio', ico: '🏠' },
+    { id: 'vender', t: 'Vender', ico: '➕' },
+    { id: 'ventas', t: 'Ventas', ico: '🧾' },
+    { id: 'cobranza', t: 'Cobranza', ico: '💵' },
+    { id: 'compras', t: 'Compras y facturas', ico: '📦', admin: true },
+    { id: 'inventario', t: 'Inventario', ico: '🏬' },
+    { id: 'conciliacion', t: 'Conciliación', ico: '⚖️', admin: true },
+    { id: 'comisiones', t: 'Comisiones', ico: '🏅' },
+    { id: 'ajustes', t: 'Ajustes', ico: '⚙️', admin: true },
+    { id: 'cuenta', t: 'Mi cuenta', ico: '👤' }
+  ];
+  var INFERIOR = ['inicio', 'vender', 'ventas', 'cobranza'];
+
+  function menuVisible() { return MENU.filter(function (m) { return !m.admin || esAdmin(); }); }
+
+  function entrar() {
+    return refrescarInicial().then(function () {
+      var m = menuVisible();
+      $('raiz').innerHTML = '<div class="app"><nav class="lateral"><div class="marca">' + esc(S.ini.negocio) + ' <small>Administración</small></div>' +
+        m.map(function (x) {
+          return (x.id === 'cuenta' ? '<div class="nav-sep"></div>' : '') + '<button class="nav-item" data-a="ir" data-v="' + x.id + '"><span class="ico">' + x.ico + '</span>' + esc(x.t) + '</button>';
+        }).join('') + '</nav>' +
+        '<main class="principal"><div class="barra-sup"><h1 id="tituloVista"></h1><span class="usuario-chip">' + esc(S.usuario.nombre) + ' · ' + (esAdmin() ? 'Administrador' : 'Vendedor') + '</span></div>' +
+        '<div id="contenido"></div></main>' +
+        '<nav class="inferior">' + INFERIOR.map(function (id) {
+          var x = MENU.filter(function (mm) { return mm.id === id; })[0];
+          return '<button data-a="ir" data-v="' + id + '"><span class="ico">' + x.ico + '</span>' + esc(x.t) + '</button>';
+        }).join('') + '<button data-a="menuMas"><span class="ico">☰</span>Más</button></nav></div>';
+      ir(S.vista && menuVisible().some(function (x) { return x.id === S.vista; }) ? S.vista : 'inicio');
+    }).catch(function (e) { if (e.message !== 'SESION_VENCIDA' && e.message !== 'DEBE_CAMBIAR_CLAVE') pantallaLogin(e.message); });
+  }
+
+  A.menuMas = function () {
+    abrirModal('Menú', '<div class="grid">' + menuVisible().filter(function (m) { return INFERIOR.indexOf(m.id) === -1; }).map(function (m) {
+      return '<button class="btn bloque" style="justify-content:flex-start" data-a="ir" data-v="' + m.id + '">' + m.ico + ' ' + esc(m.t) + '</button>';
+    }).join('') + '</div>');
+  };
+
+  A.ir = function (el) { cerrarModal(); ir(el.getAttribute('data-v')); };
+
+  function ir(vista) {
+    S.vista = vista;
+    var m = MENU.filter(function (x) { return x.id === vista; })[0];
+    $('tituloVista').textContent = m ? m.t : '';
+    document.querySelectorAll('[data-a=ir]').forEach(function (b) { b.classList.toggle('activo', b.getAttribute('data-v') === vista); });
+    window.scrollTo(0, 0);
+    var c = $('contenido');
+    c.innerHTML = '<div class="vacio">Cargando…</div>';
+    var f = VISTAS[vista];
+    Promise.resolve().then(function () { return f(c); }).catch(function (e) { mostrarError(e, c); });
+  }
+  function recargarVista() { ir(S.vista); }
+
+  var VISTAS = {};
+
+  // ======================================================================
+  // INICIO
+  // ======================================================================
+  VISTAS.inicio = function (c) {
+    var f = S.filtroInicio || { desde: inicioMes(), hasta: hoy() };
+    return api('inicio', f).then(function (r) {
+      var p = r.periodo;
+      var h = '<div class="card"><form data-submit="filtroInicio" class="fila">' +
+        '<label class="campo">Desde<input class="input" type="date" name="desde" value="' + esc(r.rango.desde) + '"></label>' +
+        '<label class="campo">Hasta<input class="input" type="date" name="hasta" value="' + esc(r.rango.hasta) + '"></label>' +
+        '<div style="flex:0 0 auto"><button class="btn">Ver</button></div></form></div>';
+      h += '<div class="grid g4" style="margin-bottom:14px">' +
+        kpi('Vendido hoy', dinero(r.hoy.total), r.hoy.ventas + ' ventas') +
+        kpi('Cobrado hoy', dinero(r.hoy.cobrado), 'pagos recibidos hoy', 'ok') +
+        kpi('Vendido en el período', dinero(p.total), p.ventas + ' ventas · ' + p.unidades + ' und') +
+        kpi('Cobrado en el período', dinero(p.cobrado), 'según fecha del pago', 'ok') +
+        kpi('Por cobrar (todo)', dinero(r.porCobrar.total), r.porCobrar.ventas + ' ventas con saldo', 'warn', 'cobranza') +
+        kpi('Comisiones del período', dinero(p.comision), 'generadas por las ventas', '', 'comisiones') +
+        (esAdmin() ? kpi('Costo de lo vendido', dinero(p.costo), 'según costo del producto') + kpi('Margen después de comisión', dinero(p.margen), p.total ? Math.round(p.margen / p.total * 100) + '% de lo vendido' : '', p.margen >= 0 ? 'ok' : 'bad') : '') +
+        '</div>';
+      h += '<div class="grid g2 apilar">' +
+        '<div class="card"><h2>Contado vs crédito</h2>' + barra('Contado', p.contado, p.total) + barra('Crédito', p.credito, p.total) +
+        '<h2 style="margin-top:14px">Facturación fiscal</h2>' + barra('Con factura fiscal', p.fiscal, p.total) + barra('Sin factura fiscal', p.noFiscal, p.total) + '</div>';
+      if (r.alertas) {
+        var a = r.alertas;
+        h += '<div class="card"><h2>Pendientes de revisar</h2>' +
+          alerta(a.unidadesSinCompra > 0, 'bad', a.unidadesSinCompra + ' unidades vendidas sin compra registrada (' + a.skusNegativos + ' productos)', 'conciliacion') +
+          alerta(a.skusNegativosPorUbicacion > 0, 'warn', a.skusNegativosPorUbicacion + ' productos con stock negativo en alguna ubicación (falta un traslado)', 'conciliacion') +
+          alerta(a.pagosFechaEstimada > 0, 'warn', a.pagosFechaEstimada + ' pagos migrados con fecha estimada', 'ventas') +
+          alerta(a.comprasSinArchivo > 0, 'info', a.comprasSinArchivo + ' compras sin foto de la factura', 'compras') +
+          alerta(a.comisionesPorLiquidar > 0, 'info', dinero(a.comisionesPorLiquidar) + ' en comisiones de ventas cobradas por liquidar', 'comisiones') +
+          (a.unidadesSinCompra + a.skusNegativosPorUbicacion + a.pagosFechaEstimada + a.comprasSinArchivo + a.comisionesPorLiquidar === 0 ? '<div class="aviso ok">Todo al día.</div>' : '') +
+          '</div>';
+      }
+      h += '</div><div class="grid g2 apilar">' +
+        '<div class="card"><h2>Por vendedor</h2>' + tablaSimple(['Vendedor', 'Ventas', 'Total', 'Comisión'], r.porVendedor.map(function (x) { return [esc(x.vendedor), x.ventas, dinero(x.total), dinero(x.comision)]; }), [1, 2, 3]) + '</div>' +
+        '<div class="card"><h2>Productos más vendidos</h2>' + tablaSimple(['Producto', 'Und', 'Total'], r.porProducto.map(function (x) { return [esc(x.producto), x.unidades, dinero(x.total)]; }), [1, 2]) + '</div></div>';
+      c.innerHTML = h;
+    });
+  };
+  A.filtroInicio = function (form) { S.filtroInicio = datosForm(form); recargarVista(); };
+  function kpi(lbl, val, sub, tono, ir) {
+    return '<div class="kpi' + (ir ? ' clic" data-a="ir" data-v="' + ir : '') + '"><div class="lbl">' + esc(lbl) + '</div><div class="val ' + (tono || '') + '">' + val + '</div><div class="sub">' + esc(sub || '') + '</div></div>';
+  }
+  function barra(lbl, v, total) {
+    var pct = total > 0 ? Math.round(v / total * 100) : 0;
+    return '<div style="margin-bottom:8px"><div class="fila" style="justify-content:space-between;font-size:.85rem"><span>' + esc(lbl) + '</span><span class="fuerte">' + dinero(v) + ' · ' + pct + '%</span></div><div class="barra-progreso"><div style="width:' + pct + '%"></div></div></div>';
+  }
+  function alerta(cond, tono, texto, ir) {
+    return cond ? '<div class="aviso ' + tono + '" style="cursor:pointer" data-a="ir" data-v="' + ir + '">' + esc(texto) + ' →</div>' : '';
+  }
+  function tablaSimple(cabeceras, filas, numericas) {
+    if (!filas.length) return '<div class="vacio">Sin datos en este período.</div>';
+    numericas = numericas || [];
+    return '<div class="tabla-env"><table class="tabla"><thead><tr>' + cabeceras.map(function (t, i) { return '<th' + (numericas.indexOf(i) !== -1 ? ' class="num"' : '') + '>' + esc(t) + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + filas.map(function (f) { return '<tr>' + f.map(function (v, i) { return '<td' + (numericas.indexOf(i) !== -1 ? ' class="num"' : '') + '>' + v + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
+  }
+
+  // ======================================================================
+  // VENDER
+  // ======================================================================
+  function ventaNueva(prev) {
+    return {
+      fecha: hoy(), cliente: '', telefono: '', vendedor_id: esAdmin() ? (prev ? prev.vendedor_id : '') : S.usuario.vendedor_id,
+      ubicacion_id: prev ? prev.ubicacion_id : (S.ini.ubicacionPorDefecto || ''), tipo: 'CREDITO', items: [], pago_inicial: '',
+      metodo_pago: prev ? prev.metodo_pago : (S.ini.metodosPago[0] || ''), fiscal: false, factura_fiscal: '', notas: ''
+    };
+  }
+
+  VISTAS.vender = function (c) {
+    if (!S.venta) S.venta = ventaNueva();
+    var v = S.venta;
+    var vendedorCampo = esAdmin()
+      ? '<label class="campo">Vendedor<select class="input" data-v-campo="vendedor_id">' + optVendedores(v.vendedor_id, 'Selecciona…', true) + '</select></label>'
+      : '<label class="campo">Vendedor<input class="input" disabled value="' + esc((S.ini.vendedores.filter(function (x) { return x.id === S.usuario.vendedor_id; })[0] || {}).nombre || '') + '"></label>';
+    c.innerHTML = '<div id="ventaError"></div><div class="grid g2 apilar">' +
+      '<div class="card"><h2>Datos de la venta</h2><div class="grid">' +
+      '<div class="grid g2"><label class="campo">Fecha<input class="input" type="date" max="' + hoy() + '" data-v-campo="fecha" value="' + esc(v.fecha) + '"></label>' + vendedorCampo + '</div>' +
+      '<label class="campo rel">Cliente<input class="input" data-v-campo="cliente" list="listaClientes" autocomplete="off" value="' + esc(v.cliente) + '" placeholder="Nombre del cliente"></label><datalist id="listaClientes"></datalist>' +
+      '<div class="grid g2"><label class="campo">Teléfono / WhatsApp<input class="input" data-v-campo="telefono" inputmode="tel" value="' + esc(v.telefono) + '" placeholder="0414…"></label>' +
+      '<label class="campo">Sale de<select class="input" data-v-campo="ubicacion_id">' + optUbicaciones(v.ubicacion_id, 'Ubicación…') + '</select></label></div>' +
+      '<label class="campo">Notas<input class="input" data-v-campo="notas" value="' + esc(v.notas) + '" placeholder="Opcional"></label>' +
+      '</div></div>' +
+      '<div class="card"><h2>Productos</h2><div class="rel"><input class="input" id="buscarProducto" placeholder="Buscar por código, modelo o color…" autocomplete="off"></div>' +
+      '<div id="lineasVenta"></div></div></div>' +
+      '<div class="card"><div class="grid g2 apilar"><div class="grid">' +
+      '<div><div class="campo" style="margin-bottom:6px">Forma de pago</div><div class="segmento"><button data-a="tipoVenta" data-t="CONTADO">Contado</button><button data-a="tipoVenta" data-t="CREDITO">Crédito</button></div></div>' +
+      '<div class="grid g2"><label class="campo" id="campoPagoInicial">Pago inicial ($)<input class="input" type="number" step="0.01" min="0" inputmode="decimal" data-v-campo="pago_inicial" value="' + esc(v.pago_inicial) + '"></label>' +
+      '<label class="campo">Método<select class="input" data-v-campo="metodo_pago">' + opciones(S.ini.metodosPago.map(function (m) { return { v: m, t: m }; }), v.metodo_pago) + '</select></label></div>' +
+      '<label class="check"><input type="checkbox" data-v-campo="fiscal"' + (v.fiscal ? ' checked' : '') + '> Se emitió factura fiscal</label>' +
+      '<label class="campo' + (v.fiscal ? '' : ' oculto') + '" id="campoFactura">N° de factura fiscal<input class="input" data-v-campo="factura_fiscal" value="' + esc(v.factura_fiscal) + '"></label>' +
+      '</div><div><div class="muted peq">Total</div><div class="total-grande" id="ventaTotal">$0.00</div>' +
+      '<div class="peq" id="ventaResumen"></div><div style="margin-top:14px"><button class="btn prim bloque" data-a="guardarVenta" id="btnGuardarVenta">Registrar venta</button></div></div></div></div>';
+    montarBuscador($('buscarProducto'), {
+      ubicacion: function () { return S.venta.ubicacion_id; },
+      alElegir: function (p) {
+        var ya = S.venta.items.filter(function (it) { return it.sku === p.sku; })[0];
+        if (ya) { ya.cantidad = n(ya.cantidad) + 1; ya.comision = comisionSugerida(p, ya.cantidad); }
+        else S.venta.items.push({ sku: p.sku, descripcion: descProducto(p), cantidad: 1, precio_unit: p.pvp || '', comision: comisionSugerida(p, 1) });
+        pintarLineasVenta();
+      }
+    });
+    api('clientes').then(function (l) {
+      S.clientes = l;
+      var dl = $('listaClientes'); if (dl) dl.innerHTML = l.map(function (x) { return '<option value="' + esc(x.cliente) + '">'; }).join('');
+    }).catch(function () {});
+    pintarLineasVenta();
+  };
+
+  function totalVenta() { return r2(S.venta.items.reduce(function (a, it) { return a + n(it.cantidad) * n(it.precio_unit); }, 0)); }
+
+  function pintarLineasVenta() {
+    var v = S.venta, cont = $('lineasVenta');
+    if (!cont) return;
+    cont.innerHTML = v.items.length ? '<div class="linea-prod muted peq" style="border:0"><span>Producto</span><span>Cant.</span><span>Precio</span><span class="solo-escritorio">Comisión</span><span></span></div>' + v.items.map(function (it, i) {
+      var p = productoPorSku(it.sku);
+      var st = p ? (p.stock[v.ubicacion_id] || 0) : 0;
+      return '<div class="linea-prod"><div class="desc"><b>' + esc(it.sku) + '</b><span class="muted">' + esc(it.descripcion) + '</span> ' +
+        '<span class="tag ' + (st >= n(it.cantidad) ? 'ok' : 'bad') + '">stock ' + st + '</span></div>' +
+        '<input class="input" type="number" min="1" step="1" inputmode="numeric" data-linea="' + i + '" data-c="cantidad" value="' + esc(it.cantidad) + '">' +
+        '<input class="input" type="number" min="0" step="0.01" inputmode="decimal" data-linea="' + i + '" data-c="precio_unit" value="' + esc(it.precio_unit) + '" placeholder="Precio">' +
+        '<div class="col-com"><span class="solo-movil muted peq">Comisión</span><input class="input" type="number" min="0" step="0.01" inputmode="decimal" data-linea="' + i + '" data-c="comision" value="' + esc(it.comision) + '" title="Comisión del vendedor por esta línea"></div>' +
+        '<button class="btn peq peligro" data-a="quitarLinea" data-i="' + i + '" aria-label="Quitar">✕</button></div>';
+    }).join('') : '<div class="vacio">Busca y agrega los productos vendidos.</div>';
+    actualizarTotalesVenta();
+  }
+
+  function actualizarTotalesVenta() {
+    var v = S.venta, total = totalVenta();
+    if (!$('ventaTotal')) return;
+    $('ventaTotal').textContent = dinero(total);
+    document.querySelectorAll('[data-a=tipoVenta]').forEach(function (b) { b.classList.toggle('activo', b.getAttribute('data-t') === v.tipo); });
+    var pi = document.querySelector('[data-v-campo=pago_inicial]');
+    if (v.tipo === 'CONTADO') { v.pago_inicial = total; pi.value = total ? total.toFixed(2) : ''; pi.readOnly = true; $('campoPagoInicial').firstChild.textContent = 'Monto pagado ($)'; }
+    else { pi.readOnly = false; $('campoPagoInicial').firstChild.textContent = 'Pago inicial ($)'; }
+    var com = r2(v.items.reduce(function (a, it) { return a + n(it.comision); }, 0));
+    var saldo = r2(total - n(v.pago_inicial));
+    $('ventaResumen').innerHTML = v.items.reduce(function (a, it) { return a + n(it.cantidad); }, 0) + ' und · comisión ' + dinero(com) +
+      (v.tipo === 'CREDITO' ? '<br>Queda debiendo <b>' + dinero(saldo) + '</b>' : '');
+  }
+
+  document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.hasAttribute('data-v-campo') && S.venta) {
+      var campo = t.getAttribute('data-v-campo');
+      S.venta[campo] = t.type === 'checkbox' ? t.checked : t.value;
+      if (campo === 'fiscal') $('campoFactura').classList.toggle('oculto', !t.checked);
+      if (campo === 'ubicacion_id') pintarLineasVenta(); else actualizarTotalesVenta();
+    } else if (t.hasAttribute('data-linea') && S.venta && $('lineasVenta') && $('lineasVenta').contains(t)) {
+      var it = S.venta.items[Number(t.getAttribute('data-linea'))];
+      var c = t.getAttribute('data-c');
+      it[c] = t.value;
+      if (c === 'cantidad') {
+        it.comision = comisionSugerida(productoPorSku(it.sku), it.cantidad);
+        var inp = document.querySelector('[data-linea="' + t.getAttribute('data-linea') + '"][data-c=comision]');
+        if (inp) inp.value = it.comision;
+      }
+      actualizarTotalesVenta();
+    }
+  });
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.hasAttribute('data-v-campo') && S.venta && (t.tagName === 'SELECT' || t.type === 'checkbox' || t.type === 'date')) {
+      t.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (t.getAttribute('data-v-campo') === 'cliente' && S.clientes) {
+      var c = S.clientes.filter(function (x) { return x.cliente === t.value.trim().toUpperCase(); })[0];
+      if (c && c.telefono && !S.venta.telefono) { S.venta.telefono = c.telefono; var tel = document.querySelector('[data-v-campo=telefono]'); if (tel) tel.value = c.telefono; }
+    }
+  });
+
+  A.tipoVenta = function (el) { S.venta.tipo = el.getAttribute('data-t'); if (S.venta.tipo === 'CREDITO') { S.venta.pago_inicial = ''; document.querySelector('[data-v-campo=pago_inicial]').value = ''; } actualizarTotalesVenta(); };
+  A.quitarLinea = function (el) { S.venta.items.splice(Number(el.getAttribute('data-i')), 1); pintarLineasVenta(); };
+
+  A.guardarVenta = function (el, e, forzar) {
+    var v = S.venta;
+    var payload = {
+      fecha: v.fecha, cliente: v.cliente, telefono: v.telefono, vendedor_id: v.vendedor_id, ubicacion_id: v.ubicacion_id, tipo: v.tipo,
+      pago_inicial: n(v.pago_inicial), metodo_pago: v.metodo_pago, fiscal: !!v.fiscal, factura_fiscal: v.factura_fiscal, notas: v.notas,
+      items: v.items.map(function (it) { return { sku: it.sku, descripcion: it.descripcion, cantidad: n(it.cantidad), precio_unit: n(it.precio_unit), comision: it.comision === '' ? '' : n(it.comision) }; }),
+      forzar_stock: !!forzar
+    };
+    $('ventaError').innerHTML = '';
+    conBoton($('btnGuardarVenta'), api('crearVenta', payload)).then(function (venta) {
+      toast('Venta ' + venta.id + ' registrada', 'ok');
+      S.venta = ventaNueva(v);
+      refrescarInicial().catch(function () {});
+      mostrarVentaRegistrada(venta);
+      recargarVista();
+    }).catch(function (err) {
+      var msg = err.message;
+      if (/^STOCK_INSUFICIENTE/.test(msg)) {
+        $('ventaError').innerHTML = '<div class="aviso warn">' + esc(msg.replace('STOCK_INSUFICIENTE: ', '')) +
+          (esAdmin() ? '<div style="margin-top:8px"><button class="btn peq" data-a="forzarVenta">Registrar igual (quedará stock negativo)</button></div>' : '') + '</div>';
+      } else if (msg !== 'SESION_VENCIDA' && msg !== 'DEBE_CAMBIAR_CLAVE') {
+        $('ventaError').innerHTML = '<div class="aviso bad">' + esc(msg) + '</div>';
+      }
+      window.scrollTo(0, 0);
+    });
+  };
+  A.forzarVenta = function (el, e) { A.guardarVenta(el, e, true); };
+
+  function mostrarVentaRegistrada(v) {
+    abrirModal('Venta registrada', '<div class="aviso ok">Venta <b>' + esc(v.id) + '</b> de ' + esc(v.cliente) + ' por <b>' + dinero(v.total) + '</b>.' +
+      (v.saldo > 0 ? '\nQueda debiendo ' + dinero(v.saldo) + '.' : '\nPagada completa.') + '</div>' +
+      '<div class="acciones"><button class="btn" data-a="verVenta" data-id="' + esc(v.id) + '">Ver detalle</button><button class="btn prim" data-a="cerrarModal">Nueva venta</button></div>');
+  }
+
+  // ======================================================================
+  // VENTAS (lista y detalle)
+  // ======================================================================
+  VISTAS.ventas = function (c) {
+    var f = S.filtrosVentas || { desde: inicioMes(), hasta: hoy(), vendedor_id: '', estadoPago: '', tipo: '', fiscal: '', q: '' };
+    S.filtrosVentas = f;
+    c.innerHTML = '<div class="card"><form data-submit="filtrarVentas" class="fila">' +
+      '<label class="campo">Desde<input class="input" type="date" name="desde" value="' + esc(f.desde) + '"></label>' +
+      '<label class="campo">Hasta<input class="input" type="date" name="hasta" value="' + esc(f.hasta) + '"></label>' +
+      (esAdmin() ? '<label class="campo">Vendedor<select class="input" name="vendedor_id">' + optVendedores(f.vendedor_id, 'Todos') + '</select></label>' : '') +
+      '<label class="campo">Estado<select class="input" name="estadoPago">' + opciones([{ v: 'CON_SALDO', t: 'Con saldo' }, { v: 'PAGADA', t: 'Pagadas' }, { v: 'PENDIENTE', t: 'Sin abonos' }, { v: 'ABONADA', t: 'Abonadas' }, { v: 'ANULADA', t: 'Anuladas' }], f.estadoPago, 'Todos') + '</select></label>' +
+      '<label class="campo">Tipo<select class="input" name="tipo">' + opciones([{ v: 'CONTADO', t: 'Contado' }, { v: 'CREDITO', t: 'Crédito' }], f.tipo, 'Todos') + '</select></label>' +
+      '<label class="campo">Fiscal<select class="input" name="fiscal">' + opciones([{ v: 'SI', t: 'Con factura' }, { v: 'NO', t: 'Sin factura' }], f.fiscal, 'Todos') + '</select></label>' +
+      '<label class="campo" style="flex:2 1 200px">Buscar<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Cliente, código, N° factura…"></label>' +
+      '<div style="flex:0 0 auto" class="acciones"><button class="btn prim">Filtrar</button><button class="btn" type="button" data-a="ventasTodo">Todo</button></div></form></div><div id="ventasRes"><div class="vacio">Cargando…</div></div>';
+    return api('listarVentas', f).then(function (r) {
+      var t = r.totales;
+      var h = '<div class="grid g4" style="margin-bottom:14px">' + kpi('Ventas', t.ventas, r.cantidad > r.ventas.length ? 'mostrando ' + r.ventas.length : '') + kpi('Total', dinero(t.total)) + kpi('Cobrado', dinero(t.pagado), '', 'ok') + kpi('Saldo', dinero(t.saldo), '', t.saldo > 0 ? 'warn' : '') + '</div>';
+      if (!r.ventas.length) { $('ventasRes').innerHTML = h + '<div class="card vacio">No hay ventas con estos filtros.</div>'; return; }
+      h += '<div class="card"><div class="solo-escritorio tabla-env"><table class="tabla"><thead><tr><th>Fecha</th><th>Venta</th><th>Cliente</th><th>Productos</th><th>Vendedor</th><th class="num">Total</th><th class="num">Saldo</th><th>Estado</th></tr></thead><tbody>' +
+        r.ventas.map(function (v) {
+          return '<tr class="clic" data-a="verVenta" data-id="' + esc(v.id) + '"><td>' + fecha(v.fecha) + '</td><td class="peq">' + esc(v.id) + '<br>' + (v.tipo === 'CONTADO' ? '<span class="tag gris">Contado</span>' : '<span class="tag info">Crédito</span>') + (v.fiscal === 'SI' ? ' <span class="tag gris">Fiscal</span>' : '') + '</td>' +
+            '<td class="fuerte">' + esc(v.cliente) + '</td><td class="peq">' + esc(v.productos) + '</td><td class="peq">' + esc(v.vendedor) + '</td><td class="num">' + dinero(v.total) + '</td><td class="num">' + (v.saldo > 0 ? '<b>' + dinero(v.saldo) + '</b>' : '—') + '</td><td>' + tagEstado(v.estado === 'ANULADA' ? 'ANULADA' : v.estadoPago) + '</td></tr>';
+        }).join('') + '</tbody></table></div><div class="solo-movil">' +
+        r.ventas.map(function (v) {
+          return '<div class="lista-item" data-a="verVenta" data-id="' + esc(v.id) + '"><div class="izq"><div class="titulo">' + esc(v.cliente) + '</div><div class="det">' + fecha(v.fecha) + ' · ' + esc(v.productos) + '</div><div class="det">' + esc(v.vendedor) + '</div></div>' +
+            '<div class="der"><div class="fuerte">' + dinero(v.total) + '</div>' + (v.saldo > 0 ? '<div class="peq" style="color:var(--warn)">debe ' + dinero(v.saldo) + '</div>' : '') + tagEstado(v.estado === 'ANULADA' ? 'ANULADA' : v.estadoPago) + '</div></div>';
+        }).join('') + '</div></div>';
+      $('ventasRes').innerHTML = h;
+    });
+  };
+  A.filtrarVentas = function (form) { S.filtrosVentas = datosForm(form); if (!esAdmin()) S.filtrosVentas.vendedor_id = ''; recargarVista(); };
+  A.ventasTodo = function () { S.filtrosVentas = { desde: '', hasta: '', vendedor_id: '', estadoPago: '', tipo: '', fiscal: '', q: '' }; recargarVista(); };
+
+  A.verVenta = function (el) { abrirVenta(el.getAttribute('data-id')); };
+
+  function abrirVenta(id) {
+    return api('detalleVenta', { id: id }).then(function (v) { pintarVenta(v); }).catch(function (e) { mostrarError(e); });
+  }
+
+  function pintarVenta(v) {
+    var activa = v.estado !== 'ANULADA';
+    var h = '<div class="fila" style="justify-content:space-between;margin-bottom:10px"><div>' + tagEstado(activa ? v.estadoPago : 'ANULADA') + ' ' +
+      (v.tipo === 'CONTADO' ? '<span class="tag gris">Contado</span>' : '<span class="tag info">Crédito</span>') + ' ' +
+      (v.fiscal === 'SI' ? '<span class="tag gris">Factura fiscal ' + esc(v.factura_fiscal) + '</span>' : '<span class="tag gris">Sin factura fiscal</span>') +
+      (v.origen === 'MIGRACION' ? ' <span class="tag warn">Histórico (fila ' + esc(v.fila_origen) + ')</span>' : '') + '</div></div>';
+    h += '<div class="grid g3" style="margin-bottom:12px">' + kpi('Total', dinero(v.total)) + kpi('Pagado', dinero(v.pagado), '', 'ok') + kpi('Saldo', dinero(v.saldo), '', v.saldo > 0 ? 'warn' : '') + '</div>';
+    h += '<div class="peq" style="margin-bottom:10px"><b>' + esc(v.cliente) + '</b>' + (v.telefono ? ' · ' + esc(v.telefono) : '') + '<br>' + fecha(v.fecha) + ' · Vendedor: ' + esc(v.vendedor) + ' · Sale de: ' + esc(nombreUbicacion(v.ubicacion_id)) +
+      '<br>Comisión: <b>' + dinero(v.comision) + '</b>' + (v.comision_pagada_en ? ' <span class="tag ok">liquidada ' + fecha(v.comision_pagada_en) + '</span>' : '') +
+      (v.costo !== undefined && v.costo !== '' ? ' · Costo: ' + dinero(v.costo) : '') + (v.notas ? '<br>Notas: ' + esc(v.notas) : '') +
+      (v.motivo_anulacion ? '<br><span style="color:var(--bad)">Anulada: ' + esc(v.motivo_anulacion) + '</span>' : '') + '</div>';
+    h += '<h4 style="margin:12px 0 4px">Productos</h4>' + tablaSimple(['Código', 'Descripción', 'Cant.', 'Precio', 'Subtotal'], v.items.map(function (it) {
+      return [esc(it.sku), esc(it.descripcion), it.cantidad, dinero(it.precio_unit), dinero(it.subtotal)];
+    }), [2, 3, 4]);
+    h += '<h4 style="margin:14px 0 4px">Pagos</h4>' + (v.pagos.length ? '<div class="tabla-env"><table class="tabla"><thead><tr><th>Fecha</th><th class="num">Monto</th><th>Método</th><th>Nota</th><th></th></tr></thead><tbody>' + v.pagos.map(function (p) {
+      var anulado = p.estado === 'ANULADA';
+      return '<tr' + (anulado ? ' style="opacity:.55;text-decoration:line-through"' : '') + '><td>' + fecha(p.fecha) + (p.fecha_estimada === 'SI' && !anulado ? ' <span class="tag warn" title="La hoja no tenía la fecha de este pago">estimada</span>' : '') + '</td><td class="num">' + dinero(p.monto) + '</td><td class="peq">' + esc(p.metodo) + '</td><td class="peq">' + esc(p.nota) + '</td><td class="num">' +
+        (esAdmin() && !anulado ? (p.fecha_estimada === 'SI' ? '<button class="btn peq" data-a="fechaPago" data-id="' + esc(p.id) + '" data-venta="' + esc(v.id) + '">Fecha</button> ' : '') + '<button class="btn peq peligro" data-a="anularPago" data-id="' + esc(p.id) + '">Anular</button>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>' : '<div class="muted peq">Sin pagos registrados.</div>');
+    if (activa && v.saldo > 0.005) {
+      h += '<div class="card" style="margin-top:14px;background:var(--bg)"><h2>Registrar pago</h2><div id="pagoError"></div><form data-submit="guardarPago" data-venta="' + esc(v.id) + '" class="fila">' +
+        '<label class="campo">Fecha<input class="input" type="date" name="fecha" max="' + hoy() + '" min="' + esc(v.fecha) + '" value="' + hoy() + '" required></label>' +
+        '<label class="campo">Monto ($)<input class="input" type="number" step="0.01" min="0.01" max="' + v.saldo + '" name="monto" value="' + v.saldo.toFixed(2) + '" inputmode="decimal" required></label>' +
+        '<label class="campo">Método<select class="input" name="metodo">' + opciones(S.ini.metodosPago.map(function (m) { return { v: m, t: m }; }), '') + '</select></label>' +
+        '<label class="campo" style="flex:2 1 160px">Nota<input class="input" name="nota" placeholder="Opcional"></label>' +
+        '<div style="flex:0 0 auto"><button class="btn prim">Guardar pago</button></div></form></div>';
+    }
+    if (esAdmin() && activa) {
+      h += '<div class="acciones" style="margin-top:14px"><button class="btn" data-a="editarVenta" data-id="' + esc(v.id) + '">Editar datos</button><button class="btn peligro" data-a="anularVenta" data-id="' + esc(v.id) + '">Anular venta</button></div><div id="editarVentaZona"></div>';
+    }
+    S.ventaAbierta = v;
+    abrirModal('Venta ' + v.id, h, true);
+  }
+
+  A.guardarPago = function (form) {
+    var d = datosForm(form);
+    d.venta_id = form.getAttribute('data-venta');
+    conBoton(form.querySelector('button'), api('crearPago', d)).then(function (v) {
+      toast('Pago registrado', 'ok'); pintarVenta(v); if (S.vista !== 'vender') recargarVista();
+    }).catch(function (e) { mostrarError(e, $('pagoError')); });
+  };
+  A.anularPago = function (el) {
+    pedir('Anular pago', 'Motivo', { ok: 'Anular pago', peligro: true }).then(function (motivo) {
+    if (!motivo) return;
+    return api('anularPago', { id: el.getAttribute('data-id'), motivo: motivo }).then(function (v) { toast('Pago anulado'); pintarVenta(v); recargarVista(); }); }).catch(function (e) { mostrarError(e); });
+  };
+  A.fechaPago = function (el) {
+    pedir('Fecha real del pago', 'Fecha', { tipo: 'date', max: hoy(), ok: 'Guardar fecha' }).then(function (f) {
+      if (!f) return;
+      return api('corregirFechaPago', { id: el.getAttribute('data-id'), fecha: f }).then(function (v) { toast('Fecha corregida', 'ok'); pintarVenta(v); });
+    }).catch(function (e) { mostrarError(e); });
+  };
+  A.anularVenta = function (el) {
+    pedir('Anular venta', 'Motivo', { texto: 'La mercancía vuelve al stock y se anulan sus pagos. La venta queda en el historial como anulada.', ok: 'Anular venta', peligro: true }).then(function (motivo) {
+      if (!motivo) return;
+      return api('anularVenta', { id: el.getAttribute('data-id'), motivo: motivo }).then(function (v) {
+        toast('Venta anulada'); pintarVenta(v); refrescarInicial().catch(function () {}); recargarVista();
+      });
+    }).catch(function (e) { mostrarError(e); });
+  };
+  A.editarVenta = function () {
+    var v = S.ventaAbierta;
+    $('editarVentaZona').innerHTML = '<div class="card" style="margin-top:12px;background:var(--bg)"><h2>Editar venta</h2><div id="editError"></div><form data-submit="guardarEdicionVenta" class="grid">' +
+      '<div class="grid g2"><label class="campo">Fecha<input class="input" type="date" name="fecha" max="' + hoy() + '" value="' + esc(v.fecha) + '"></label>' +
+      '<label class="campo">Vendedor<select class="input" name="vendedor_id">' + optVendedores(v.vendedor_id) + '</select></label></div>' +
+      '<div class="grid g2"><label class="campo">Cliente<input class="input" name="cliente" value="' + esc(v.cliente) + '"></label><label class="campo">Teléfono<input class="input" name="telefono" value="' + esc(v.telefono) + '"></label></div>' +
+      '<div class="grid g2"><label class="campo">Tipo<select class="input" name="tipo">' + opciones([{ v: 'CONTADO', t: 'Contado' }, { v: 'CREDITO', t: 'Crédito' }], v.tipo) + '</select></label>' +
+      '<label class="campo">Comisión total ($)<input class="input" type="number" step="0.01" min="0" name="comision" value="' + esc(v.comision) + '"' + (v.comision_pagada_en ? ' disabled' : '') + '></label></div>' +
+      '<div class="grid g2"><label class="check"><input type="checkbox" name="fiscal"' + (v.fiscal === 'SI' ? ' checked' : '') + '> Factura fiscal</label><label class="campo">N° factura fiscal<input class="input" name="factura_fiscal" value="' + esc(v.factura_fiscal) + '"></label></div>' +
+      '<label class="campo">Notas<input class="input" name="notas" value="' + esc(v.notas) + '"></label>' +
+      '<div class="acciones"><button class="btn prim">Guardar cambios</button></div></form></div>';
+  };
+  A.guardarEdicionVenta = function (form) {
+    var d = datosForm(form);
+    d.id = S.ventaAbierta.id;
+    if (form.comision.disabled) delete d.comision;
+    conBoton(form.querySelector('button'), api('editarVenta', d)).then(function (v) { toast('Venta actualizada', 'ok'); pintarVenta(v); recargarVista(); })
+      .catch(function (e) { mostrarError(e, $('editError')); });
+  };
+
+  // ======================================================================
+  // COBRANZA
+  // ======================================================================
+  VISTAS.cobranza = function (c) {
+    return api('cobranza', {}).then(function (r) {
+      var t = r.tramos;
+      var h = '<div class="grid g4" style="margin-bottom:14px">' + kpi('Total por cobrar', dinero(r.total), r.clientes.length + ' clientes', 'warn') +
+        kpi('0 a 30 días', dinero(t['0-30'])) + kpi('31 a 90 días', dinero(t['31-60'] + t['61-90']), '', 'warn') + kpi('Más de 90 días', dinero(t['90+']), '', t['90+'] > 0 ? 'bad' : '') + '</div>';
+      if (!r.clientes.length) { c.innerHTML = h + '<div class="card vacio">No hay saldos pendientes. 🎉</div>'; return; }
+      h += '<div class="card"><input class="input" id="filtroCobranza" placeholder="Buscar cliente…" style="margin-bottom:8px">' + r.clientes.map(function (cl, i) {
+        var tono = cl.dias > 90 ? 'bad' : cl.dias > 30 ? 'warn' : 'gris';
+        var wa = whatsapp(cl.telefono, 'Hola ' + cl.cliente + ', te escribimos de ' + S.ini.negocio + '. Tu saldo pendiente es ' + dinero(cl.saldo) + '. ¡Gracias!');
+        return '<div class="cobro" data-nombre="' + esc(cl.cliente) + '"><div class="lista-item" data-a="toggleCobro" data-i="' + i + '"><div class="izq"><div class="titulo">' + esc(cl.cliente) + '</div>' +
+          '<div class="det">' + cl.ventas.length + ' venta(s) · ' + esc(cl.vendedores) + '</div></div><div class="der"><div class="fuerte">' + dinero(cl.saldo) + '</div><span class="tag ' + tono + '">' + cl.dias + ' días</span></div></div>' +
+          '<div class="oculto" id="cobro' + i + '" style="padding:4px 0 12px">' + tablaSimple(['Fecha', 'Venta', 'Total', 'Pagado', 'Saldo', ''], cl.ventas.map(function (v) {
+            return [fecha(v.fecha), esc(v.id), dinero(v.total), dinero(v.pagado), '<b>' + dinero(v.saldo) + '</b>', '<button class="btn peq prim" data-a="verVenta" data-id="' + esc(v.id) + '">Abonar</button>'];
+          }), [2, 3, 4, 5]) + (wa ? '<a class="btn peq" target="_blank" rel="noopener" href="' + esc(wa) + '">Recordar por WhatsApp</a>' : '') + '</div></div>';
+      }).join('') + '</div>';
+      c.innerHTML = h;
+      $('filtroCobranza').addEventListener('input', function () {
+        var q = this.value.trim().toUpperCase();
+        document.querySelectorAll('.cobro').forEach(function (d) { d.classList.toggle('oculto', q && d.getAttribute('data-nombre').indexOf(q) === -1); });
+      });
+    });
+  };
+  A.toggleCobro = function (el) { $('cobro' + el.getAttribute('data-i')).classList.toggle('oculto'); };
+  function whatsapp(tel, texto) {
+    var d = String(tel || '').replace(/\D/g, '');
+    if (!d) return '';
+    if (d.charAt(0) === '0') d = '58' + d.slice(1);
+    else if (d.length === 10) d = '58' + d;
+    return 'https://wa.me/' + d + '?text=' + encodeURIComponent(texto);
+  }
+
+  // ======================================================================
+  // COMPRAS Y FACTURAS
+  // ======================================================================
+  VISTAS.compras = function (c) {
+    var f = S.filtrosCompras || { desde: '', hasta: '', q: '' };
+    c.innerHTML = '<div class="acciones" style="margin-bottom:12px;justify-content:flex-start"><button class="btn prim" data-a="nuevaCompra">➕ Registrar factura</button><button class="btn" data-a="facturasDrive">📁 Facturas en mi Drive</button></div>' +
+      '<div class="card"><form data-submit="filtrarCompras" class="fila"><label class="campo">Desde<input class="input" type="date" name="desde" value="' + esc(f.desde) + '"></label>' +
+      '<label class="campo">Hasta<input class="input" type="date" name="hasta" value="' + esc(f.hasta) + '"></label><label class="campo" style="flex:2 1 200px">Buscar<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Proveedor, N° factura, código…"></label>' +
+      '<div style="flex:0 0 auto"><button class="btn">Filtrar</button></div></form></div><div id="comprasRes"></div>';
+    return api('listarCompras', f).then(function (r) {
+      var h = '<div class="grid g3" style="margin-bottom:14px">' + kpi('Facturas', r.compras.length) + kpi('Unidades compradas', r.unidades) + kpi('Total comprado', dinero(r.total)) + '</div>';
+      h += '<div class="card">' + (r.compras.length ? '<div class="tabla-env"><table class="tabla"><thead><tr><th>Fecha</th><th>Proveedor</th><th>Factura</th><th>Ubicación</th><th class="num">Und</th><th class="num">Total</th><th>Foto</th></tr></thead><tbody>' +
+        r.compras.map(function (x) {
+          return '<tr class="clic" data-a="verCompra" data-id="' + esc(x.id) + '"><td>' + fecha(x.fecha) + '</td><td>' + esc(x.proveedor) + (x.proveedor === 'POR DEFINIR' ? ' <span class="tag warn">completar</span>' : '') + '</td><td>' + esc(x.nro_factura) + '</td><td class="peq">' + esc(nombreUbicacion(x.ubicacion_id)) + '</td>' +
+            '<td class="num">' + x.unidades + '</td><td class="num">' + dinero(x.total) + '</td><td>' + (x.sinArchivo ? '<span class="tag warn">falta</span>' : '<span class="tag ok">sí</span>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<div class="vacio">Aún no hay compras registradas.</div>') + '</div>';
+      $('comprasRes').innerHTML = h;
+    });
+  };
+  A.filtrarCompras = function (form) { S.filtrosCompras = datosForm(form); recargarVista(); };
+
+  function compraNueva(archivo) {
+    return { archivo_id: archivo ? archivo.archivo_id : '', archivo_url: archivo ? archivo.archivo_url : '', archivo_nombre: archivo ? archivo.nombre : '', fecha: hoy(), proveedor: '', rif: '', nro_factura: '', nro_control: '',
+      ubicacion_id: S.ini.ubicacionPorDefecto || '', moneda: 'USD', tasa: '', metodo_pago: '', iva: '', total: '', notas: '', items: [] };
+  }
+  A.nuevaCompra = function () { S.compra = compraNueva(); formCompra(); };
+
+  function formCompra(aviso) {
+    var c = S.compra;
+    abrirModal('Registrar factura de compra', '<div id="compraError"></div>' + (aviso ? '<div class="aviso info">' + esc(aviso) + '</div>' : '') +
+      '<div class="card" style="background:var(--bg)"><h2>Foto o PDF de la factura</h2><div id="zonaArchivo">' + zonaArchivo() + '</div></div>' +
+      '<div class="grid g3"><label class="campo">Fecha<input class="input" type="date" max="' + hoy() + '" data-c-campo="fecha" value="' + esc(c.fecha) + '"></label>' +
+      '<label class="campo">Proveedor<input class="input" data-c-campo="proveedor" value="' + esc(c.proveedor) + '" list="listaProveedores"></label>' +
+      '<label class="campo">RIF<input class="input" data-c-campo="rif" value="' + esc(c.rif) + '"></label>' +
+      '<label class="campo">N° factura<input class="input" data-c-campo="nro_factura" value="' + esc(c.nro_factura) + '"></label>' +
+      '<label class="campo">N° control<input class="input" data-c-campo="nro_control" value="' + esc(c.nro_control) + '"></label>' +
+      '<label class="campo">Recibido en<select class="input" data-c-campo="ubicacion_id">' + optUbicaciones(c.ubicacion_id, 'Ubicación…') + '</select></label>' +
+      '<label class="campo">Método de pago<input class="input" data-c-campo="metodo_pago" value="' + esc(c.metodo_pago) + '" placeholder="Binance, Bs BCV…"></label>' +
+      '<label class="campo">Tasa (Bs/$) si aplica<input class="input" type="number" step="0.0001" data-c-campo="tasa" value="' + esc(c.tasa) + '"></label>' +
+      '<label class="campo">Notas<input class="input" data-c-campo="notas" value="' + esc(c.notas) + '"></label></div>' +
+      '<datalist id="listaProveedores"></datalist>' +
+      '<h4 style="margin:16px 0 6px">Productos (costos en USD, sin IVA)</h4><div class="rel"><input class="input" id="buscarProductoCompra" placeholder="Agregar producto por código, modelo o color…" autocomplete="off"></div><div id="lineasCompra"></div>' +
+      '<div class="grid g3" style="margin-top:12px"><div class="kpi"><div class="lbl">Subtotal</div><div class="val" id="compraSubtotal">$0.00</div></div>' +
+      '<label class="campo">IVA ($)<input class="input" type="number" step="0.01" min="0" data-c-campo="iva" value="' + esc(c.iva) + '"></label>' +
+      '<label class="campo">Total factura ($)<input class="input" type="number" step="0.01" min="0" data-c-campo="total" value="' + esc(c.total) + '" placeholder="Subtotal + IVA"></label></div>' +
+      '<div class="acciones" style="margin-top:14px"><button class="btn" data-a="cerrarModal">Cancelar</button><button class="btn prim" data-a="guardarCompra" id="btnGuardarCompra">Guardar compra y sumar al stock</button></div>', true);
+    montarBuscador($('buscarProductoCompra'), {
+      permitirNuevo: true, incluirInactivos: true,
+      alElegir: function (p) {
+        S.compra.items.push({ sku: p.sku, descripcion: p.nuevo ? '' : descProducto(p), cantidad: 1, costo_unit: p.costo || '', nuevo: !!p.nuevo });
+        pintarLineasCompra();
+      }
+    });
+    llenarProveedores();
+    pintarLineasCompra();
+  }
+
+  function llenarProveedores() {
+    api('listarCompras', {}).then(function (r) {
+      var vistos = {};
+      var dl = $('listaProveedores');
+      if (!dl) return;
+      dl.innerHTML = r.compras.filter(function (x) { if (vistos[x.proveedor]) return false; vistos[x.proveedor] = 1; return x.proveedor !== 'POR DEFINIR'; })
+        .map(function (x) { return '<option value="' + esc(x.proveedor) + '">'; }).join('');
+    }).catch(function () {});
+  }
+
+  function zonaArchivo() {
+    var c = S.compra;
+    var h = c.archivo_url
+      ? '<div class="fila" style="align-items:center"><span>📎 <a href="' + esc(c.archivo_url) + '" target="_blank" rel="noopener">' + esc(c.archivo_nombre || 'Ver archivo') + '</a></span>' +
+        (S.ini.iaDisponible ? '<div style="flex:0 0 auto"><button class="btn prim peq" data-a="leerIA">✨ Leer con IA</button></div>' : '') +
+        '<div style="flex:0 0 auto"><button class="btn peq" data-a="quitarArchivo">Cambiar</button></div></div>'
+      : '<input type="file" accept="image/*,application/pdf" id="archivoFactura" class="input"><div class="muted peq" style="margin-top:4px">Se guarda en tu Google Drive.' +
+        (S.ini.iaDisponible ? ' Después puedes pulsar «Leer con IA» para llenar los datos automáticamente.' : ' (La lectura automática con IA se activa en Ajustes.)') + '</div>';
+    setTimeout(function () {
+      var inp = $('archivoFactura');
+      if (inp) inp.addEventListener('change', function () { if (inp.files[0]) subirArchivo(inp.files[0], function (a) { S.compra.archivo_id = a.archivo_id; S.compra.archivo_url = a.archivo_url; S.compra.archivo_nombre = a.nombre; $('zonaArchivo').innerHTML = zonaArchivo(); }); });
+    }, 0);
+    return h;
+  }
+  A.quitarArchivo = function () { S.compra.archivo_id = ''; S.compra.archivo_url = ''; $('zonaArchivo').innerHTML = zonaArchivo(); };
+
+  function subirArchivo(file, alTerminar) {
+    if (file.size > 25 * 1024 * 1024) { toast('El archivo es muy grande (máx. 25 MB).', 'bad'); return; }
+    leerArchivo(file).then(function (d) {
+      return api('subirArchivoCompra', { nombre: file.name, mime: d.mime, base64: d.base64 });
+    }).then(function (a) { toast('Archivo guardado en Drive', 'ok'); alTerminar(a); }).catch(function (e) { mostrarError(e); });
+  }
+
+  // Comprime fotos grandes (las facturas no necesitan más de ~2000 px)
+  function leerArchivo(file) {
+    return new Promise(function (resolve, reject) {
+      var lector = new FileReader();
+      lector.onerror = function () { reject(new Error('No se pudo leer el archivo.')); };
+      lector.onload = function () {
+        var dataUrl = lector.result;
+        var mime = file.type || 'application/octet-stream';
+        if (!/^image\/(jpeg|png|webp)$/.test(mime)) return resolve({ mime: mime, base64: dataUrl.split(',')[1] });
+        var img = new Image();
+        img.onload = function () {
+          var max = 2000, w = img.width, h = img.height, k = Math.min(1, max / Math.max(w, h));
+          var cv = document.createElement('canvas'); cv.width = Math.round(w * k); cv.height = Math.round(h * k);
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          resolve({ mime: 'image/jpeg', base64: cv.toDataURL('image/jpeg', 0.85).split(',')[1] });
+        };
+        img.onerror = function () { resolve({ mime: mime, base64: dataUrl.split(',')[1] }); };
+        img.src = dataUrl;
+      };
+      lector.readAsDataURL(file);
+    });
+  }
+
+  A.leerIA = function (el) {
+    conBoton(el, api('leerFacturaIA', { archivo_id: S.compra.archivo_id })).then(function (d) {
+      var c = S.compra;
+      ['proveedor', 'rif', 'nro_factura', 'nro_control', 'fecha', 'tasa'].forEach(function (k) { if (d[k]) c[k] = d[k]; });
+      if (d.iva) c.iva = d.iva;
+      if (d.total) c.total = d.total;
+      c.items = (d.items || []).map(function (it) { return { sku: it.sku || '', sku_leido: it.sku_leido, descripcion: it.descripcion, cantidad: it.cantidad || 1, costo_unit: it.costo_unit || '', sinReconocer: !it.sku }; });
+      formCompra((d.aviso ? d.aviso + '\n' : '') + 'Datos leídos con IA: revisa cada campo antes de guardar.' + (c.items.some(function (x) { return x.sinReconocer; }) ? ' Hay productos sin código reconocido: escríbelo en cada línea marcada.' : ''));
+    }).catch(function (e) { mostrarError(e, $('compraError')); });
+  };
+
+  function pintarLineasCompra() {
+    var c = S.compra, cont = $('lineasCompra');
+    if (!cont) return;
+    cont.innerHTML = c.items.length ? c.items.map(function (it, i) {
+      var p = productoPorSku(it.sku);
+      return '<div class="linea-prod" style="grid-template-columns:minmax(0,1fr) 70px 90px 90px 34px"><div class="desc">' +
+        (it.sinReconocer || !it.sku ? '<input class="input" placeholder="Código del catálogo" data-cl="' + i + '" data-c="sku" value="' + esc(it.sku) + '"><span class="muted peq">Leído: ' + esc(it.sku_leido || '') + ' ' + esc(it.descripcion) + '</span>'
+          : '<b>' + esc(it.sku) + '</b><span class="muted">' + esc(it.descripcion || descProducto(p)) + '</span>' + (it.nuevo || !p ? ' <span class="tag info">nuevo</span>' : '')) + '</div>' +
+        '<input class="input" type="number" min="1" step="1" data-cl="' + i + '" data-c="cantidad" value="' + esc(it.cantidad) + '" title="Cantidad">' +
+        '<input class="input" type="number" min="0" step="0.01" data-cl="' + i + '" data-c="costo_unit" value="' + esc(it.costo_unit) + '" placeholder="Costo" title="Costo unitario USD">' +
+        '<span class="num peq" id="subCompra' + i + '">' + dinero(n(it.cantidad) * n(it.costo_unit)) + '</span>' +
+        '<button class="btn peq peligro" data-a="quitarLineaCompra" data-i="' + i + '">✕</button></div>';
+    }).join('') : '<div class="vacio">Agrega los productos de la factura.</div>';
+    actualizarTotalesCompra();
+  }
+  function actualizarTotalesCompra() {
+    var sub = r2(S.compra.items.reduce(function (a, it) { return a + n(it.cantidad) * n(it.costo_unit); }, 0));
+    if ($('compraSubtotal')) $('compraSubtotal').textContent = dinero(sub) + ' · ' + S.compra.items.reduce(function (a, it) { return a + n(it.cantidad); }, 0) + ' und';
+  }
+  A.quitarLineaCompra = function (el) { S.compra.items.splice(Number(el.getAttribute('data-i')), 1); pintarLineasCompra(); };
+  document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (!S.compra) return;
+    if (t.hasAttribute('data-c-campo')) S.compra[t.getAttribute('data-c-campo')] = t.value;
+    else if (t.hasAttribute('data-cl')) {
+      var i = Number(t.getAttribute('data-cl')), it = S.compra.items[i];
+      it[t.getAttribute('data-c')] = t.getAttribute('data-c') === 'sku' ? t.value.toUpperCase().trim() : t.value;
+      var s = $('subCompra' + i); if (s) s.textContent = dinero(n(it.cantidad) * n(it.costo_unit));
+      actualizarTotalesCompra();
+    }
+  });
+
+  A.guardarCompra = function (el, e, forzar) {
+    var c = S.compra;
+    var d = {
+      fecha: c.fecha, proveedor: c.proveedor, rif: c.rif, nro_factura: c.nro_factura, nro_control: c.nro_control, ubicacion_id: c.ubicacion_id,
+      moneda: 'USD', tasa: c.tasa, metodo_pago: c.metodo_pago, iva: n(c.iva), total: c.total === '' ? '' : n(c.total), notas: c.notas,
+      archivo_id: c.archivo_id, archivo_url: c.archivo_url, forzar_duplicado: !!forzar,
+      items: c.items.map(function (it) { return { sku: it.sku, descripcion: it.descripcion, cantidad: n(it.cantidad), costo_unit: n(it.costo_unit) }; })
+    };
+    conBoton($('btnGuardarCompra'), api('crearCompra', d)).then(function (r) {
+      toast('Compra ' + r.id + ' registrada: ' + r.unidades + ' und sumadas al stock', 'ok');
+      S.compra = null; cerrarModal(); refrescarInicial().catch(function () {}); if (S.vista === 'compras') recargarVista();
+    }).catch(function (err) {
+      if (/^DUPLICADO/.test(err.message)) {
+        $('compraError').innerHTML = '<div class="aviso warn">' + esc(err.message.replace('DUPLICADO: ', '')) + '<div style="margin-top:8px"><button class="btn peq" data-a="forzarCompra">Es otra factura, guardar igual</button></div></div>';
+      } else mostrarError(err, $('compraError'));
+      $('modalCuerpo').scrollIntoView();
+    });
+  };
+  A.forzarCompra = function (el, e) { A.guardarCompra(el, e, true); };
+
+  A.verCompra = function (el) {
+    api('detalleCompra', { id: el.getAttribute('data-id') }).then(pintarCompra).catch(function (e) { mostrarError(e); });
+  };
+  function pintarCompra(c) {
+    S.compraAbierta = c;
+    var activa = c.estado !== 'ANULADA';
+    var h = '<div id="compraDetError"></div><div class="peq" style="margin-bottom:10px">' + (activa ? '' : '<span class="tag gris">Anulada: ' + esc(c.motivo_anulacion) + '</span><br>') +
+      '<b>' + esc(c.proveedor) + '</b> ' + esc(c.rif) + '<br>Factura ' + esc(c.nro_factura) + (c.nro_control ? ' · Control ' + esc(c.nro_control) : '') + ' · ' + fecha(c.fecha) +
+      '<br>Recibido en ' + esc(nombreUbicacion(c.ubicacion_id)) + (c.metodo_pago ? ' · ' + esc(c.metodo_pago) : '') + (c.tasa ? ' · Tasa ' + esc(c.tasa) : '') + (c.notas ? '<br>' + esc(c.notas) : '') + '</div>';
+    h += '<div class="card" style="background:var(--bg)"><h2>Factura</h2>' + (c.archivo_url ? '📎 <a href="' + esc(c.archivo_url) + '" target="_blank" rel="noopener">Abrir foto/PDF</a>' : '<span class="tag warn">Sin foto de la factura</span>') +
+      (activa ? '<div style="margin-top:8px"><input type="file" accept="image/*,application/pdf" id="adjuntarFactura" class="input"></div>' : '') + '</div>';
+    h += tablaSimple(['Código', 'Descripción', 'Cant.', 'Costo', 'Subtotal'], c.items.map(function (it) { return [esc(it.sku), esc(it.descripcion), it.cantidad, dinero(it.costo_unit), dinero(it.subtotal)]; }), [2, 3, 4]);
+    h += '<div class="grid g3" style="margin-top:10px">' + kpi('Subtotal', dinero(c.subtotal)) + kpi('IVA', dinero(c.iva)) + kpi('Total', dinero(c.total), c.unidades + ' und') + '</div>';
+    if (activa) h += '<div class="acciones" style="margin-top:12px"><button class="btn" data-a="editarCompra">Editar datos</button><button class="btn peligro" data-a="anularCompra">Anular compra</button></div><div id="editarCompraZona"></div>';
+    abrirModal('Compra ' + c.id, h, true);
+    var inp = $('adjuntarFactura');
+    if (inp) inp.addEventListener('change', function () {
+      if (!inp.files[0]) return;
+      subirArchivo(inp.files[0], function (a) {
+        api('editarCompra', { id: c.id, archivo_id: a.archivo_id, archivo_url: a.archivo_url }).then(function (x) { toast('Factura adjuntada', 'ok'); pintarCompra(x); if (S.vista === 'compras') recargarVista(); }).catch(function (e) { mostrarError(e); });
+      });
+    });
+  }
+  A.editarCompra = function () {
+    var c = S.compraAbierta;
+    $('editarCompraZona').innerHTML = '<div class="card" style="margin-top:12px;background:var(--bg)"><form data-submit="guardarEdicionCompra" class="grid g3">' +
+      ['proveedor', 'rif', 'nro_factura', 'nro_control', 'metodo_pago', 'tasa', 'notas'].map(function (k) {
+        return '<label class="campo">' + k.replace('_', ' ').replace('nro', 'N°') + '<input class="input" name="' + k + '" value="' + esc(c[k]) + '"></label>';
+      }).join('') + '<label class="campo">Fecha<input class="input" type="date" name="fecha" max="' + hoy() + '" value="' + esc(c.fecha) + '"></label>' +
+      '<div class="acciones" style="grid-column:1/-1"><button class="btn prim">Guardar</button></div></form></div>';
+  };
+  A.guardarEdicionCompra = function (form) {
+    var d = datosForm(form); d.id = S.compraAbierta.id;
+    conBoton(form.querySelector('button'), api('editarCompra', d)).then(function (x) { toast('Compra actualizada', 'ok'); pintarCompra(x); if (S.vista === 'compras') recargarVista(); }).catch(function (e) { mostrarError(e, $('compraDetError')); });
+  };
+  A.anularCompra = function () {
+    pedir('Anular compra', 'Motivo', { texto: 'Se restan estas unidades del stock. La compra queda en el historial como anulada.', ok: 'Anular compra', peligro: true }).then(function (motivo) {
+      if (!motivo) return;
+      return api('anularCompra', { id: S.compraAbierta.id, motivo: motivo }).then(function (x) { toast('Compra anulada'); pintarCompra(x); refrescarInicial().catch(function () {}); recargarVista(); });
+    }).catch(function (e) { mostrarError(e); });
+  };
+
+  A.facturasDrive = function () {
+    abrirModal('Facturas en mi Drive', '<p class="muted peq" style="margin-top:0">Pega el enlace de la carpeta de Drive donde guardas las fotos de facturas. Verás las que aún no están registradas y podrás registrarlas una por una.</p>' +
+      '<form data-submit="cargarDrive" class="fila"><label class="campo" style="flex:3 1 260px">Carpeta (enlace o ID)<input class="input" name="carpeta_id" placeholder="https://drive.google.com/drive/folders/…"></label><div style="flex:0 0 auto"><button class="btn prim">Ver facturas</button></div></form><div id="driveRes"></div>', true);
+    A.cargarDrive(null);
+  };
+  A.cargarDrive = function (form) {
+    var d = form ? datosForm(form) : {};
+    $('driveRes').innerHTML = '<div class="vacio">Buscando…</div>';
+    api('archivosPendientes', d).then(function (r) {
+      if (!r.carpeta) { $('driveRes').innerHTML = ''; return; }
+      var pend = r.archivos.filter(function (a) { return !a.compra_id; });
+      $('driveRes').innerHTML = '<div class="aviso info">Carpeta «' + esc(r.carpeta.nombre) + '»: ' + r.archivos.length + ' archivos, ' + pend.length + ' sin registrar.</div>' +
+        tablaSimple(['Archivo', 'Subido', 'Estado', ''], r.archivos.map(function (a) {
+          return ['<a href="' + esc(a.archivo_url) + '" target="_blank" rel="noopener">' + esc(a.nombre) + '</a>', fecha(a.fecha), a.compra_id ? '<span class="tag ok">' + esc(a.compra_id) + '</span>' : '<span class="tag warn">pendiente</span>',
+            a.compra_id ? '' : '<button class="btn peq prim" data-a="registrarDesdeDrive" data-id="' + esc(a.archivo_id) + '" data-url="' + esc(a.archivo_url) + '" data-nombre="' + esc(a.nombre) + '">Registrar</button>'];
+        }));
+    }).catch(function (e) { mostrarError(e, $('driveRes')); });
+  };
+  A.registrarDesdeDrive = function (el) {
+    S.compra = compraNueva({ archivo_id: el.getAttribute('data-id'), archivo_url: el.getAttribute('data-url'), nombre: el.getAttribute('data-nombre') });
+    formCompra();
+    if (S.ini.iaDisponible) { var b = document.querySelector('[data-a=leerIA]'); if (b) A.leerIA(b); }
+  };
+
+  // ======================================================================
+  // INVENTARIO
+  // ======================================================================
+  VISTAS.inventario = function (c) {
+    var f = S.filtrosInv || { ubicacion_id: '', estado: '', q: '' };
+    S.filtrosInv = f;
+    c.innerHTML = (esAdmin() ? '<div class="acciones" style="margin-bottom:12px;justify-content:flex-start"><button class="btn" data-a="nuevoTraslado">🔁 Traslado entre ubicaciones</button><button class="btn" data-a="nuevoConteo">📋 Conteo físico</button></div>' : '') +
+      '<div class="card"><form data-submit="filtrarInv" class="fila"><label class="campo">Ubicación<select class="input" name="ubicacion_id">' + optUbicaciones(f.ubicacion_id, 'Todas') + '</select></label>' +
+      '<label class="campo">Estado<select class="input" name="estado">' + opciones([{ v: 'CON_STOCK', t: 'Con stock' }, { v: 'BAJO', t: 'Stock bajo (1-2)' }, { v: 'AGOTADO', t: 'Agotado' }, { v: 'NEGATIVO', t: 'Negativo (revisar)' }], f.estado, 'Todos') + '</select></label>' +
+      '<label class="campo" style="flex:2 1 200px">Buscar<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Código, línea, modelo, color…"></label><div style="flex:0 0 auto"><button class="btn">Filtrar</button></div></form></div><div id="invRes"></div>';
+    return api('stock', f).then(function (r) {
+      var ubs = f.ubicacion_id ? r.ubicaciones.filter(function (u) { return u.id === f.ubicacion_id; }) : r.ubicaciones;
+      var h = '<div class="grid g4" style="margin-bottom:14px">' + kpi('Unidades en stock', r.resumen.unidades) + (r.resumen.valorCosto !== undefined ? kpi('Valor al costo', dinero(r.resumen.valorCosto)) : '') +
+        kpi('Valor a precio de venta', dinero(r.resumen.valorPvp)) + kpi('Productos en negativo', r.resumen.negativos, 'vendidos sin compra/traslado', r.resumen.negativos ? 'bad' : '') + '</div>';
+      h += '<div class="card">' + (r.filas.length ? '<div class="tabla-env"><table class="tabla"><thead><tr><th>Código</th><th>Producto</th>' + ubs.map(function (u) { return '<th class="num">' + esc(u.nombre) + '</th>'; }).join('') + (ubs.length > 1 ? '<th class="num">Total</th>' : '') + '<th class="num">PVP</th></tr></thead><tbody>' +
+        r.filas.map(function (p) {
+          var celda = function (v) { return '<td class="num' + (v < 0 ? '" style="color:var(--bad);font-weight:800' : v === 0 ? ' muted' : ' fuerte') + '">' + v + '</td>'; };
+          return '<tr class="clic" data-a="kardex" data-sku="' + esc(p.sku) + '"><td class="peq">' + esc(p.sku) + '</td><td>' + esc(descProducto(p)) + (p.activo ? '' : ' <span class="tag gris">inactivo</span>') + '</td>' +
+            ubs.map(function (u) { return celda(p.porUbicacion[u.id] || 0); }).join('') + (ubs.length > 1 ? celda(p.total) : '') + '<td class="num">' + (p.pvp ? dinero(p.pvp) : '') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<div class="vacio">No hay productos con estos filtros.</div>') + '</div>';
+      $('invRes').innerHTML = h;
+    });
+  };
+  A.filtrarInv = function (form) { S.filtrosInv = datosForm(form); recargarVista(); };
+  A.kardex = function (el) {
+    api('kardex', { sku: el.getAttribute('data-sku') }).then(function (r) {
+      var nombres = { COMPRA: 'Compra', VENTA: 'Venta', ANULACION_VENTA: 'Venta anulada', ANULACION_COMPRA: 'Compra anulada', TRASLADO_SALIDA: 'Traslado (sale)', TRASLADO_ENTRADA: 'Traslado (entra)', AJUSTE: 'Ajuste por conteo', INICIAL: 'Inicial' };
+      abrirModal('Movimientos de ' + r.producto.sku, '<div class="peq muted" style="margin-bottom:8px">' + esc(descProducto(r.producto)) + '</div>' +
+        tablaSimple(['Fecha', 'Movimiento', 'Ubicación', 'Cant.', 'Saldo ahí', 'Referencia'], r.movimientos.map(function (m) {
+          return [fecha(m.fecha), esc(nombres[m.tipo] || m.tipo), esc(m.ubicacion), (m.cantidad > 0 ? '+' : '') + m.cantidad, m.saldoUbicacion, '<span class="peq">' + esc(m.ref_id) + ' ' + esc(m.nota) + '</span>'];
+        }), [3, 4]), true);
+    }).catch(function (e) { mostrarError(e); });
+  };
+
+  A.nuevoTraslado = function () {
+    S.traslado = { origen_id: S.ini.ubicacionPorDefecto, destino_id: '', fecha: hoy(), nota: '', items: [] };
+    abrirModal('Traslado entre ubicaciones', '<div id="trasError"></div><div class="grid g3"><label class="campo">Desde<select class="input" id="trOrigen">' + optUbicaciones(S.traslado.origen_id) + '</select></label>' +
+      '<label class="campo">Hacia<select class="input" id="trDestino">' + optUbicaciones('', 'Selecciona…') + '</select></label><label class="campo">Fecha<input class="input" type="date" id="trFecha" max="' + hoy() + '" value="' + hoy() + '"></label></div>' +
+      '<label class="campo" style="margin-top:10px">Nota<input class="input" id="trNota" placeholder="Ej. préstamo a T-Mania"></label>' +
+      '<div class="rel" style="margin-top:12px"><input class="input" id="buscarTraslado" placeholder="Agregar producto…" autocomplete="off"></div><div id="lineasTraslado"></div>' +
+      '<div class="acciones" style="margin-top:12px"><button class="btn prim" data-a="guardarTraslado">Registrar traslado</button></div>', true);
+    montarBuscador($('buscarTraslado'), { ubicacion: function () { return $('trOrigen').value; }, alElegir: function (p) { S.traslado.items.push({ sku: p.sku, cantidad: 1 }); pintarTraslado(); } });
+    $('trOrigen').addEventListener('change', pintarTraslado);
+    pintarTraslado();
+  };
+  function pintarTraslado() {
+    var o = $('trOrigen').value;
+    $('lineasTraslado').innerHTML = S.traslado.items.map(function (it, i) {
+      var p = productoPorSku(it.sku);
+      return '<div class="linea-prod" style="grid-template-columns:minmax(0,1fr) 90px 34px"><div class="desc"><b>' + esc(it.sku) + '</b><span class="muted">' + esc(descProducto(p)) + ' · hay ' + (p ? (p.stock[o] || 0) : 0) + '</span></div>' +
+        '<input class="input" type="number" min="1" step="1" value="' + esc(it.cantidad) + '" data-tr="' + i + '"><button class="btn peq peligro" data-a="quitarTraslado" data-i="' + i + '">✕</button></div>';
+    }).join('') || '<div class="vacio">Agrega los productos a trasladar.</div>';
+    document.querySelectorAll('[data-tr]').forEach(function (inp) { inp.addEventListener('input', function () { S.traslado.items[Number(inp.getAttribute('data-tr'))].cantidad = inp.value; }); });
+  }
+  A.quitarTraslado = function (el) { S.traslado.items.splice(Number(el.getAttribute('data-i')), 1); pintarTraslado(); };
+  A.guardarTraslado = function (el) {
+    var d = { origen_id: $('trOrigen').value, destino_id: $('trDestino').value, fecha: $('trFecha').value, nota: $('trNota').value, items: S.traslado.items.map(function (it) { return { sku: it.sku, cantidad: n(it.cantidad) }; }) };
+    conBoton(el, api('traslado', d)).then(function (r) { toast('Traslado ' + r.ref + ' registrado', 'ok'); cerrarModal(); refrescarInicial().then(recargarVista); })
+      .catch(function (e) { mostrarError(e, $('trasError')); });
+  };
+
+  A.nuevoConteo = function () {
+    abrirModal('Conteo físico', '<p class="muted peq" style="margin-top:0">Escribe lo que cuentas en el estante. Solo se ajustan los productos que llenes; la diferencia queda registrada como «Ajuste por conteo».</p>' +
+      '<div id="conteoError"></div><div class="grid g3"><label class="campo">Ubicación<select class="input" id="ctUbic">' + optUbicaciones(S.ini.ubicacionPorDefecto) + '</select></label>' +
+      '<label class="campo">Fecha<input class="input" type="date" id="ctFecha" max="' + hoy() + '" value="' + hoy() + '"></label><label class="campo">Buscar<input class="input" id="ctBuscar" placeholder="Filtrar…"></label></div>' +
+      '<label class="check" style="margin:8px 0"><input type="checkbox" id="ctTodos"> Mostrar también productos sin stock en el sistema</label><div id="ctLista" style="max-height:55vh;overflow:auto"></div>' +
+      '<label class="campo" style="margin-top:10px">Nota<input class="input" id="ctNota" placeholder="Ej. conteo de cierre de mes"></label>' +
+      '<div class="acciones" style="margin-top:12px"><button class="btn prim" data-a="guardarConteo">Guardar conteo</button></div>', true);
+    S.conteo = {};
+    ['ctUbic', 'ctBuscar', 'ctTodos'].forEach(function (id) { $(id).addEventListener(id === 'ctBuscar' ? 'input' : 'change', pintarConteo); });
+    pintarConteo();
+  };
+  function pintarConteo() {
+    var u = $('ctUbic').value, q = $('ctBuscar').value.trim().toUpperCase(), todos = $('ctTodos').checked;
+    var lista = S.ini.productos.filter(function (p) {
+      var st = p.stock[u] || 0;
+      if (!todos && st === 0 && S.conteo[p.sku] === undefined) return false;
+      return !q || (p.sku + ' ' + descProducto(p)).toUpperCase().indexOf(q) !== -1;
+    });
+    $('ctLista').innerHTML = lista.length ? '<table class="tabla"><thead><tr><th>Producto</th><th class="num">Sistema</th><th class="num">Contado</th></tr></thead><tbody>' + lista.map(function (p) {
+      return '<tr><td><b class="peq">' + esc(p.sku) + '</b> <span class="peq muted">' + esc(descProducto(p)) + '</span></td><td class="num">' + (p.stock[u] || 0) + '</td><td class="num"><input class="input" style="width:80px" type="number" min="0" step="1" data-ct="' + esc(p.sku) + '" value="' + esc(S.conteo[p.sku] === undefined ? '' : S.conteo[p.sku]) + '"></td></tr>';
+    }).join('') + '</tbody></table>' : '<div class="vacio">Sin productos.</div>';
+    document.querySelectorAll('[data-ct]').forEach(function (inp) { inp.addEventListener('input', function () { if (inp.value === '') delete S.conteo[inp.getAttribute('data-ct')]; else S.conteo[inp.getAttribute('data-ct')] = inp.value; }); });
+  }
+  A.guardarConteo = function (el) {
+    var conteos = Object.keys(S.conteo).map(function (sku) { return { sku: sku, fisico: n(S.conteo[sku]) }; });
+    if (!conteos.length) { toast('Escribe al menos un conteo.', 'bad'); return; }
+    conBoton(el, api('conteo', { ubicacion_id: $('ctUbic').value, fecha: $('ctFecha').value, nota: $('ctNota').value, conteos: conteos })).then(function (r) {
+      cerrarModal();
+      toast(r.ajustes.length ? r.ajustes.length + ' productos ajustados' : r.mensaje, 'ok');
+      refrescarInicial().then(recargarVista);
+    }).catch(function (e) { mostrarError(e, $('conteoError')); });
+  };
+
+  // ======================================================================
+  // CONCILIACIÓN
+  // ======================================================================
+  VISTAS.conciliacion = function (c) {
+    var f = S.filtroConc || { solo: 'PROBLEMAS', q: '' };
+    S.filtroConc = f;
+    return api('conciliacion', f).then(function (r) {
+      var s = r.resumen;
+      var h = '<div class="aviso info">Compara, producto por producto, lo comprado (facturas) contra lo vendido. Si se vendió más de lo comprado, falta registrar una factura de compra (o un stock inicial con un conteo físico).</div>' +
+        '<div class="grid g4" style="margin-bottom:14px">' + kpi('Unidades compradas', s.comprado) + kpi('Unidades vendidas', s.vendido) + kpi('Ajustes por conteo', (s.ajustes > 0 ? '+' : '') + s.ajustes) +
+        kpi('Stock según sistema', s.stock, '', s.stock < 0 ? 'bad' : '') + kpi('Vendidas sin compra', s.unidadesSinCompra, s.skusNegativos + ' productos', s.unidadesSinCompra ? 'bad' : 'ok') +
+        kpi('Negativos por ubicación', s.skusNegativosPorUbicacion, 'falta registrar traslados', s.skusNegativosPorUbicacion ? 'warn' : '') + kpi('Total comprado ($)', dinero(r.dinero.compras)) + kpi('Total vendido ($)', dinero(r.dinero.ventas)) + '</div>';
+      h += '<div class="card"><form data-submit="filtrarConc" class="fila"><label class="campo">Mostrar<select class="input" name="solo">' + opciones([{ v: 'PROBLEMAS', t: 'Solo con diferencias' }, { v: 'NEGATIVOS', t: 'Solo negativos' }, { v: '', t: 'Todos' }], f.solo) + '</select></label>' +
+        '<label class="campo" style="flex:2 1 200px">Buscar<input class="input" name="q" value="' + esc(f.q) + '"></label><div style="flex:0 0 auto"><button class="btn">Ver</button></div></form>' +
+        (r.filas.length ? '<div class="tabla-env"><table class="tabla"><thead><tr><th>Código</th><th>Producto</th><th class="num">Comprado</th><th class="num">Vendido</th><th class="num">Ajustes</th><th class="num">Stock</th><th>Observación</th></tr></thead><tbody>' +
+          r.filas.map(function (x) {
+            return '<tr class="clic" data-a="kardex" data-sku="' + esc(x.sku) + '"><td class="peq">' + esc(x.sku) + '</td><td class="peq">' + esc(x.descripcion) + '</td><td class="num">' + x.comprado + '</td><td class="num">' + x.vendido + '</td><td class="num">' + (x.ajustes || '') + '</td>' +
+              '<td class="num" style="' + (x.stock < 0 ? 'color:var(--bad);font-weight:800' : '') + '">' + x.stock + '</td><td class="peq">' + x.alertas.map(esc).join('<br>') + '</td></tr>';
+          }).join('') + '</tbody></table></div>' : '<div class="vacio">Sin diferencias. Compras y ventas cuadran. ✅</div>') + '</div>';
+      c.innerHTML = h;
+    });
+  };
+  A.filtrarConc = function (form) { S.filtroConc = datosForm(form); recargarVista(); };
+
+  // ======================================================================
+  // COMISIONES
+  // ======================================================================
+  VISTAS.comisiones = function (c) {
+    var f = S.filtroCom || { desde: '', hasta: '', vendedor_id: esAdmin() ? '' : S.usuario.vendedor_id };
+    if (!esAdmin()) f.vendedor_id = S.usuario.vendedor_id;
+    S.filtroCom = f;
+    return api('comisiones', f).then(function (r) {
+      var h = '<div class="card"><form data-submit="filtrarCom" class="fila"><label class="campo">Desde<input class="input" type="date" name="desde" value="' + esc(f.desde) + '"></label><label class="campo">Hasta<input class="input" type="date" name="hasta" value="' + esc(f.hasta) + '"></label>' +
+        (esAdmin() ? '<label class="campo">Vendedor<select class="input" name="vendedor_id">' + optVendedores(f.vendedor_id, 'Todos') + '</select></label>' : '') + '<div style="flex:0 0 auto"><button class="btn">Ver</button></div></form></div>';
+      h += '<div class="card"><h2>Resumen por vendedor</h2><p class="muted peq" style="margin-top:-6px">«Lista para pagar» = comisión de ventas ya cobradas completas. «Esperando cobro» = ventas con saldo.</p>' + tablaSimple(['Vendedor', 'Ventas', 'Vendido', 'Generada', 'Lista para pagar', 'Esperando cobro', 'Pagada'], r.resumen.map(function (x) {
+        return [(esAdmin() ? '<a href="#" data-a="comVendedor" data-id="' + esc(x.vendedor_id) + '">' + esc(x.vendedor) + '</a>' : esc(x.vendedor)), x.ventas, dinero(x.vendido), dinero(x.generada), '<b>' + dinero(x.cobrable) + '</b>', dinero(x.porCobrar), dinero(x.pagada)];
+      }), [1, 2, 3, 4, 5, 6]) + '</div>';
+      if (f.vendedor_id && r.detalle.length) {
+        var liq = r.detalle.filter(function (d) { return d.liquidable; });
+        h += '<div class="card"><h2>Detalle <span class="peq muted">' + liq.length + ' ventas listas para liquidar</span></h2>' +
+          (esAdmin() && liq.length ? '<div class="fila" style="margin-bottom:8px"><label class="check"><input type="checkbox" id="comTodas"> Seleccionar todas las listas</label><span class="fuerte" id="comSel">Seleccionado: $0.00</span>' +
+            '<div style="flex:0 0 auto"><button class="btn prim" data-a="liquidar">Marcar como pagadas</button></div></div>' : '') +
+          '<div class="tabla-env"><table class="tabla"><thead><tr>' + (esAdmin() ? '<th></th>' : '') + '<th>Fecha</th><th>Venta</th><th>Cliente</th><th>Productos</th><th class="num">Saldo</th><th class="num">Comisión</th><th>Estado</th></tr></thead><tbody>' +
+          r.detalle.map(function (d) {
+            return '<tr>' + (esAdmin() ? '<td>' + (d.liquidable ? '<input type="checkbox" class="comChk" value="' + esc(d.id) + '" data-m="' + d.comision + '">' : '') + '</td>' : '') +
+              '<td>' + fecha(d.fecha) + '</td><td class="peq"><a href="#" data-a="verVenta" data-id="' + esc(d.id) + '">' + esc(d.id) + '</a></td><td>' + esc(d.cliente) + '</td><td class="peq">' + esc(d.productos) + '</td><td class="num">' + (d.saldo > 0 ? dinero(d.saldo) : '—') + '</td><td class="num fuerte">' + dinero(d.comision) + '</td>' +
+              '<td>' + (d.pagada_en ? '<span class="tag ok">Pagada ' + fecha(d.pagada_en) + '</span>' : d.liquidable ? '<span class="tag info">Lista</span>' : '<span class="tag warn">Esperando cobro</span>') + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>';
+      }
+      if (r.liquidaciones.length) {
+        h += '<div class="card"><h2>Pagos de comisiones</h2>' + tablaSimple(['Fecha', 'Recibo', 'Vendedor', 'Ventas', 'Monto', ''], r.liquidaciones.map(function (l) {
+          return [fecha(l.fecha), esc(l.id), esc(l.vendedor), String(l.ventas).split(',').filter(Boolean).length, '<b>' + dinero(l.monto) + '</b>', esAdmin() ? '<button class="btn peq peligro" data-a="revertirLiq" data-id="' + esc(l.id) + '">Revertir</button>' : ''];
+        }), [3, 4]) + '</div>';
+      }
+      c.innerHTML = h;
+      var todas = $('comTodas');
+      var sumar = function () { var t = 0; document.querySelectorAll('.comChk:checked').forEach(function (x) { t += n(x.getAttribute('data-m')); }); if ($('comSel')) $('comSel').textContent = 'Seleccionado: ' + dinero(t); };
+      if (todas) todas.addEventListener('change', function () { document.querySelectorAll('.comChk').forEach(function (x) { x.checked = todas.checked; }); sumar(); });
+      document.querySelectorAll('.comChk').forEach(function (x) { x.addEventListener('change', sumar); });
+    });
+  };
+  A.filtrarCom = function (form) { S.filtroCom = datosForm(form); recargarVista(); };
+  A.comVendedor = function (el) { S.filtroCom = Object.assign({}, S.filtroCom, { vendedor_id: el.getAttribute('data-id') }); recargarVista(); };
+  A.liquidar = function (el) {
+    var ids = Array.prototype.map.call(document.querySelectorAll('.comChk:checked'), function (x) { return x.value; });
+    if (!ids.length) { toast('Selecciona las ventas cuyas comisiones vas a pagar.', 'bad'); return; }
+    dialogo('Pagar comisiones', { campo: 'Nota del pago (opcional)', valor: '', ok: 'Marcar como pagadas', texto: ids.length + ' ventas seleccionadas.' }).then(function (nota) {
+      if (nota === null) return;
+      return conBoton(el, api('liquidarComisiones', { vendedor_id: S.filtroCom.vendedor_id, venta_ids: ids, nota: nota })).then(function (r) {
+        toast('Comisiones pagadas: ' + dinero(r.monto) + ' (' + r.ventas + ' ventas) · recibo ' + r.id, 'ok'); recargarVista();
+      });
+    }).catch(function (e) { mostrarError(e); });
+  };
+  A.revertirLiq = function (el) {
+    confirmar('Revertir pago de comisiones', 'Las ventas volverán a quedar como no pagadas.', { ok: 'Revertir', peligro: true }).then(function (si) {
+      if (!si) return;
+      return api('revertirLiquidacion', { id: el.getAttribute('data-id') }).then(function () { toast('Pago de comisiones revertido'); recargarVista(); });
+    }).catch(function (e) { mostrarError(e); });
+  };
+
+  // ======================================================================
+  // MI CUENTA
+  // ======================================================================
+  VISTAS.cuenta = function (c) {
+    c.innerHTML = '<div class="card"><h2>' + esc(S.usuario.nombre) + '</h2><p class="muted">Usuario: ' + esc(S.usuario.usuario) + ' · ' + (esAdmin() ? 'Administrador' : 'Vendedor') + '</p>' +
+      '<div class="acciones" style="justify-content:flex-start"><button class="btn" data-a="abrirCambioClave">Cambiar contraseña</button><button class="btn peligro" data-a="salir">Cerrar sesión</button></div></div>';
+  };
+  A.abrirCambioClave = function () { pantallaCambioClave(false); };
+
+  // ======================================================================
+  // AJUSTES (solo administrador)
+  // ======================================================================
+  var TABS_AJUSTES = [
+    { id: 'productos', t: 'Productos' }, { id: 'lineas', t: 'Comisión por línea' }, { id: 'vendedores', t: 'Vendedores' }, { id: 'ubicaciones', t: 'Ubicaciones' },
+    { id: 'usuarios', t: 'Usuarios' }, { id: 'config', t: 'Configuración' }, { id: 'migracion', t: 'Migrar desde la hoja' }, { id: 'auditoria', t: 'Historial de cambios' }
+  ];
+  VISTAS.ajustes = function (c) {
+    c.innerHTML = '<div class="segmento" style="flex-wrap:wrap;margin-bottom:14px;display:flex">' + TABS_AJUSTES.map(function (t) {
+      return '<button data-a="tabAjustes" data-t="' + t.id + '" class="' + (S.ajustesTab === t.id ? 'activo' : '') + '">' + esc(t.t) + '</button>';
+    }).join('') + '</div><div id="ajustesCont"></div>';
+    return AJ[S.ajustesTab]($('ajustesCont'));
+  };
+  A.tabAjustes = function (el) { S.ajustesTab = el.getAttribute('data-t'); recargarVista(); };
+  var AJ = {};
+
+  AJ.productos = function (c) {
+    var q = S.qProd || '';
+    var lista = S.ini.productos.filter(function (p) { return !q || (p.sku + ' ' + descProducto(p) + ' ' + p.descripcion).toUpperCase().indexOf(q.toUpperCase()) !== -1; });
+    c.innerHTML = '<div class="card"><div class="fila" style="margin-bottom:10px"><input class="input" id="qProd" placeholder="Buscar producto…" value="' + esc(q) + '" style="flex:3 1 220px"><div style="flex:0 0 auto"><button class="btn prim" data-a="editarProducto">➕ Nuevo producto</button></div></div>' +
+      '<div class="muted peq" style="margin-bottom:6px">' + lista.length + ' productos. La comisión vacía usa la de su línea.</div>' +
+      '<div class="tabla-env"><table class="tabla"><thead><tr><th>Código</th><th>Línea</th><th>Modelo / color</th><th class="num">Costo</th><th class="num">PVP</th><th class="num">Comisión</th><th class="num">Stock</th></tr></thead><tbody>' +
+      lista.slice(0, 400).map(function (p) {
+        return '<tr class="clic" data-a="editarProducto" data-sku="' + esc(p.sku) + '"><td class="peq">' + esc(p.sku) + (p.activo === 'NO' ? ' <span class="tag gris">inactivo</span>' : '') + '</td><td>' + esc(p.linea) + (p.linea ? '' : '<span class="tag warn">sin línea</span>') + '</td><td class="peq">' + esc([p.modelo, p.color].filter(Boolean).join(' · ') || p.descripcion) + '</td>' +
+          '<td class="num">' + (p.costo !== '' ? dinero(p.costo) : '') + '</td><td class="num">' + (p.pvp !== '' ? dinero(p.pvp) : '') + '</td><td class="num">' + (p.comision !== '' ? dinero(p.comision) : '<span class="muted">línea ' + dinero(comisionSugerida(p, 1)) + '</span>') + '</td><td class="num">' + p.stockTotal + '</td></tr>';
+      }).join('') + '</tbody></table></div></div>';
+    $('qProd').addEventListener('change', function () { S.qProd = this.value; AJ.productos(c); });
+  };
+  A.editarProducto = function (el) {
+    var sku = el.getAttribute('data-sku');
+    var p = sku ? productoPorSku(sku) : { sku: '', linea: '', modelo: '', color: '', descripcion: '', costo: '', pvp: '', comision: '', activo: 'SI' };
+    abrirModal(sku ? 'Producto ' + sku : 'Nuevo producto', '<div id="prodError"></div><form data-submit="guardarProducto" class="grid g2">' +
+      '<input type="hidden" name="nuevo" value="' + (sku ? '' : '1') + '">' +
+      '<label class="campo">Código (SKU)<input class="input" name="sku" value="' + esc(p.sku) + '"' + (sku ? ' readonly' : ' required') + '></label>' +
+      '<label class="campo">Línea<input class="input" name="linea" list="listaLineas" value="' + esc(p.linea) + '" placeholder="HYDRO, AURA 2…"></label>' +
+      '<datalist id="listaLineas">' + S.ini.lineas.map(function (l) { return '<option value="' + esc(l.nombre) + '">'; }).join('') + '</datalist>' +
+      '<label class="campo">Modelo<input class="input" name="modelo" value="' + esc(p.modelo) + '"></label><label class="campo">Color<input class="input" name="color" value="' + esc(p.color) + '"></label>' +
+      '<label class="campo" style="grid-column:1/-1">Descripción<input class="input" name="descripcion" value="' + esc(p.descripcion) + '"></label>' +
+      '<label class="campo">Costo (USD)<input class="input" type="number" step="0.01" min="0" name="costo" value="' + esc(p.costo) + '"></label><label class="campo">Precio de venta (USD)<input class="input" type="number" step="0.01" min="0" name="pvp" value="' + esc(p.pvp) + '"></label>' +
+      '<label class="campo">Comisión por unidad (vacío = la de la línea)<input class="input" type="number" step="0.01" min="0" name="comision" value="' + esc(p.comision) + '"></label>' +
+      '<label class="check"><input type="checkbox" name="activo"' + (p.activo !== 'NO' ? ' checked' : '') + '> Activo</label>' +
+      '<div class="acciones" style="grid-column:1/-1"><button class="btn prim">Guardar</button></div></form>');
+  };
+  A.guardarProducto = function (form) {
+    var d = datosForm(form); d.nuevo = !!d.nuevo;
+    conBoton(form.querySelector('button'), api('guardarProducto', d)).then(function () { toast('Producto guardado', 'ok'); cerrarModal(); return refrescarInicial(); }).then(recargarVista)
+      .catch(function (e) { mostrarError(e, $('prodError')); });
+  };
+
+  AJ.lineas = function (c) {
+    c.innerHTML = '<div class="card"><h2>Comisión por línea de producto</h2><p class="muted peq" style="margin-top:-6px">Es el monto fijo por unidad que se sugiere al vender (se puede cambiar en cada venta). Si un producto tiene comisión propia, se usa esa.</p>' +
+      '<form data-submit="guardarLinea" class="fila" style="margin-bottom:12px"><label class="campo">Línea<input class="input" name="nombre" required></label><label class="campo">Comisión ($/und)<input class="input" type="number" step="0.01" min="0" name="comision"></label><div style="flex:0 0 auto"><button class="btn prim">Guardar</button></div></form>' +
+      tablaSimple(['Línea', 'Comisión por unidad', 'Productos', ''], S.ini.lineas.slice().sort(function (a, b) { return a.nombre.localeCompare(b.nombre); }).map(function (l) {
+        var cuantos = S.ini.productos.filter(function (p) { return p.linea === l.nombre; }).length;
+        return [esc(l.nombre), l.comision !== '' ? dinero(l.comision) : '<span class="tag warn">sin definir</span>', cuantos, '<button class="btn peq" data-a="editarLinea" data-n="' + esc(l.nombre) + '" data-c="' + esc(l.comision) + '">Editar</button>'];
+      }), [1, 2]) + '</div>';
+  };
+  A.editarLinea = function (el) { var f = document.querySelector('[data-submit=guardarLinea]'); f.nombre.value = el.getAttribute('data-n'); f.comision.value = el.getAttribute('data-c'); f.comision.focus(); };
+  A.guardarLinea = function (form) {
+    conBoton(form.querySelector('button'), api('guardarLinea', datosForm(form))).then(function () { toast('Línea guardada', 'ok'); return refrescarInicial(); }).then(recargarVista).catch(function (e) { mostrarError(e); });
+  };
+
+  AJ.vendedores = function (c) {
+    c.innerHTML = '<div class="card"><form data-submit="guardarVendedor" class="fila" style="margin-bottom:12px"><input type="hidden" name="id"><label class="campo">Nombre<input class="input" name="nombre" required></label><label class="campo">Teléfono<input class="input" name="telefono"></label>' +
+      '<label class="check" style="flex:0 0 auto"><input type="checkbox" name="activo" checked> Activo</label><div style="flex:0 0 auto"><button class="btn prim">Guardar</button></div></form>' +
+      tablaSimple(['Vendedor', 'Teléfono', 'Estado', ''], S.ini.vendedores.map(function (v) {
+        return [esc(v.nombre), esc(v.telefono), v.activo === 'NO' ? '<span class="tag gris">Inactivo</span>' : '<span class="tag ok">Activo</span>', '<button class="btn peq" data-a="editarVendedor" data-id="' + esc(v.id) + '">Editar</button>'];
+      })) + '</div>';
+  };
+  A.editarVendedor = function (el) {
+    var v = S.ini.vendedores.filter(function (x) { return x.id === el.getAttribute('data-id'); })[0];
+    var f = document.querySelector('[data-submit=guardarVendedor]');
+    f.id.value = v.id; f.nombre.value = v.nombre; f.telefono.value = v.telefono; f.activo.checked = v.activo !== 'NO'; f.nombre.focus();
+  };
+  A.guardarVendedor = function (form) {
+    conBoton(form.querySelector('button'), api('guardarVendedor', datosForm(form))).then(function () { toast('Vendedor guardado', 'ok'); return refrescarInicial(); }).then(recargarVista).catch(function (e) { mostrarError(e); });
+  };
+
+  AJ.ubicaciones = function (c) {
+    c.innerHTML = '<div class="card"><form data-submit="guardarUbicacion" class="fila" style="margin-bottom:12px"><input type="hidden" name="id"><label class="campo">Nombre<input class="input" name="nombre" required></label><label class="campo">Notas<input class="input" name="notas"></label>' +
+      '<label class="check" style="flex:0 0 auto"><input type="checkbox" name="activo" checked> Activa</label><div style="flex:0 0 auto"><button class="btn prim">Guardar</button></div></form>' +
+      tablaSimple(['Ubicación', 'Notas', ''], S.ini.ubicaciones.map(function (u) { return [esc(u.nombre), esc(u.notas), '<button class="btn peq" data-a="editarUbicacion" data-id="' + esc(u.id) + '">Editar</button>']; })) + '</div>';
+  };
+  A.editarUbicacion = function (el) {
+    var u = S.ini.ubicaciones.filter(function (x) { return x.id === el.getAttribute('data-id'); })[0];
+    var f = document.querySelector('[data-submit=guardarUbicacion]');
+    f.id.value = u.id; f.nombre.value = u.nombre; f.notas.value = u.notas || ''; f.activo.checked = true;
+  };
+  A.guardarUbicacion = function (form) {
+    conBoton(form.querySelector('button'), api('guardarUbicacion', datosForm(form))).then(function () { toast('Ubicación guardada', 'ok'); return refrescarInicial(); }).then(recargarVista).catch(function (e) { mostrarError(e); });
+  };
+
+  AJ.usuarios = function (c) {
+    return api('usuarios').then(function (lista) {
+      c.innerHTML = '<div class="card"><h2>Nuevo usuario</h2><div id="usrError"></div><form data-submit="crearUsuario" class="fila">' +
+        '<label class="campo">Nombre<input class="input" name="nombre" required></label><label class="campo">Usuario<input class="input" name="usuario" autocapitalize="none" required></label>' +
+        '<label class="campo">Contraseña temporal<input class="input" name="clave" minlength="6" required></label>' +
+        '<label class="campo">Rol<select class="input" name="rol"><option value="VENDEDOR">Vendedor</option><option value="ADMIN">Administrador</option></select></label>' +
+        '<label class="campo">Vendedor vinculado<select class="input" name="vendedor_id">' + optVendedores('', 'Selecciona…', true) + '</select></label>' +
+        '<div style="flex:0 0 auto"><button class="btn prim">Crear</button></div></form><p class="muted peq">El usuario deberá cambiar la contraseña temporal al entrar por primera vez.</p></div>' +
+        '<div class="card">' + tablaSimple(['Nombre', 'Usuario', 'Rol', 'Vendedor', 'Estado', ''], lista.map(function (u) {
+          var vend = S.ini.vendedores.filter(function (v) { return v.id === u.vendedor_id; })[0];
+          return [esc(u.nombre), esc(u.usuario), u.rol === 'ADMIN' ? 'Administrador' : 'Vendedor', esc(vend ? vend.nombre : ''), u.activo ? '<span class="tag ok">Activo</span>' : '<span class="tag gris">Inactivo</span>',
+            '<button class="btn peq" data-a="resetClave" data-id="' + esc(u.id) + '">Nueva clave</button> <button class="btn peq" data-a="toggleUsuario" data-id="' + esc(u.id) + '" data-activo="' + (u.activo ? '1' : '') + '">' + (u.activo ? 'Desactivar' : 'Activar') + '</button>'];
+        })) + '</div>';
+    });
+  };
+  A.crearUsuario = function (form) {
+    conBoton(form.querySelector('button'), api('crearUsuario', datosForm(form))).then(function () { toast('Usuario creado', 'ok'); recargarVista(); }).catch(function (e) { mostrarError(e, $('usrError')); });
+  };
+  A.resetClave = function (el) {
+    pedir('Nueva contraseña temporal', 'Contraseña (mínimo 6)', { ok: 'Restablecer' }).then(function (c) {
+      if (!c) return;
+      return api('restablecerClave', { id: el.getAttribute('data-id'), clave: c }).then(function () { toast('Contraseña restablecida; deberá cambiarla al entrar.', 'ok'); });
+    }).catch(function (e) { mostrarError(e); });
+  };
+  A.toggleUsuario = function (el) {
+    api('editarUsuario', { id: el.getAttribute('data-id'), activo: !el.getAttribute('data-activo') }).then(function () { recargarVista(); }).catch(function (e) { mostrarError(e); });
+  };
+
+  AJ.config = function (c) {
+    return api('config').then(function (cf) {
+      c.innerHTML = '<div class="card"><div id="cfgError"></div><form data-submit="guardarConfig" class="grid g2">' +
+        '<label class="campo">Nombre del negocio<input class="input" name="NOMBRE_NEGOCIO" value="' + esc(cf.NOMBRE_NEGOCIO) + '"></label>' +
+        '<label class="campo">Ubicación por defecto<select class="input" name="UBICACION_POR_DEFECTO">' + optUbicaciones(cf.UBICACION_POR_DEFECTO) + '</select></label>' +
+        '<label class="campo" style="grid-column:1/-1">Métodos de pago (separados por coma)<input class="input" name="METODOS_PAGO" value="' + esc(cf.METODOS_PAGO) + '"></label>' +
+        '<label class="campo">Clave de Google Gemini (lectura de facturas)<input class="input" type="password" name="GEMINI_API_KEY" autocomplete="off" placeholder="' + (cf.geminiConfigurado ? '•••• configurada (escribe para reemplazar)' : 'Pega tu clave de Google AI Studio') + '"></label>' +
+        '<label class="campo">Modelo de Gemini<input class="input" name="MODELO_GEMINI" value="' + esc(cf.MODELO_GEMINI) + '"></label>' +
+        '<div class="peq muted" style="grid-column:1/-1">La clave se guarda solo en el servidor de Apps Script; no se muestra ni se envía al navegador.' + (cf.geminiConfigurado ? ' <a href="#" data-a="quitarGemini">Quitar clave</a>' : '') + '</div>' +
+        '<div class="acciones" style="grid-column:1/-1"><button class="btn prim">Guardar</button></div></form></div>' +
+        '<div class="card"><h2>Base de datos</h2><p class="peq">Todos los registros viven en esta hoja de Google. Puedes abrirla para consultarla o exportarla, pero <b>no la edites a mano</b>: usa la app para que el stock y los saldos se mantengan correctos.</p><a class="btn" target="_blank" rel="noopener" href="' + esc(cf.baseDeDatosUrl) + '">Abrir hoja de base de datos</a></div>';
+    });
+  };
+  A.guardarConfig = function (form) {
+    var d = datosForm(form);
+    if (!d.GEMINI_API_KEY) delete d.GEMINI_API_KEY;
+    conBoton(form.querySelector('button'), api('guardarConfig', d)).then(function () { toast('Configuración guardada', 'ok'); return refrescarInicial(); }).then(recargarVista).catch(function (e) { mostrarError(e, $('cfgError')); });
+  };
+  A.quitarGemini = function () {
+    confirmar('Quitar clave de Gemini', 'La lectura automática de facturas dejará de funcionar.', { ok: 'Quitar', peligro: true }).then(function (si) {
+      if (!si) return;
+      return api('guardarConfig', { GEMINI_API_KEY: '' }).then(function () { toast('Clave eliminada'); return refrescarInicial(); }).then(recargarVista);
+    }).catch(function (e) { mostrarError(e); });
+  };
+
+  AJ.migracion = function (c) {
+    return api('config').then(function (cf) {
+      c.innerHTML = '<div class="card"><h2>Migrar el histórico desde la hoja «Cubitt»</h2>' +
+        '<p class="peq">Importa las pestañas <b>Ventas</b> (con PAGO 1–5 y las fechas que dejaste como comentarios), <b>BDD</b> (catálogo) y <b>Compras_Nueva</b> (facturas). Primero pulsa <b>Analizar</b>: verás un reporte sin guardar nada. Si todo se ve bien, pulsa <b>Migrar</b>. Puedes repetirla: reemplaza solo lo migrado antes.</p>' +
+        '<form data-submit="analizarMig" class="fila"><label class="campo" style="flex:3 1 260px">Enlace o ID de la hoja<input class="input" name="hoja_id" value="' + esc(cf.HOJA_ORIGEN_ID) + '"></label>' +
+        '<div style="flex:0 0 auto" class="acciones"><button class="btn">Analizar</button><button class="btn prim" type="button" data-a="ejecutarMig">Migrar</button></div></form></div><div id="migRes"></div>';
+    });
+  };
+  A.analizarMig = function (form) {
+    $('migRes').innerHTML = '<div class="card vacio">Leyendo la hoja y sus comentarios… (puede tardar 30-60 segundos)</div>';
+    conBoton(form.querySelector('button'), api('analizarMigracion', datosForm(form))).then(pintarReporteMig).catch(function (e) { mostrarError(e, $('migRes')); });
+  };
+  A.ejecutarMig = function (el) {
+    confirmar('Migrar ahora', 'Se crearán las ventas, pagos, compras y productos del histórico. Si ya había una migración, se reemplaza.', { ok: 'Migrar' }).then(function (si) {
+      if (!si) return;
+      var form = document.querySelector('[data-submit=analizarMig]');
+      $('migRes').innerHTML = '<div class="card vacio">Migrando… (puede tardar 1-2 minutos, no cierres la página)</div>';
+      return conBoton(el, api('ejecutarMigracion', datosForm(form))).then(function (r) { pintarReporteMig(r); toast('Migración completada', 'ok'); return refrescarInicial(); });
+    }).catch(function (e) { mostrarError(e, $('migRes')); });
+  };
+  function pintarReporteMig(r) {
+    var v = r.ventas, p = r.pagos, c = r.compras, k = r.comprobacion || {};
+    var h = '<div class="aviso ' + (r.simulacion ? 'info' : 'ok') + '">' + (r.simulacion ? 'Simulación: no se guardó nada.' : 'Migración guardada.') + ' Hoja: «' + esc(r.hoja) + '» · comentarios leídos en ' + r.comentariosLeidos + ' celdas.' + (r.yaHabiaMigracion ? '\nYa existía una migración: se reemplazará.' : '') + '</div>';
+    h += '<div class="grid g4" style="margin-bottom:14px">' + kpi('Ventas', v.filas, v.unidades + ' und · ' + v.vendedores + ' vendedores') + kpi('Total vendido', dinero(v.total), v.contado + ' contado · ' + v.credito + ' crédito') +
+      kpi('Cobrado', dinero(v.cobrado), p.total + ' pagos', 'ok') + kpi('Pendiente', dinero(v.pendiente), '', 'warn') +
+      kpi('Pagos con fecha real', p.conFechaDeComentario, 'leída del comentario', 'ok') + kpi('Pagos con fecha estimada', p.sinFecha, 'sin comentario de fecha', p.sinFecha ? 'warn' : '') +
+      kpi('Compras', c.facturas, c.unidades + ' und · ' + dinero(c.total)) + kpi('Productos nuevos', r.productos.nuevos, r.productos.sinLinea + ' sin línea') + '</div>';
+    if (k.filaTotales) {
+      h += '<div class="card"><h2>Comprobación con la fila de totales de la hoja (fila ' + k.filaTotales + ')</h2>' + tablaSimple(['', 'Hoja', 'Sistema', 'Diferencia'], [
+        ['Total vendido', dinero(k.totalHoja), dinero(k.totalMigrado), '<b>' + dinero(k.diferenciaTotal) + '</b>'],
+        ['Pendiente por cobrar', k.pendienteHoja === null ? '—' : dinero(k.pendienteHoja), dinero(k.pendienteMigrado), k.diferenciaPendiente === null ? '—' : '<b>' + dinero(k.diferenciaPendiente) + '</b>']
+      ], [1, 2, 3]) + '<p class="muted peq">Las diferencias se explican en los avisos de abajo (filas donde el PENDIENTE de la hoja no cuadra con TOTAL − PAGOS, pagos de más, etc.).</p></div>';
+    }
+    var cc = r.conciliacion || {};
+    h += '<div class="card"><h2>Compras vs ventas</h2><p class="peq">Compradas: <b>' + cc.comprado + '</b> und · Vendidas: <b>' + cc.vendido + '</b> und · <span style="color:var(--bad)"><b>' + cc.unidadesSinCompra + '</b> und vendidas sin compra registrada en ' + cc.skusNegativos + ' productos</span>. Revísalo luego en «Conciliación» y registra las facturas que falten.</p></div>';
+    h += '<div class="card"><h2>Avisos (' + r.avisos.length + ')</h2>' + (r.errores.length ? '<div class="aviso bad">' + r.errores.map(esc).join('\n') + '</div>' : '') +
+      (r.avisos.length ? '<div style="max-height:360px;overflow:auto" class="peq">' + r.avisos.map(function (a) { return '<div style="padding:4px 0;border-bottom:1px solid var(--border)">' + esc(a) + '</div>'; }).join('') + '</div>' : '<div class="muted">Sin avisos.</div>') + '</div>';
+    $('migRes').innerHTML = h;
+  }
+
+  AJ.auditoria = function (c) {
+    return api('auditoria').then(function (l) {
+      c.innerHTML = '<div class="card">' + tablaSimple(['Momento', 'Usuario', 'Acción', 'Detalle'], l.map(function (a) {
+        return ['<span class="peq">' + esc(String(a.momento).replace('T', ' ')) + '</span>', esc(a.usuario), esc(a.accion), '<span class="peq">' + esc(a.detalle) + '</span>'];
+      })) + '</div>';
+    });
+  };
+
+  // ======================================================================
+  // Arranque
+  // ======================================================================
+  function arrancar() {
+    S.token = leerToken();
+    if (S.token) {
+      return api('yo').then(function (u) { S.usuario = u; return entrar(); }).catch(function (e) {
+        if (e.message === 'DEBE_CAMBIAR_CLAVE') return;
+        if (e.message !== 'SESION_VENCIDA') { cerrarSesionLocal(); }
+        return verificarInstalacion();
+      });
+    }
+    return verificarInstalacion();
+  }
+  function verificarInstalacion() {
+    return llamar('estadoInstalacion', []).then(function (r) {
+      if (!r.ok) return pantallaLogin(r.error);
+      if (!r.data.instalada) return pantallaNoInstalada();
+      if (!r.data.conUsuarios) return pantallaPrimerAdmin();
+      if (!document.querySelector('.login')) pantallaLogin();
+    }).catch(function (e) { pantallaLogin(e.message); });
+  }
+
+  window.CubittApp = { estado: S };
+  arrancar();
+})();
+</script>
