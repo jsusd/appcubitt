@@ -54,6 +54,7 @@ var Reportes = {
       porProducto: Object.keys(porProducto).map(function (k) { return porProducto[k]; }).sort(function (a, b) { return b.total - a.total; }).slice(0, 10)
     };
     if (esAdmin(u)) {
+      out.sistemaVacio = Db.leer('Ventas').length === 0;
       out.periodo.costo = sum(enRango, 'costo');
       out.periodo.margen = r2(out.periodo.total - out.periodo.costo - out.periodo.comision);
       var conc = conciliar(Db.leer('Productos'), Db.leer('Movimientos'));

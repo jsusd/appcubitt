@@ -369,7 +369,10 @@
     var f = S.filtroInicio || { desde: inicioMes(), hasta: hoy() };
     return api('inicio', f).then(function (r) {
       var p = r.periodo;
-      var h = '<div class="card"><form data-submit="filtroInicio" class="fila">' +
+      var h = r.sistemaVacio ? '<div class="card" style="border-color:var(--brand);background:var(--brand-soft)"><h2>Primer paso: trae tu histórico</h2>' +
+        '<p style="margin-top:0">El sistema todavía no tiene ventas. Importa las ventas, pagos (con sus fechas), compras y productos de tu hoja «Cubitt».</p>' +
+        '<button class="btn prim" data-a="irMigracion">Migrar desde la hoja Cubitt →</button></div>' : '';
+      h += '<div class="card"><form data-submit="filtroInicio" class="fila">' +
         '<label class="campo">Desde<input class="input" type="date" name="desde" value="' + esc(r.rango.desde) + '"></label>' +
         '<label class="campo">Hasta<input class="input" type="date" name="hasta" value="' + esc(r.rango.hasta) + '"></label>' +
         '<div style="flex:0 0 auto"><button class="btn">Ver</button></div></form></div>';
@@ -402,6 +405,7 @@
       c.innerHTML = h;
     });
   };
+  A.irMigracion = function () { S.ajustesTab = 'migracion'; ir('ajustes'); };
   A.filtroInicio = function (form) { S.filtroInicio = datosForm(form); recargarVista(); };
   function kpi(lbl, val, sub, tono, ir) {
     return '<div class="kpi' + (ir ? ' clic" data-a="ir" data-v="' + ir : '') + '"><div class="lbl">' + esc(lbl) + '</div><div class="val ' + (tono || '') + '">' + val + '</div><div class="sub">' + esc(sub || '') + '</div></div>';
