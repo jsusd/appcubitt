@@ -4,6 +4,7 @@
   "private": true,
   "description": "Sistema administrativo de Cubitt (Google Apps Script)",
   "scripts": {
+    "construir": "node construir.js",
     "test": "node --test tests/*.test.js",
     "local": "node tests/servidor-local.js",
     "e2e": "node tests/e2e.js"

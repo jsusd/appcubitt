@@ -24,15 +24,13 @@ viven en una hoja de Google nueva y ordenada (una pestaña por tabla), en tu Dri
 
 1. Entra a <https://script.google.com> con tu cuenta y crea un **Proyecto nuevo**. Ponle de nombre `Cubitt Admin`.
 2. En **Configuración del proyecto** (engranaje) marca **Mostrar el archivo de manifiesto "appsscript.json"**.
-3. Copia el contenido de cada archivo de la carpeta `src/` a un archivo con el **mismo nombre** en el editor:
-   - Archivos de **secuencia de comandos** (`+` ▸ Secuencia de comandos): `Codigo`, `Datos`, `Dominio`, `Auth`, `Ventas`,
-     `Compras`, `Inventario`, `Reportes`, `Catalogo`, `Migracion` (el editor agrega `.gs`).
-   - Archivos **HTML** (`+` ▸ HTML): `Index`, `Estilos`, `App`.
-   - Reemplaza el contenido de `appsscript.json` con el de `src/appsscript.json`.
-   - Borra el `Código.gs` vacío que trae el proyecto.
+3. Copia y pega **solo dos archivos**, que ya vienen empaquetados en la carpeta [`instalar/`](instalar/):
+   - [`instalar/Codigo.gs`](instalar/Codigo.gs) → reemplaza todo el contenido del archivo `Código.gs` del editor.
+   - [`instalar/Index.html`](instalar/Index.html) → crea un archivo **HTML** llamado exactamente `Index` y pega ahí.
+   - El archivo `appsscript.json` es opcional (Apps Script detecta los permisos solo).
 
-   > Alternativa para quien use la terminal: `npm i -g @google/clasp`, `clasp login`,
-   > `clasp create --type webapp --title "Cubitt Admin" --rootDir src` y `clasp push`.
+   > Quien edite el código: se trabaja en `src/` y luego `node construir.js` regenera los dos archivos de `instalar/`.
+   > También se puede usar clasp: `clasp create --type webapp --title "Cubitt Admin" --rootDir src` y `clasp push`.
 4. En la barra superior elige la función **`instalar`** y pulsa **Ejecutar**. Acepta los permisos
    (hojas de cálculo, Drive y conexión externa). En el **Registro de ejecución** aparecerá:
    - el enlace de la nueva hoja **"Cubitt Admin — Base de datos"**, y

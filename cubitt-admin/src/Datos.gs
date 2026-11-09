@@ -231,12 +231,15 @@ function conBloqueo(fn) {
   }
 }
 
+// Fija para no depender de la zona configurada en el proyecto de Apps Script
+var ZONA_HORARIA = 'America/Caracas';
+
 function ahoraIso() {
-  return Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Caracas', "yyyy-MM-dd'T'HH:mm:ss");
+  return Utilities.formatDate(new Date(), ZONA_HORARIA, "yyyy-MM-dd'T'HH:mm:ss");
 }
 
 function hoyIso() {
-  return Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Caracas', 'yyyy-MM-dd');
+  return Utilities.formatDate(new Date(), ZONA_HORARIA, 'yyyy-MM-dd');
 }
 
 function auditar(usuario, accion, detalle) {
