@@ -222,6 +222,24 @@ function conciliar(productos, movimientos) {
   return { filas: filas, resumen: resumen };
 }
 
+/**
+ * Clientes "por identificar": en la hoja se escribía PENDIENTE (o se dejaba vacío) cuando aún no se tenía
+ * el nombre. No son una persona: cada venta así se muestra aparte para asignarle su cliente real.
+ */
+var CLIENTES_POR_IDENTIFICAR = { '': 1, 'PENDIENTE': 1, 'SIN NOMBRE': 1, 'POR IDENTIFICAR': 1, 'SIN CLIENTE': 1, 'N/A': 1, 'NA': 1, '-': 1, '?': 1, 'NO SE': 1, 'DESCONOCIDO': 1 };
+var CLIENTE_POR_IDENTIFICAR = 'POR IDENTIFICAR';
+
+/** Clave para agrupar un cliente aunque lo hayan escrito con o sin acentos / espacios extra. */
+function claveCliente(nombre) {
+  var t = normNombre(nombre);
+  try { t = t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+  return t;
+}
+
+function esClientePendiente(nombre) {
+  return !!CLIENTES_POR_IDENTIFICAR[claveCliente(nombre)];
+}
+
 /** Saca la URL de una celda de imagen: =IMAGE("https://...") o una URL suelta. */
 function extraerUrlImagen(v) {
   var t = texto(v);
@@ -255,7 +273,6 @@ function ajustesInventarioReal(stockPorClave, reales, ubicacionDestino, ubicacio
 function validarVentaNueva(v) {
   var errores = [];
   if (!isoFecha(v.fecha)) errores.push('La fecha es obligatoria.');
-  if (!texto(v.cliente)) errores.push('El cliente es obligatorio.');
   if (!texto(v.vendedor_id)) errores.push('Selecciona el vendedor.');
   if (!texto(v.ubicacion_id)) errores.push('Selecciona la ubicación de donde sale la mercancía.');
   if (v.tipo !== TIPO_VENTA.CONTADO && v.tipo !== TIPO_VENTA.CREDITO) errores.push('Indica si es contado o crédito.');
@@ -309,6 +326,7 @@ if (typeof module !== 'undefined') {
     interpretarComentarioPago: interpretarComentarioPago, calcularEstadoVenta: calcularEstadoVenta,
     comisionSugerida: comisionSugerida, calcularStock: calcularStock, conciliar: conciliar,
     validarVentaNueva: validarVentaNueva, resumirComisiones: resumirComisiones, MOV: MOV,
-    extraerUrlImagen: extraerUrlImagen, ajustesInventarioReal: ajustesInventarioReal
+    extraerUrlImagen: extraerUrlImagen, ajustesInventarioReal: ajustesInventarioReal,
+    claveCliente: claveCliente, esClientePendiente: esClientePendiente
   };
 }

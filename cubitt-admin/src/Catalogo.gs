@@ -15,7 +15,7 @@ function _carpetaConfig(clave, nombre) {
 
 var Catalogo = {
   /** Todo lo que la app necesita al abrir. */
-  inicial: function (u) {
+  inicial: function (u, d) {
     var admin = esAdmin(u);
     var stock = _stockActual();
     var ubic = Db.leer('Ubicaciones').filter(function (x) { return x.activo !== 'NO'; }).map(_limpio);
@@ -39,7 +39,9 @@ var Catalogo = {
       ubicaciones: ubic,
       metodosPago: (cfg.METODOS_PAGO || 'EFECTIVO USD,ZELLE,BINANCE,PAGO MOVIL,TRANSFERENCIA BS,PUNTO DE VENTA,CASHEA').split(',').map(texto).filter(String),
       iaDisponible: admin && !!PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY'),
-      ubicacionPorDefecto: cfg.UBICACION_POR_DEFECTO || (ubic[0] && ubic[0].id) || ''
+      ubicacionPorDefecto: cfg.UBICACION_POR_DEFECTO || (ubic[0] && ubic[0].id) || '',
+      // La pantalla de inicio viene en el mismo viaje para abrir más rápido
+      inicio: d && d.inicio ? Reportes.inicio(u, d.inicio) : undefined
     };
   },
 

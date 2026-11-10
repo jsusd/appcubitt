@@ -64,6 +64,7 @@ var Reportes = {
         skusNegativosPorUbicacion: conc.resumen.skusNegativosPorUbicacion,
         pagosFechaEstimada: Db.leer('Pagos').filter(function (p) { return p.fecha_estimada === 'SI' && p.estado !== ESTADO.ANULADA; }).length,
         comprasSinArchivo: Db.leer('Compras').filter(function (c) { return c.estado !== ESTADO.ANULADA && !texto(c.archivo_url); }).length,
+        ventasPorIdentificar: ventas.filter(function (v) { return esClientePendiente(v.cliente); }).length,
         comisionesPorLiquidar: r2(ventas.filter(function (v) { return !texto(v.comision_pagada_en) && v.saldo <= 0.005; }).reduce(function (a, v) { return a + num(v.comision); }, 0))
       };
     }

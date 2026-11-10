@@ -80,11 +80,18 @@ Así la URL se mantiene.
   en esa ubicación (el administrador puede forzarlo; quedará marcado en la conciliación).
 - **Disponible**: los productos con stock, con su foto y precio de venta, agrupados por línea. Botones para
   **copiar la lista para WhatsApp** y para generar un **PDF con fotos** (queda en tu Drive, carpeta «Cubitt Admin — Catálogos»).
+- **Clientes**: todos los clientes con lo que han comprado desde siempre (sin filtro de fechas), cuánto pagaron y cuánto deben;
+  al abrir uno se ven todas sus compras. Las ventas con cliente «PENDIENTE» o vacío no se tratan como una persona:
+  aparecen aparte para **asignarles el cliente real** (también lo puede hacer el vendedor en sus propias ventas).
 - **Cobranza**: quién debe, cuánto y hace cuántos días, con botón para abonar y recordatorio por WhatsApp.
 - **Ventas**: filtros por fecha, vendedor, estado, tipo y fiscal; en el detalle se registran abonos, se corrigen fechas
   estimadas, se edita o se anula.
 - **Comisiones**: lo generado, lo listo para pagar (ventas cobradas completas) y lo pagado; *Marcar como pagadas* deja un recibo.
 - **Inicio**: vendido y cobrado hoy y en el período, por cobrar, contado vs crédito, fiscal vs no fiscal, margen y alertas.
+
+**Velocidad**: el servidor guarda una copia rápida de cada tabla y la renueva sola cada vez que se guarda algo desde la app;
+el navegador muestra al instante las pantallas ya visitadas y las actualiza en segundo plano. Si alguien edita la hoja de
+base de datos a mano, usa *Ajustes ▸ Configuración ▸ Recargar datos*.
 
 La hoja de base de datos se puede abrir para consultar o exportar, pero **no la edites a mano**: usa la app para que
 stock, saldos y comisiones se mantengan correctos. Cada cambio queda en *Ajustes ▸ Historial de cambios*.

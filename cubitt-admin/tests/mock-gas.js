@@ -179,8 +179,24 @@ function crearEntorno(opciones = {}) {
     }
   };
 
+  const almacenCache = {};
+  const CacheService = {
+    getScriptCache() {
+      const valido = (k) => almacenCache[k] !== undefined;
+      return {
+        get: k => (valido(k) ? almacenCache[k] : null),
+        getAll: ks => { const o = {}; ks.forEach(k => { if (valido(k)) o[k] = almacenCache[k]; }); return o; },
+        put: (k, v) => { if (Buffer.byteLength(String(v)) > 100 * 1024) throw new Error('Valor de caché > 100KB'); almacenCache[k] = String(v); },
+        putAll: (o) => { Object.keys(o).forEach(k => { if (Buffer.byteLength(String(o[k])) > 100 * 1024) throw new Error('Valor de caché > 100KB'); almacenCache[k] = String(o[k]); }); },
+        remove: k => { delete almacenCache[k]; }
+      };
+    }
+  };
+
   return {
+    almacenCache,
     globales: {
+      CacheService,
       SpreadsheetApp, PropertiesService, LockService, Utilities, DriveApp, UrlFetchApp,
       Session: { getScriptTimeZone: () => 'America/Caracas' },
       ScriptApp: { getOAuthToken: () => 'token-de-prueba' },

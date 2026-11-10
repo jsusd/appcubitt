@@ -88,16 +88,47 @@
     });
   }
 
+  // Acciones que solo leen. Cualquier otra (guardar, anular, pagar…) vacía la caché del navegador.
+  var LECTURAS = { yo: 1, inicial: 1, detalleVenta: 1, listarVentas: 1, clientes: 1, listarPagos: 1, cobranza: 1, detalleCompra: 1, listarCompras: 1,
+    archivosPendientes: 1, stock: 1, kardex: 1, inicio: 1, conciliacion: 1, comisiones: 1, usuarios: 1, config: 1, auditoria: 1, disponible: 1,
+    clientesResumen: 1, clienteDetalle: 1, analizarMigracion: 1, leerFacturaIA: 1, subirArchivoCompra: 1 };
+  var CACHE = {};
+  var SEGUNDOS_FRESCO = 20;
+
   function api(accion, datos) {
     cargando(true);
     return llamar('api', [S.token, accion, datos || {}]).then(function (r) {
       cargando(false);
-      if (r && r.ok) return r.data;
+      if (r && r.ok) { if (!LECTURAS[accion]) CACHE = {}; return r.data; }
       var err = (r && r.error) || 'Error desconocido';
       if (err === 'SESION_VENCIDA') { cerrarSesionLocal(); pantallaLogin('Tu sesión venció. Ingresa de nuevo.'); }
       if (err === 'DEBE_CAMBIAR_CLAVE') { pantallaCambioClave(true); }
       throw new Error(err);
     }, function (e) { cargando(false); throw e; });
+  }
+
+  /**
+   * Lee con caché: si ya se vio esta pantalla, se dibuja al instante con lo último conocido y
+   * se actualiza en segundo plano (solo se vuelve a dibujar si algo cambió).
+   */
+  function cargar(accion, datos, pintar) {
+    var clave = accion + JSON.stringify(datos || {});
+    var nav = S.nav;
+    var ent = CACHE[clave];
+    if (ent) {
+      pintar(ent.data);
+      if (Date.now() - ent.t < SEGUNDOS_FRESCO * 1000) return Promise.resolve(ent.data);
+    }
+    return api(accion, datos).then(function (d) {
+      var j = JSON.stringify(d);
+      var cambio = !CACHE[clave] || CACHE[clave].j !== j;
+      CACHE[clave] = { data: d, j: j, t: Date.now() };
+      if (cambio && nav === S.nav) pintar(d); // no dibujar si el usuario ya se fue a otra pantalla
+      return d;
+    }, function (e) {
+      if (ent) { if (e.message !== 'SESION_VENCIDA') toast('No se pudo actualizar: ' + e.message, 'bad'); return ent.data; }
+      throw e;
+    });
   }
 
   function mostrarError(e, contenedor) {
@@ -110,8 +141,16 @@
 
   function cerrarSesionLocal() { S.token = null; S.usuario = null; S.ini = null; guardarToken(null); }
 
-  function refrescarInicial() {
-    return api('inicial').then(function (ini) { S.ini = ini; S.usuario = ini.usuario; });
+  function refrescarInicial(conInicio) {
+    return api('inicial', conInicio ? { inicio: S.filtroInicio || {} } : {}).then(function (ini) {
+      if (ini.inicio) {
+        // Misma clave que usará la pantalla de Inicio (con la fecha del servidor, no la del teléfono)
+        var f = S.filtroInicio || { desde: ini.hoy.slice(0, 8) + '01', hasta: ini.hoy };
+        CACHE['inicio' + JSON.stringify(f)] = { data: ini.inicio, j: JSON.stringify(ini.inicio), t: Date.now() };
+        delete ini.inicio;
+      }
+      S.ini = ini; S.usuario = ini.usuario;
+    });
   }
 
   // ======================================================================
@@ -321,6 +360,7 @@
     { id: 'vender', t: 'Vender', ico: '➕' },
     { id: 'ventas', t: 'Ventas', ico: '🧾' },
     { id: 'cobranza', t: 'Cobranza', ico: '💵' },
+    { id: 'clientes', t: 'Clientes', ico: '👥' },
     { id: 'compras', t: 'Compras y facturas', ico: '📦', admin: true },
     { id: 'inventario', t: 'Inventario', ico: '🏬' },
     { id: 'disponible', t: 'Disponible', ico: '🛍️' },
@@ -334,7 +374,9 @@
   function menuVisible() { return MENU.filter(function (m) { return !m.admin || esAdmin(); }); }
 
   function entrar() {
-    return refrescarInicial().then(function () {
+    var listo = S.ini && S.ini.precargado ? Promise.resolve() : refrescarInicial(true);
+    if (S.ini) delete S.ini.precargado;
+    return listo.then(function () {
       var m = menuVisible();
       $('raiz').innerHTML = '<div class="app"><nav class="lateral"><div class="marca">' + esc(S.ini.negocio) + ' <small>Administración</small></div>' +
         m.map(function (x) {
@@ -360,6 +402,7 @@
 
   function ir(vista) {
     S.vista = vista;
+    S.nav = (S.nav || 0) + 1;
     var m = MENU.filter(function (x) { return x.id === vista; })[0];
     $('tituloVista').textContent = m ? m.t : '';
     document.querySelectorAll('[data-a=ir]').forEach(function (b) { b.classList.toggle('activo', b.getAttribute('data-v') === vista); });
@@ -378,7 +421,7 @@
   // ======================================================================
   VISTAS.inicio = function (c) {
     var f = S.filtroInicio || { desde: inicioMes(), hasta: hoy() };
-    return api('inicio', f).then(function (r) {
+    return cargar('inicio', f, function (r) {
       var p = r.periodo;
       var h = r.sistemaVacio ? '<div class="card" style="border-color:var(--brand);background:var(--brand-soft)"><h2>Primer paso: trae tu histórico</h2>' +
         '<p style="margin-top:0">El sistema todavía no tiene ventas. Importa las ventas, pagos (con sus fechas), compras y productos de tu hoja «Cubitt».</p>' +
@@ -404,10 +447,11 @@
         h += '<div class="card"><h2>Pendientes de revisar</h2>' +
           alerta(a.unidadesSinCompra > 0, 'bad', a.unidadesSinCompra + ' unidades vendidas sin compra registrada (' + a.skusNegativos + ' productos)', 'conciliacion') +
           alerta(a.skusNegativosPorUbicacion > 0, 'warn', a.skusNegativosPorUbicacion + ' productos con stock negativo en alguna ubicación (falta un traslado)', 'conciliacion') +
+          alerta(a.ventasPorIdentificar > 0, 'warn', a.ventasPorIdentificar + ' ventas sin cliente identificado («PENDIENTE»): asígnales el cliente', 'clientes') +
           alerta(a.pagosFechaEstimada > 0, 'warn', a.pagosFechaEstimada + ' pagos migrados con fecha estimada', 'ventas') +
           alerta(a.comprasSinArchivo > 0, 'info', a.comprasSinArchivo + ' compras sin foto de la factura', 'compras') +
           alerta(a.comisionesPorLiquidar > 0, 'info', dinero(a.comisionesPorLiquidar) + ' en comisiones de ventas cobradas por liquidar', 'comisiones') +
-          (a.unidadesSinCompra + a.skusNegativosPorUbicacion + a.pagosFechaEstimada + a.comprasSinArchivo + a.comisionesPorLiquidar === 0 ? '<div class="aviso ok">Todo al día.</div>' : '') +
+          (a.unidadesSinCompra + a.skusNegativosPorUbicacion + a.ventasPorIdentificar + a.pagosFechaEstimada + a.comprasSinArchivo + a.comisionesPorLiquidar === 0 ? '<div class="aviso ok">Todo al día.</div>' : '') +
           '</div>';
       }
       h += '</div><div class="grid g2 apilar">' +
@@ -455,7 +499,7 @@
     c.innerHTML = '<div id="ventaError"></div><div class="grid g2 apilar">' +
       '<div class="card"><h2>Datos de la venta</h2><div class="grid">' +
       '<div class="grid g2"><label class="campo">Fecha<input class="input" type="date" max="' + hoy() + '" data-v-campo="fecha" value="' + esc(v.fecha) + '"></label>' + vendedorCampo + '</div>' +
-      '<label class="campo rel">Cliente<input class="input" data-v-campo="cliente" list="listaClientes" autocomplete="off" value="' + esc(v.cliente) + '" placeholder="Nombre del cliente"></label><datalist id="listaClientes"></datalist>' +
+      '<label class="campo rel">Cliente<input class="input" data-v-campo="cliente" list="listaClientes" autocomplete="off" value="' + esc(v.cliente) + '" placeholder="Nombre (vacío = por identificar)"></label><datalist id="listaClientes"></datalist>' +
       '<div class="grid g2"><label class="campo">Teléfono / WhatsApp<input class="input" data-v-campo="telefono" inputmode="tel" value="' + esc(v.telefono) + '" placeholder="0414…"></label>' +
       '<label class="campo">Sale de<select class="input" data-v-campo="ubicacion_id">' + optUbicaciones(v.ubicacion_id, 'Ubicación…') + '</select></label></div>' +
       '<label class="campo">Notas<input class="input" data-v-campo="notas" value="' + esc(v.notas) + '" placeholder="Opcional"></label>' +
@@ -479,7 +523,7 @@
         pintarLineasVenta();
       }
     });
-    api('clientes').then(function (l) {
+    cargar('clientes', {}, function (l) {
       S.clientes = l;
       var dl = $('listaClientes'); if (dl) dl.innerHTML = l.map(function (x) { return '<option value="' + esc(x.cliente) + '">'; }).join('');
     }).catch(function () {});
@@ -589,7 +633,7 @@
   // VENTAS (lista y detalle)
   // ======================================================================
   VISTAS.ventas = function (c) {
-    var f = S.filtrosVentas || { desde: inicioMes(), hasta: hoy(), vendedor_id: '', estadoPago: '', tipo: '', fiscal: '', q: '' };
+    var f = S.filtrosVentas || { desde: '', hasta: '', vendedor_id: '', estadoPago: '', tipo: '', fiscal: '', q: '', limite: 1000 };
     S.filtrosVentas = f;
     c.innerHTML = '<div class="card"><form data-submit="filtrarVentas" class="fila">' +
       '<label class="campo">Desde<input class="input" type="date" name="desde" value="' + esc(f.desde) + '"></label>' +
@@ -600,7 +644,7 @@
       '<label class="campo">Fiscal<select class="input" name="fiscal">' + opciones([{ v: 'SI', t: 'Con factura' }, { v: 'NO', t: 'Sin factura' }], f.fiscal, 'Todos') + '</select></label>' +
       '<label class="campo" style="flex:2 1 200px">Buscar<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Cliente, código, N° factura…"></label>' +
       '<div style="flex:0 0 auto" class="acciones"><button class="btn prim">Filtrar</button><button class="btn" type="button" data-a="ventasTodo">Todo</button></div></form></div><div id="ventasRes"><div class="vacio">Cargando…</div></div>';
-    return api('listarVentas', f).then(function (r) {
+    return cargar('listarVentas', f, function (r) {
       var t = r.totales;
       var h = '<div class="grid g4" style="margin-bottom:14px">' + kpi('Ventas', t.ventas, r.cantidad > r.ventas.length ? 'mostrando ' + r.ventas.length : '') + kpi('Total', dinero(t.total)) + kpi('Cobrado', dinero(t.pagado), '', 'ok') + kpi('Saldo', dinero(t.saldo), '', t.saldo > 0 ? 'warn' : '') + '</div>';
       if (!r.ventas.length) { $('ventasRes').innerHTML = h + '<div class="card vacio">No hay ventas con estos filtros.</div>'; return; }
@@ -632,7 +676,9 @@
       (v.fiscal === 'SI' ? '<span class="tag gris">Factura fiscal ' + esc(v.factura_fiscal) + '</span>' : '<span class="tag gris">Sin factura fiscal</span>') +
       (v.origen === 'MIGRACION' ? ' <span class="tag warn">Histórico (fila ' + esc(v.fila_origen) + ')</span>' : '') + '</div></div>';
     h += '<div class="grid g3" style="margin-bottom:12px">' + kpi('Total', dinero(v.total)) + kpi('Pagado', dinero(v.pagado), '', 'ok') + kpi('Saldo', dinero(v.saldo), '', v.saldo > 0 ? 'warn' : '') + '</div>';
-    h += '<div class="peq" style="margin-bottom:10px"><b>' + esc(v.cliente) + '</b>' + (v.telefono ? ' · ' + esc(v.telefono) : '') + '<br>' + fecha(v.fecha) + ' · Vendedor: ' + esc(v.vendedor) + ' · Sale de: ' + esc(nombreUbicacion(v.ubicacion_id)) +
+    var porIdent = esPendiente(v.cliente);
+    h += '<div class="peq" style="margin-bottom:10px">' + (porIdent ? '<span class="tag warn">Cliente por identificar</span> <button class="btn peq" data-a="asignarCliente" data-id="' + esc(v.id) + '">Asignar cliente</button>'
+      : '<a href="#" class="fuerte" data-a="verCliente" data-cliente="' + esc(v.cliente) + '">' + esc(v.cliente) + '</a> <span class="muted">(ver todas sus compras)</span>') + (v.telefono ? ' · ' + esc(v.telefono) : '') + '<br>' + fecha(v.fecha) + ' · Vendedor: ' + esc(v.vendedor) + ' · Sale de: ' + esc(nombreUbicacion(v.ubicacion_id)) +
       '<br>Comisión: <b>' + dinero(v.comision) + '</b>' + (v.comision_pagada_en ? ' <span class="tag ok">liquidada ' + fecha(v.comision_pagada_en) + '</span>' : '') +
       (v.costo !== undefined && v.costo !== '' ? ' · Costo: ' + dinero(v.costo) : '') + (v.notas ? '<br>Notas: ' + esc(v.notas) : '') +
       (v.motivo_anulacion ? '<br><span style="color:var(--bad)">Anulada: ' + esc(v.motivo_anulacion) + '</span>' : '') + '</div>';
@@ -709,7 +755,7 @@
   // COBRANZA
   // ======================================================================
   VISTAS.cobranza = function (c) {
-    return api('cobranza', {}).then(function (r) {
+    return cargar('cobranza', {}, function (r) {
       var t = r.tramos;
       var h = '<div class="grid g4" style="margin-bottom:14px">' + kpi('Total por cobrar', dinero(r.total), r.clientes.length + ' clientes', 'warn') +
         kpi('0 a 30 días', dinero(t['0-30'])) + kpi('31 a 90 días', dinero(t['31-60'] + t['61-90']), '', 'warn') + kpi('Más de 90 días', dinero(t['90+']), '', t['90+'] > 0 ? 'bad' : '') + '</div>';
@@ -717,11 +763,12 @@
       h += '<div class="card"><input class="input" id="filtroCobranza" placeholder="Buscar cliente…" style="margin-bottom:8px">' + r.clientes.map(function (cl, i) {
         var tono = cl.dias > 90 ? 'bad' : cl.dias > 30 ? 'warn' : 'gris';
         var wa = whatsapp(cl.telefono, 'Hola ' + cl.cliente + ', te escribimos de ' + S.ini.negocio + '. Tu saldo pendiente es ' + dinero(cl.saldo) + '. ¡Gracias!');
-        return '<div class="cobro" data-nombre="' + esc(cl.cliente) + '"><div class="lista-item" data-a="toggleCobro" data-i="' + i + '"><div class="izq"><div class="titulo">' + esc(cl.cliente) + '</div>' +
+        return '<div class="cobro" data-nombre="' + esc(cl.cliente.toUpperCase()) + '"><div class="lista-item" data-a="toggleCobro" data-i="' + i + '"><div class="izq"><div class="titulo">' + (cl.porIdentificar ? '<span class="tag warn">Por identificar</span> ' + esc(cl.ventas[0].id) : esc(cl.cliente)) + '</div>' +
           '<div class="det">' + cl.ventas.length + ' venta(s) · ' + esc(cl.vendedores) + '</div></div><div class="der"><div class="fuerte">' + dinero(cl.saldo) + '</div><span class="tag ' + tono + '">' + cl.dias + ' días</span></div></div>' +
           '<div class="oculto" id="cobro' + i + '" style="padding:4px 0 12px">' + tablaSimple(['Fecha', 'Venta', 'Total', 'Pagado', 'Saldo', ''], cl.ventas.map(function (v) {
             return [fecha(v.fecha), esc(v.id), dinero(v.total), dinero(v.pagado), '<b>' + dinero(v.saldo) + '</b>', '<button class="btn peq prim" data-a="verVenta" data-id="' + esc(v.id) + '">Abonar</button>'];
-          }), [2, 3, 4, 5]) + (wa ? '<a class="btn peq" target="_blank" rel="noopener" href="' + esc(wa) + '">Recordar por WhatsApp</a>' : '') + '</div></div>';
+          }), [2, 3, 4, 5]) + (cl.porIdentificar ? '<button class="btn peq" data-a="asignarCliente" data-id="' + esc(cl.ventas[0].id) + '">Asignar cliente</button> ' : '') +
+          (wa ? '<a class="btn peq" target="_blank" rel="noopener" href="' + esc(wa) + '">Recordar por WhatsApp</a>' : '') + '</div></div>';
       }).join('') + '</div>';
       c.innerHTML = h;
       $('filtroCobranza').addEventListener('input', function () {
@@ -740,6 +787,74 @@
   }
 
   // ======================================================================
+  // CLIENTES: todo lo que ha comprado cada cliente
+  // ======================================================================
+  var CLIENTES_PEND = { '': 1, 'PENDIENTE': 1, 'SIN NOMBRE': 1, 'POR IDENTIFICAR': 1, 'SIN CLIENTE': 1, 'N/A': 1, 'NA': 1, '-': 1, '?': 1, 'NO SE': 1, 'DESCONOCIDO': 1 };
+  function esPendiente(nombre) { return !!CLIENTES_PEND[String(nombre || '').trim().toUpperCase().replace(/\s+/g, ' ')]; }
+
+  VISTAS.clientes = function (c) {
+    var f = S.filtroCli || { q: '', orden: 'total' };
+    S.filtroCli = f;
+    c.innerHTML = '<div class="card"><form data-submit="filtrarCli" class="fila"><label class="campo" style="flex:3 1 220px">Buscar cliente<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Nombre o teléfono"></label>' +
+      '<label class="campo">Ordenar por<select class="input" name="orden">' + opciones([{ v: 'total', t: 'Más compras ($)' }, { v: 'saldo', t: 'Mayor saldo' }, { v: 'reciente', t: 'Compra más reciente' }, { v: 'nombre', t: 'Nombre' }], f.orden) + '</select></label>' +
+      '<div style="flex:0 0 auto"><button class="btn">Ver</button></div></form></div><div id="cliRes"><div class="vacio">Cargando…</div></div>';
+    return cargar('clientesResumen', f, function (r) {
+      var h = '';
+      if (r.porIdentificar.length) {
+        h += '<div class="card" style="border-color:var(--warn)"><h2>Ventas sin cliente identificado <span class="tag warn">' + r.porIdentificar.length + ' · ' + dinero(r.porIdentificarSaldo) + ' por cobrar</span></h2>' +
+          '<p class="peq muted" style="margin-top:-6px">En la hoja decían «PENDIENTE» o estaban vacías. Asigna el cliente real a cada una para que su deuda e historial queden en su nombre.</p>' +
+          tablaSimple(['Fecha', 'Venta', 'Productos', 'Vendedor', 'Total', 'Saldo', ''], r.porIdentificar.map(function (v) {
+            return [fecha(v.fecha), '<a href="#" data-a="verVenta" data-id="' + esc(v.id) + '">' + esc(v.id) + '</a>', '<span class="peq">' + esc(v.productos) + '</span>', esc(v.vendedor), dinero(v.total),
+              v.saldo > 0 ? '<b>' + dinero(v.saldo) + '</b>' : '—', '<button class="btn peq prim" data-a="asignarCliente" data-id="' + esc(v.id) + '">Asignar cliente</button>'];
+          }), [4, 5]) + '</div>';
+      }
+      var t = r.totales;
+      h += '<div class="grid g3" style="margin-bottom:14px">' + kpi('Clientes', t.clientes) + kpi('Total comprado (histórico)', dinero(t.total)) + kpi('Saldo por cobrar', dinero(t.saldo), '', t.saldo > 0 ? 'warn' : '') + '</div>';
+      h += '<div class="card">' + (r.clientes.length ? '<div class="solo-escritorio tabla-env"><table class="tabla"><thead><tr><th>Cliente</th><th class="num">Ventas</th><th class="num">Und</th><th class="num">Total comprado</th><th class="num">Saldo</th><th>Última compra</th><th>Vendedor(es)</th></tr></thead><tbody>' +
+        r.clientes.map(function (cl) {
+          return '<tr class="clic" data-a="verCliente" data-cliente="' + esc(cl.cliente) + '"><td class="fuerte">' + esc(cl.cliente) + (cl.telefono ? '<div class="peq muted">' + esc(cl.telefono) + '</div>' : '') + '</td><td class="num">' + cl.ventas + '</td><td class="num">' + cl.unidades + '</td>' +
+            '<td class="num">' + dinero(cl.total) + '</td><td class="num">' + (cl.saldo > 0 ? '<b style="color:var(--warn)">' + dinero(cl.saldo) + '</b>' : '—') + '</td><td>' + fecha(cl.ultima) + '</td><td class="peq">' + esc(cl.vendedores) + '</td></tr>';
+        }).join('') + '</tbody></table></div><div class="solo-movil">' + r.clientes.map(function (cl) {
+          return '<div class="lista-item" data-a="verCliente" data-cliente="' + esc(cl.cliente) + '"><div class="izq"><div class="titulo">' + esc(cl.cliente) + '</div><div class="det">' + cl.ventas + ' compras · última ' + fecha(cl.ultima) + '</div></div>' +
+            '<div class="der"><div class="fuerte">' + dinero(cl.total) + '</div>' + (cl.saldo > 0 ? '<div class="peq" style="color:var(--warn)">debe ' + dinero(cl.saldo) + '</div>' : '') + '</div></div>';
+        }).join('') + '</div>' : '<div class="vacio">No hay clientes con ese nombre.</div>') + '</div>';
+      $('cliRes').innerHTML = h;
+    });
+  };
+  A.filtrarCli = function (form) { S.filtroCli = datosForm(form); recargarVista(); };
+
+  A.verCliente = function (el) { abrirCliente(el.getAttribute('data-cliente')); };
+  function abrirCliente(nombre) {
+    return api('clienteDetalle', { cliente: nombre }).then(function (r) {
+      var t = r.totales;
+      var wa = whatsapp(r.telefono, 'Hola ' + r.cliente + ', te escribimos de ' + S.ini.negocio + '.' + (t.saldo > 0 ? ' Tu saldo pendiente es ' + dinero(t.saldo) + '.' : '') + ' ¡Gracias por tu compra!');
+      var h = '<div class="peq muted" style="margin-bottom:10px">' + (r.telefono ? esc(r.telefono) + ' · ' : '') + 'Cliente desde ' + fecha(t.primera) + ' · última compra ' + fecha(t.ultima) +
+        (wa ? ' · <a target="_blank" rel="noopener" href="' + esc(wa) + '">Escribir por WhatsApp</a>' : '') + '</div>' +
+        '<div class="grid g4" style="margin-bottom:12px">' + kpi('Compras', t.ventas) + kpi('Total comprado', dinero(t.total)) + kpi('Pagado', dinero(t.pagado), '', 'ok') + kpi('Debe', dinero(t.saldo), '', t.saldo > 0 ? 'warn' : '') + '</div>';
+      if (r.porLinea.length) h += '<div class="peq" style="margin-bottom:10px">Ha comprado: ' + r.porLinea.map(function (x) { return '<span class="tag gris">' + esc(x.linea) + ' × ' + x.unidades + '</span>'; }).join(' ') + '</div>';
+      h += '<div class="tabla-env"><table class="tabla"><thead><tr><th>Fecha</th><th></th><th>Productos</th><th>Vendedor</th><th class="num">Total</th><th class="num">Saldo</th><th>Estado</th></tr></thead><tbody>' +
+        r.ventas.map(function (v) {
+          return '<tr class="clic" data-a="verVenta" data-id="' + esc(v.id) + '"' + (v.estado === 'ANULADA' ? ' style="opacity:.55"' : '') + '><td>' + fecha(v.fecha) + '<div class="peq muted">' + esc(v.id) + '</div></td><td>' + foto(v.imagen) + '</td><td class="peq">' + esc(v.productos) + '</td><td class="peq">' + esc(v.vendedor) + '</td>' +
+            '<td class="num">' + dinero(v.total) + '</td><td class="num">' + (v.saldo > 0 && v.estado !== 'ANULADA' ? '<b>' + dinero(v.saldo) + '</b>' : '—') + '</td><td>' + tagEstado(v.estado === 'ANULADA' ? 'ANULADA' : v.estadoPago) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+      abrirModal(r.cliente, h, true);
+    }).catch(function (e) { mostrarError(e); });
+  }
+
+  A.asignarCliente = function (el) {
+    var id = el.getAttribute('data-id');
+    pedir('Asignar cliente a la venta ' + id, 'Nombre del cliente', { ok: 'Guardar', texto: 'Escribe el nombre como lo tienes en tus otras ventas para que se sume a su historial.' }).then(function (nombre) {
+      if (!nombre) return;
+      if (esPendiente(nombre)) { toast('Escribe el nombre real del cliente.', 'bad'); return; }
+      return api('editarVenta', { id: id, cliente: nombre }).then(function (v) {
+        toast('Venta ' + id + ' asignada a ' + v.cliente, 'ok');
+        if ($('modal').innerHTML && S.ventaAbierta && S.ventaAbierta.id === id) pintarVenta(v); else cerrarModal();
+        recargarVista();
+      });
+    }).catch(function (e) { mostrarError(e); });
+  };
+
+  // ======================================================================
   // COMPRAS Y FACTURAS
   // ======================================================================
   VISTAS.compras = function (c) {
@@ -748,7 +863,7 @@
       '<div class="card"><form data-submit="filtrarCompras" class="fila"><label class="campo">Desde<input class="input" type="date" name="desde" value="' + esc(f.desde) + '"></label>' +
       '<label class="campo">Hasta<input class="input" type="date" name="hasta" value="' + esc(f.hasta) + '"></label><label class="campo" style="flex:2 1 200px">Buscar<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Proveedor, N° factura, código…"></label>' +
       '<div style="flex:0 0 auto"><button class="btn">Filtrar</button></div></form></div><div id="comprasRes"></div>';
-    return api('listarCompras', f).then(function (r) {
+    return cargar('listarCompras', f, function (r) {
       var h = '<div class="grid g3" style="margin-bottom:14px">' + kpi('Facturas', r.compras.length) + kpi('Unidades compradas', r.unidades) + kpi('Total comprado', dinero(r.total)) + '</div>';
       h += '<div class="card">' + (r.compras.length ? '<div class="tabla-env"><table class="tabla"><thead><tr><th>Fecha</th><th>Proveedor</th><th>Factura</th><th>Ubicación</th><th class="num">Und</th><th class="num">Total</th><th>Foto</th></tr></thead><tbody>' +
         r.compras.map(function (x) {
@@ -797,7 +912,7 @@
   }
 
   function llenarProveedores() {
-    api('listarCompras', {}).then(function (r) {
+    cargar('listarCompras', {}, function (r) {
       var vistos = {};
       var dl = $('listaProveedores');
       if (!dl) return;
@@ -991,7 +1106,7 @@
       '<div class="card"><form data-submit="filtrarInv" class="fila"><label class="campo">Ubicación<select class="input" name="ubicacion_id">' + optUbicaciones(f.ubicacion_id, 'Todas') + '</select></label>' +
       '<label class="campo">Estado<select class="input" name="estado">' + opciones([{ v: 'CON_STOCK', t: 'Con stock' }, { v: 'BAJO', t: 'Stock bajo (1-2)' }, { v: 'AGOTADO', t: 'Agotado' }, { v: 'NEGATIVO', t: 'Negativo (revisar)' }], f.estado, 'Todos') + '</select></label>' +
       '<label class="campo" style="flex:2 1 200px">Buscar<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Código, línea, modelo, color…"></label><div style="flex:0 0 auto"><button class="btn">Filtrar</button></div></form></div><div id="invRes"></div>';
-    return api('stock', f).then(function (r) {
+    return cargar('stock', f, function (r) {
       var ubs = f.ubicacion_id ? r.ubicaciones.filter(function (u) { return u.id === f.ubicacion_id; }) : r.ubicaciones;
       var h = '<div class="grid g4" style="margin-bottom:14px">' + kpi('Unidades en stock', r.resumen.unidades) + (r.resumen.valorCosto !== undefined ? kpi('Valor al costo', dinero(r.resumen.valorCosto)) : '') +
         kpi('Valor a precio de venta', dinero(r.resumen.valorPvp)) + kpi('Productos en negativo', r.resumen.negativos, 'vendidos sin compra/traslado', r.resumen.negativos ? 'bad' : '') + '</div>';
@@ -1090,7 +1205,7 @@
       '<label class="campo" style="flex:2 1 180px">Buscar<input class="input" name="q" value="' + esc(f.q) + '" placeholder="Modelo, color…"></label>' +
       '<label class="check" style="flex:0 0 auto"><input type="checkbox" name="mostrarCantidad"' + (f.mostrarCantidad ? ' checked' : '') + '> Ver cantidades</label>' +
       '<div style="flex:0 0 auto"><button class="btn">Filtrar</button></div></form></div><div id="dispRes"><div class="vacio">Cargando…</div></div>';
-    return api('disponible', f).then(function (r) {
+    return cargar('disponible', f, function (r) {
       S.dispActual = r;
       if (!r.items.length) { $('dispRes').innerHTML = '<div class="card vacio">No hay productos con stock con estos filtros.</div>'; return; }
       var h = '<div class="card"><div class="fila" style="align-items:center"><div style="flex:2 1 220px"><b>' + r.items.length + ' productos</b> · ' + r.unidades + ' unidades · ' + esc(r.ubicacion) +
@@ -1150,7 +1265,7 @@
   VISTAS.conciliacion = function (c) {
     var f = S.filtroConc || { solo: 'PROBLEMAS', q: '' };
     S.filtroConc = f;
-    return api('conciliacion', f).then(function (r) {
+    return cargar('conciliacion', f, function (r) {
       var s = r.resumen;
       var h = '<div class="aviso info">Compara, producto por producto, lo comprado (facturas) contra lo vendido. Si se vendió más de lo comprado, falta registrar una factura de compra (o un stock inicial con un conteo físico).</div>' +
         '<div class="grid g4" style="margin-bottom:14px">' + kpi('Unidades compradas', s.comprado) + kpi('Unidades vendidas', s.vendido) + kpi('Ajustes por conteo', (s.ajustes > 0 ? '+' : '') + s.ajustes) +
@@ -1175,7 +1290,7 @@
     var f = S.filtroCom || { desde: '', hasta: '', vendedor_id: esAdmin() ? '' : S.usuario.vendedor_id };
     if (!esAdmin()) f.vendedor_id = S.usuario.vendedor_id;
     S.filtroCom = f;
-    return api('comisiones', f).then(function (r) {
+    return cargar('comisiones', f, function (r) {
       var h = '<div class="card"><form data-submit="filtrarCom" class="fila"><label class="campo">Desde<input class="input" type="date" name="desde" value="' + esc(f.desde) + '"></label><label class="campo">Hasta<input class="input" type="date" name="hasta" value="' + esc(f.hasta) + '"></label>' +
         (esAdmin() ? '<label class="campo">Vendedor<select class="input" name="vendedor_id">' + optVendedores(f.vendedor_id, 'Todos') + '</select></label>' : '') + '<div style="flex:0 0 auto"><button class="btn">Ver</button></div></form></div>';
       h += '<div class="card"><h2>Resumen por vendedor</h2><p class="muted peq" style="margin-top:-6px">«Lista para pagar» = comisión de ventas ya cobradas completas. «Esperando cobro» = ventas con saldo.</p>' + tablaSimple(['Vendedor', 'Ventas', 'Vendido', 'Generada', 'Lista para pagar', 'Esperando cobro', 'Pagada'], r.resumen.map(function (x) {
@@ -1375,13 +1490,17 @@
         '<label class="campo">Modelo de Gemini<input class="input" name="MODELO_GEMINI" value="' + esc(cf.MODELO_GEMINI) + '"></label>' +
         '<div class="peq muted" style="grid-column:1/-1">La clave se guarda solo en el servidor de Apps Script; no se muestra ni se envía al navegador.' + (cf.geminiConfigurado ? ' <a href="#" data-a="quitarGemini">Quitar clave</a>' : '') + '</div>' +
         '<div class="acciones" style="grid-column:1/-1"><button class="btn prim">Guardar</button></div></form></div>' +
-        '<div class="card"><h2>Base de datos</h2><p class="peq">Todos los registros viven en esta hoja de Google. Puedes abrirla para consultarla o exportarla, pero <b>no la edites a mano</b>: usa la app para que el stock y los saldos se mantengan correctos.</p><a class="btn" target="_blank" rel="noopener" href="' + esc(cf.baseDeDatosUrl) + '">Abrir hoja de base de datos</a></div>';
+        '<div class="card"><h2>Base de datos</h2><p class="peq">Todos los registros viven en esta hoja de Google. Puedes abrirla para consultarla o exportarla, pero <b>no la edites a mano</b>: usa la app para que el stock y los saldos se mantengan correctos.</p><div class="acciones" style="justify-content:flex-start"><a class="btn" target="_blank" rel="noopener" href="' + esc(cf.baseDeDatosUrl) + '">Abrir hoja de base de datos</a>' +
+        '<button class="btn" data-a="recargarDatos">Recargar datos</button></div><p class="muted peq">Usa «Recargar datos» solo si alguien editó la hoja a mano: la app guarda una copia rápida de los datos para abrir más rápido.</p></div>';
     });
   };
   A.guardarConfig = function (form) {
     var d = datosForm(form);
     if (!d.GEMINI_API_KEY) delete d.GEMINI_API_KEY;
     conBoton(form.querySelector('button'), api('guardarConfig', d)).then(function () { toast('Configuración guardada', 'ok'); return refrescarInicial(); }).then(recargarVista).catch(function (e) { mostrarError(e, $('cfgError')); });
+  };
+  A.recargarDatos = function (el) {
+    conBoton(el, api('recargarDatos', {})).then(function () { CACHE = {}; toast('Datos recargados desde la hoja', 'ok'); return refrescarInicial(); }).catch(function (e) { mostrarError(e); });
   };
   A.quitarGemini = function () {
     confirmar('Quitar clave de Gemini', 'La lectura automática de facturas dejará de funcionar.', { ok: 'Quitar', peligro: true }).then(function (si) {
@@ -1466,7 +1585,7 @@
   function arrancar() {
     S.token = leerToken();
     if (S.token) {
-      return api('yo').then(function (u) { S.usuario = u; return entrar(); }).catch(function (e) {
+      return refrescarInicial(true).then(function () { S.ini.precargado = true; return entrar(); }).catch(function (e) {
         if (e.message === 'DEBE_CAMBIAR_CLAVE') return;
         if (e.message !== 'SESION_VENCIDA') { cerrarSesionLocal(); }
         return verificarInstalacion();

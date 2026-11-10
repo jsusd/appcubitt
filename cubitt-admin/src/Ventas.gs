@@ -112,7 +112,7 @@ var Ventas = {
       });
 
       var venta = {
-        id: ventaId, fecha: v.fecha, cliente: normNombre(v.cliente), telefono: texto(v.telefono),
+        id: ventaId, fecha: v.fecha, cliente: esClientePendiente(v.cliente) ? CLIENTE_POR_IDENTIFICAR : normNombre(v.cliente), telefono: texto(v.telefono),
         vendedor_id: vendedor.id, vendedor: vendedor.nombre, ubicacion_id: ubic.id, tipo: v.tipo,
         total: total, comision: r2(comisionTotal), costo: r2(costoTotal),
         fiscal: v.fiscal ? 'SI' : 'NO', factura_fiscal: v.fiscal ? texto(v.factura_fiscal) : '',
@@ -194,13 +194,17 @@ var Ventas = {
 
   /** Edita datos que no afectan inventario ni dinero ya cobrado. */
   editar: function (u, d) {
-    exigirAdmin(u);
+    if (!esAdmin(u)) {
+      // Un vendedor solo puede corregir los datos del cliente y las notas de sus propias ventas
+      d = { id: d.id, cliente: d.cliente, telefono: d.telefono, notas: d.notas };
+      Object.keys(d).forEach(function (k) { if (d[k] === undefined) delete d[k]; });
+    }
     return conBloqueo(function () {
       var v = Db.porId('Ventas', d.id);
-      if (!v) throw new Error('Venta no encontrada.');
+      if (!v || !_puedeVerVenta(u, v)) throw new Error('Venta no encontrada.');
       if (v.estado === ESTADO.ANULADA) throw new Error('No se puede editar una venta anulada.');
       var cambios = {};
-      if (d.cliente !== undefined) { if (!texto(d.cliente)) throw new Error('El cliente es obligatorio.'); cambios.cliente = normNombre(d.cliente); }
+      if (d.cliente !== undefined) cambios.cliente = esClientePendiente(d.cliente) ? CLIENTE_POR_IDENTIFICAR : normNombre(d.cliente);
       if (d.telefono !== undefined) cambios.telefono = texto(d.telefono);
       if (d.notas !== undefined) cambios.notas = texto(d.notas);
       if (d.fiscal !== undefined) {
@@ -265,9 +269,9 @@ var Ventas = {
   clientes: function (u) {
     var vistos = {};
     _ventasConEstado(u).forEach(function (v) {
-      var k = v.cliente;
-      if (!k) return;
-      if (!vistos[k]) vistos[k] = { cliente: k, telefono: '', ultima: '' };
+      if (esClientePendiente(v.cliente)) return;
+      var k = claveCliente(v.cliente);
+      if (!vistos[k]) vistos[k] = { cliente: v.cliente, telefono: '', ultima: '' };
       if (v.telefono) vistos[k].telefono = v.telefono;
       if (v.fecha > vistos[k].ultima) vistos[k].ultima = v.fecha;
     });
@@ -359,7 +363,9 @@ var Cobranza = {
     _ventasConEstado(u).forEach(function (v) {
       if (v.estado === ESTADO.ANULADA || v.saldo <= 0.005) return;
       if (f.vendedor_id && v.vendedor_id !== f.vendedor_id) return;
-      var c = porCliente[v.cliente] = porCliente[v.cliente] || { cliente: v.cliente, telefono: '', saldo: 0, ventas: [], masAntigua: v.fecha, vendedores: {} };
+      var pendiente = esClientePendiente(v.cliente);
+      var k = pendiente ? '__' + v.id : claveCliente(v.cliente);
+      var c = porCliente[k] = porCliente[k] || { cliente: pendiente ? 'Cliente por identificar' : v.cliente, porIdentificar: pendiente, telefono: '', saldo: 0, ventas: [], masAntigua: v.fecha, vendedores: {} };
       c.saldo = r2(c.saldo + v.saldo);
       if (v.telefono) c.telefono = v.telefono;
       if (v.fecha < c.masAntigua) c.masAntigua = v.fecha;

@@ -37,6 +37,65 @@ var FECHAS = { fecha: 1 };
 
 var _memo = {};
 var _ssMemo = null;
+var _propsMemo = null;
+
+/*
+ * Caché entre solicitudes (para que la app sea rápida): cada tabla leída se guarda en CacheService
+ * con la "versión" de esa tabla. Toda escritura (insertar/actualizar/borrar) cambia la versión, así
+ * que nunca se sirven datos viejos. Si alguien edita la hoja a mano, usar Ajustes ▸ Recargar datos.
+ */
+var CACHE_TROZO = 45000;      // caracteres por entrada (CacheService admite ~100 KB por clave)
+var CACHE_SEGUNDOS = 21600;   // 6 horas (máximo de CacheService)
+
+function _props() {
+  if (!_propsMemo) _propsMemo = PropertiesService.getScriptProperties().getProperties();
+  return _propsMemo;
+}
+
+function _versionTabla(tabla) {
+  return _props()['VER_' + tabla] || '0';
+}
+
+function _cambiarVersion(tabla) {
+  var v = String(Date.now()) + Math.floor(Math.random() * 1000);
+  PropertiesService.getScriptProperties().setProperty('VER_' + tabla, v);
+  if (_propsMemo) _propsMemo['VER_' + tabla] = v;
+}
+
+function _leerCache(tabla) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var clave = 'T2_' + tabla + '_' + _versionTabla(tabla);
+    var n = cache.get(clave);
+    if (n === null || n === undefined) return null;
+    n = Number(n);
+    var claves = [];
+    for (var i = 0; i < n; i++) claves.push(clave + '_' + i);
+    var partes = n ? cache.getAll(claves) : {};
+    var txt = '';
+    for (var j = 0; j < n; j++) {
+      if (partes[claves[j]] === undefined || partes[claves[j]] === null) return null;
+      txt += partes[claves[j]];
+    }
+    return n ? JSON.parse(txt) : [];
+  } catch (e) {
+    return null;
+  }
+}
+
+function _guardarCache(tabla, datos) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var clave = 'T2_' + tabla + '_' + _versionTabla(tabla);
+    var txt = JSON.stringify(datos);
+    var valores = {};
+    var n = 0;
+    for (var i = 0; i < txt.length; i += CACHE_TROZO) valores[clave + '_' + (n++)] = txt.slice(i, i + CACHE_TROZO);
+    if (n > 60) return; // tabla demasiado grande para la caché: se lee de la hoja
+    if (n) cache.putAll(valores, CACHE_SEGUNDOS);
+    cache.put(clave, String(n), CACHE_SEGUNDOS);
+  } catch (e) { /* la caché es opcional */ }
+}
 
 var Db = {
   /** Hoja de cálculo que funciona como base de datos (se crea en la instalación). */
@@ -106,6 +165,8 @@ var Db = {
   /** Devuelve todos los registros de una tabla como objetos (memoizado por solicitud). */
   leer: function (tabla) {
     if (_memo[tabla]) return _memo[tabla];
+    var enCache = _leerCache(tabla);
+    if (enCache) { _memo[tabla] = enCache; return enCache; }
     var sh = Db._hoja(tabla);
     var enc = Db._encabezados(sh);
     var last = sh.getLastRow();
@@ -126,6 +187,7 @@ var Db = {
       out.push(o);
     }
     _memo[tabla] = out;
+    _guardarCache(tabla, out);
     return out;
   },
 
@@ -159,6 +221,7 @@ var Db = {
       sh.getRange(inicio + k, 1, parte.length, enc.length).setValues(parte);
     }
     delete _memo[tabla];
+    _cambiarVersion(tabla);
   },
 
   actualizar: function (tabla, id, cambios, campo) {
@@ -170,7 +233,13 @@ var Db = {
     enc.forEach(function (c) { nuevo[c] = reg[c]; });
     Object.keys(cambios).forEach(function (c) { nuevo[c] = cambios[c]; });
     sh.getRange(reg._fila, 1, 1, enc.length).setValues([Db._fila(enc, nuevo)]);
-    delete _memo[tabla];
+    // Actualizar también la copia en memoria (evita releer la hoja tras cada cambio)
+    if (_memo[tabla]) {
+      var copia = { _fila: reg._fila };
+      enc.forEach(function (c) { if (c) copia[c] = NUMERICOS[c] ? (nuevo[c] === '' || nuevo[c] === null || nuevo[c] === undefined ? '' : num(nuevo[c])) : FECHAS[c] ? isoFecha(nuevo[c]) : (nuevo[c] === undefined || nuevo[c] === null ? '' : (typeof nuevo[c] === 'boolean' ? (nuevo[c] ? 'SI' : 'NO') : String(nuevo[c]))); });
+      _memo[tabla] = _memo[tabla].map(function (o) { return o._fila === reg._fila ? copia : o; });
+    }
+    _cambiarVersion(tabla); // la próxima solicitud relee la hoja una vez y vuelve a guardar la caché
     return nuevo;
   },
 
@@ -188,6 +257,7 @@ var Db = {
       sh.getRange(2, 1, quedan.length, enc.length).setValues(quedan.map(function (o) { return Db._fila(enc, o); }));
     }
     delete _memo[tabla];
+    _cambiarVersion(tabla);
     return lista.length - quedan.length;
   },
 
@@ -214,7 +284,13 @@ var Db = {
     else Db.insertar('Config', [{ clave: clave, valor: valor }]);
   },
 
-  limpiarMemo: function () { _memo = {}; }
+  limpiarMemo: function () { _memo = {}; _propsMemo = null; },
+
+  /** Olvida la caché de todas las tablas (por si alguien editó la hoja a mano). */
+  olvidarCache: function () {
+    Object.keys(ESQUEMA).forEach(_cambiarVersion);
+    _memo = {};
+  }
 };
 
 /** Ejecuta fn con el bloqueo global de escritura. */

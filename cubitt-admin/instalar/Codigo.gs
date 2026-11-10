@@ -228,6 +228,24 @@ function conciliar(productos, movimientos) {
   return { filas: filas, resumen: resumen };
 }
 
+/**
+ * Clientes "por identificar": en la hoja se escribía PENDIENTE (o se dejaba vacío) cuando aún no se tenía
+ * el nombre. No son una persona: cada venta así se muestra aparte para asignarle su cliente real.
+ */
+var CLIENTES_POR_IDENTIFICAR = { '': 1, 'PENDIENTE': 1, 'SIN NOMBRE': 1, 'POR IDENTIFICAR': 1, 'SIN CLIENTE': 1, 'N/A': 1, 'NA': 1, '-': 1, '?': 1, 'NO SE': 1, 'DESCONOCIDO': 1 };
+var CLIENTE_POR_IDENTIFICAR = 'POR IDENTIFICAR';
+
+/** Clave para agrupar un cliente aunque lo hayan escrito con o sin acentos / espacios extra. */
+function claveCliente(nombre) {
+  var t = normNombre(nombre);
+  try { t = t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+  return t;
+}
+
+function esClientePendiente(nombre) {
+  return !!CLIENTES_POR_IDENTIFICAR[claveCliente(nombre)];
+}
+
 /** Saca la URL de una celda de imagen: =IMAGE("https://...") o una URL suelta. */
 function extraerUrlImagen(v) {
   var t = texto(v);
@@ -261,7 +279,6 @@ function ajustesInventarioReal(stockPorClave, reales, ubicacionDestino, ubicacio
 function validarVentaNueva(v) {
   var errores = [];
   if (!isoFecha(v.fecha)) errores.push('La fecha es obligatoria.');
-  if (!texto(v.cliente)) errores.push('El cliente es obligatorio.');
   if (!texto(v.vendedor_id)) errores.push('Selecciona el vendedor.');
   if (!texto(v.ubicacion_id)) errores.push('Selecciona la ubicación de donde sale la mercancía.');
   if (v.tipo !== TIPO_VENTA.CONTADO && v.tipo !== TIPO_VENTA.CREDITO) errores.push('Indica si es contado o crédito.');
@@ -315,7 +332,8 @@ if (typeof module !== 'undefined') {
     interpretarComentarioPago: interpretarComentarioPago, calcularEstadoVenta: calcularEstadoVenta,
     comisionSugerida: comisionSugerida, calcularStock: calcularStock, conciliar: conciliar,
     validarVentaNueva: validarVentaNueva, resumirComisiones: resumirComisiones, MOV: MOV,
-    extraerUrlImagen: extraerUrlImagen, ajustesInventarioReal: ajustesInventarioReal
+    extraerUrlImagen: extraerUrlImagen, ajustesInventarioReal: ajustesInventarioReal,
+    claveCliente: claveCliente, esClientePendiente: esClientePendiente
   };
 }
 
@@ -360,6 +378,65 @@ var FECHAS = { fecha: 1 };
 
 var _memo = {};
 var _ssMemo = null;
+var _propsMemo = null;
+
+/*
+ * Caché entre solicitudes (para que la app sea rápida): cada tabla leída se guarda en CacheService
+ * con la "versión" de esa tabla. Toda escritura (insertar/actualizar/borrar) cambia la versión, así
+ * que nunca se sirven datos viejos. Si alguien edita la hoja a mano, usar Ajustes ▸ Recargar datos.
+ */
+var CACHE_TROZO = 45000;      // caracteres por entrada (CacheService admite ~100 KB por clave)
+var CACHE_SEGUNDOS = 21600;   // 6 horas (máximo de CacheService)
+
+function _props() {
+  if (!_propsMemo) _propsMemo = PropertiesService.getScriptProperties().getProperties();
+  return _propsMemo;
+}
+
+function _versionTabla(tabla) {
+  return _props()['VER_' + tabla] || '0';
+}
+
+function _cambiarVersion(tabla) {
+  var v = String(Date.now()) + Math.floor(Math.random() * 1000);
+  PropertiesService.getScriptProperties().setProperty('VER_' + tabla, v);
+  if (_propsMemo) _propsMemo['VER_' + tabla] = v;
+}
+
+function _leerCache(tabla) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var clave = 'T2_' + tabla + '_' + _versionTabla(tabla);
+    var n = cache.get(clave);
+    if (n === null || n === undefined) return null;
+    n = Number(n);
+    var claves = [];
+    for (var i = 0; i < n; i++) claves.push(clave + '_' + i);
+    var partes = n ? cache.getAll(claves) : {};
+    var txt = '';
+    for (var j = 0; j < n; j++) {
+      if (partes[claves[j]] === undefined || partes[claves[j]] === null) return null;
+      txt += partes[claves[j]];
+    }
+    return n ? JSON.parse(txt) : [];
+  } catch (e) {
+    return null;
+  }
+}
+
+function _guardarCache(tabla, datos) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var clave = 'T2_' + tabla + '_' + _versionTabla(tabla);
+    var txt = JSON.stringify(datos);
+    var valores = {};
+    var n = 0;
+    for (var i = 0; i < txt.length; i += CACHE_TROZO) valores[clave + '_' + (n++)] = txt.slice(i, i + CACHE_TROZO);
+    if (n > 60) return; // tabla demasiado grande para la caché: se lee de la hoja
+    if (n) cache.putAll(valores, CACHE_SEGUNDOS);
+    cache.put(clave, String(n), CACHE_SEGUNDOS);
+  } catch (e) { /* la caché es opcional */ }
+}
 
 var Db = {
   /** Hoja de cálculo que funciona como base de datos (se crea en la instalación). */
@@ -429,6 +506,8 @@ var Db = {
   /** Devuelve todos los registros de una tabla como objetos (memoizado por solicitud). */
   leer: function (tabla) {
     if (_memo[tabla]) return _memo[tabla];
+    var enCache = _leerCache(tabla);
+    if (enCache) { _memo[tabla] = enCache; return enCache; }
     var sh = Db._hoja(tabla);
     var enc = Db._encabezados(sh);
     var last = sh.getLastRow();
@@ -449,6 +528,7 @@ var Db = {
       out.push(o);
     }
     _memo[tabla] = out;
+    _guardarCache(tabla, out);
     return out;
   },
 
@@ -482,6 +562,7 @@ var Db = {
       sh.getRange(inicio + k, 1, parte.length, enc.length).setValues(parte);
     }
     delete _memo[tabla];
+    _cambiarVersion(tabla);
   },
 
   actualizar: function (tabla, id, cambios, campo) {
@@ -493,7 +574,13 @@ var Db = {
     enc.forEach(function (c) { nuevo[c] = reg[c]; });
     Object.keys(cambios).forEach(function (c) { nuevo[c] = cambios[c]; });
     sh.getRange(reg._fila, 1, 1, enc.length).setValues([Db._fila(enc, nuevo)]);
-    delete _memo[tabla];
+    // Actualizar también la copia en memoria (evita releer la hoja tras cada cambio)
+    if (_memo[tabla]) {
+      var copia = { _fila: reg._fila };
+      enc.forEach(function (c) { if (c) copia[c] = NUMERICOS[c] ? (nuevo[c] === '' || nuevo[c] === null || nuevo[c] === undefined ? '' : num(nuevo[c])) : FECHAS[c] ? isoFecha(nuevo[c]) : (nuevo[c] === undefined || nuevo[c] === null ? '' : (typeof nuevo[c] === 'boolean' ? (nuevo[c] ? 'SI' : 'NO') : String(nuevo[c]))); });
+      _memo[tabla] = _memo[tabla].map(function (o) { return o._fila === reg._fila ? copia : o; });
+    }
+    _cambiarVersion(tabla); // la próxima solicitud relee la hoja una vez y vuelve a guardar la caché
     return nuevo;
   },
 
@@ -511,6 +598,7 @@ var Db = {
       sh.getRange(2, 1, quedan.length, enc.length).setValues(quedan.map(function (o) { return Db._fila(enc, o); }));
     }
     delete _memo[tabla];
+    _cambiarVersion(tabla);
     return lista.length - quedan.length;
   },
 
@@ -537,7 +625,13 @@ var Db = {
     else Db.insertar('Config', [{ clave: clave, valor: valor }]);
   },
 
-  limpiarMemo: function () { _memo = {}; }
+  limpiarMemo: function () { _memo = {}; _propsMemo = null; },
+
+  /** Olvida la caché de todas las tablas (por si alguien editó la hoja a mano). */
+  olvidarCache: function () {
+    Object.keys(ESQUEMA).forEach(_cambiarVersion);
+    _memo = {};
+  }
 };
 
 /** Ejecuta fn con el bloqueo global de escritura. */
@@ -818,7 +912,7 @@ var Ventas = {
       });
 
       var venta = {
-        id: ventaId, fecha: v.fecha, cliente: normNombre(v.cliente), telefono: texto(v.telefono),
+        id: ventaId, fecha: v.fecha, cliente: esClientePendiente(v.cliente) ? CLIENTE_POR_IDENTIFICAR : normNombre(v.cliente), telefono: texto(v.telefono),
         vendedor_id: vendedor.id, vendedor: vendedor.nombre, ubicacion_id: ubic.id, tipo: v.tipo,
         total: total, comision: r2(comisionTotal), costo: r2(costoTotal),
         fiscal: v.fiscal ? 'SI' : 'NO', factura_fiscal: v.fiscal ? texto(v.factura_fiscal) : '',
@@ -900,13 +994,17 @@ var Ventas = {
 
   /** Edita datos que no afectan inventario ni dinero ya cobrado. */
   editar: function (u, d) {
-    exigirAdmin(u);
+    if (!esAdmin(u)) {
+      // Un vendedor solo puede corregir los datos del cliente y las notas de sus propias ventas
+      d = { id: d.id, cliente: d.cliente, telefono: d.telefono, notas: d.notas };
+      Object.keys(d).forEach(function (k) { if (d[k] === undefined) delete d[k]; });
+    }
     return conBloqueo(function () {
       var v = Db.porId('Ventas', d.id);
-      if (!v) throw new Error('Venta no encontrada.');
+      if (!v || !_puedeVerVenta(u, v)) throw new Error('Venta no encontrada.');
       if (v.estado === ESTADO.ANULADA) throw new Error('No se puede editar una venta anulada.');
       var cambios = {};
-      if (d.cliente !== undefined) { if (!texto(d.cliente)) throw new Error('El cliente es obligatorio.'); cambios.cliente = normNombre(d.cliente); }
+      if (d.cliente !== undefined) cambios.cliente = esClientePendiente(d.cliente) ? CLIENTE_POR_IDENTIFICAR : normNombre(d.cliente);
       if (d.telefono !== undefined) cambios.telefono = texto(d.telefono);
       if (d.notas !== undefined) cambios.notas = texto(d.notas);
       if (d.fiscal !== undefined) {
@@ -971,9 +1069,9 @@ var Ventas = {
   clientes: function (u) {
     var vistos = {};
     _ventasConEstado(u).forEach(function (v) {
-      var k = v.cliente;
-      if (!k) return;
-      if (!vistos[k]) vistos[k] = { cliente: k, telefono: '', ultima: '' };
+      if (esClientePendiente(v.cliente)) return;
+      var k = claveCliente(v.cliente);
+      if (!vistos[k]) vistos[k] = { cliente: v.cliente, telefono: '', ultima: '' };
       if (v.telefono) vistos[k].telefono = v.telefono;
       if (v.fecha > vistos[k].ultima) vistos[k].ultima = v.fecha;
     });
@@ -1065,7 +1163,9 @@ var Cobranza = {
     _ventasConEstado(u).forEach(function (v) {
       if (v.estado === ESTADO.ANULADA || v.saldo <= 0.005) return;
       if (f.vendedor_id && v.vendedor_id !== f.vendedor_id) return;
-      var c = porCliente[v.cliente] = porCliente[v.cliente] || { cliente: v.cliente, telefono: '', saldo: 0, ventas: [], masAntigua: v.fecha, vendedores: {} };
+      var pendiente = esClientePendiente(v.cliente);
+      var k = pendiente ? '__' + v.id : claveCliente(v.cliente);
+      var c = porCliente[k] = porCliente[k] || { cliente: pendiente ? 'Cliente por identificar' : v.cliente, porIdentificar: pendiente, telefono: '', saldo: 0, ventas: [], masAntigua: v.fecha, vendedores: {} };
       c.saldo = r2(c.saldo + v.saldo);
       if (v.telefono) c.telefono = v.telefono;
       if (v.fecha < c.masAntigua) c.masAntigua = v.fecha;
@@ -1085,6 +1185,106 @@ var Cobranza = {
       tramos[t] = r2(tramos[t] + v.saldo);
     }); });
     return { clientes: lista, total: r2(lista.reduce(function (a, c) { return a + c.saldo; }, 0)), tramos: tramos };
+  }
+};
+
+
+// ==================== Clientes.gs ====================
+/**
+ * Clientes.gs — Historial completo por cliente (todas las ventas, sin filtro de fechas).
+ * Los clientes se agrupan sin importar acentos o espacios ("María" = "MARIA").
+ * Las ventas con cliente "PENDIENTE"/vacío se listan aparte para asignarles el cliente real.
+ */
+
+var Clientes = {
+  resumen: function (u, f) {
+    f = f || {};
+    var q = claveCliente(f.q);
+    var itemsPor = _agrupar(Db.leer('VentaItems'), 'venta_id');
+    var porClave = {};
+    var porIdentificar = [];
+    _ventasConEstado(u).forEach(function (v) {
+      if (v.estado === ESTADO.ANULADA) return;
+      var its = itemsPor[v.id] || [];
+      if (esClientePendiente(v.cliente)) {
+        porIdentificar.push({ id: v.id, fecha: v.fecha, cliente: v.cliente, vendedor: v.vendedor, total: v.total, saldo: v.saldo, estadoPago: v.estadoPago,
+          productos: its.map(function (i) { return i.descripcion || i.sku; }).join(', '), notas: v.notas });
+        return;
+      }
+      var k = claveCliente(v.cliente);
+      var c = porClave[k] = porClave[k] || { cliente: v.cliente, clave: k, telefono: '', ventas: 0, unidades: 0, total: 0, pagado: 0, saldo: 0, primera: v.fecha, ultima: v.fecha, vendedores: {} };
+      c.ventas++;
+      c.unidades += its.reduce(function (a, i) { return a + num(i.cantidad); }, 0);
+      c.total = r2(c.total + v.total);
+      c.pagado = r2(c.pagado + v.pagado);
+      c.saldo = r2(c.saldo + Math.max(0, v.saldo));
+      if (v.telefono) c.telefono = v.telefono;
+      if (v.fecha < c.primera) c.primera = v.fecha;
+      if (v.fecha > c.ultima) c.ultima = v.fecha;
+      c.vendedores[v.vendedor] = 1;
+    });
+    var lista = Object.keys(porClave).map(function (k) { var c = porClave[k]; c.vendedores = Object.keys(c.vendedores).join(', '); return c; })
+      .filter(function (c) { return !q || c.clave.indexOf(q) !== -1 || String(c.telefono).indexOf(f.q || '') !== -1; });
+    var orden = f.orden || 'total';
+    lista.sort(function (a, b) {
+      if (orden === 'nombre') return a.cliente.localeCompare(b.cliente);
+      if (orden === 'reciente') return a.ultima < b.ultima ? 1 : -1;
+      if (orden === 'saldo') return b.saldo - a.saldo;
+      return b.total - a.total;
+    });
+    porIdentificar.sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+    return {
+      clientes: lista,
+      totales: {
+        clientes: lista.length,
+        total: r2(lista.reduce(function (a, c) { return a + c.total; }, 0)),
+        saldo: r2(lista.reduce(function (a, c) { return a + c.saldo; }, 0))
+      },
+      porIdentificar: porIdentificar,
+      porIdentificarSaldo: r2(porIdentificar.reduce(function (a, v) { return a + Math.max(0, v.saldo); }, 0))
+    };
+  },
+
+  /** Todas las ventas de un cliente (de siempre), con sus productos y pagos. */
+  detalle: function (u, d) {
+    var k = claveCliente(d.cliente);
+    if (!k || esClientePendiente(d.cliente)) throw new Error('Indica el cliente.');
+    var itemsPor = _agrupar(Db.leer('VentaItems'), 'venta_id');
+    var pagosPor = _agrupar(Db.leer('Pagos'), 'venta_id');
+    var productos = _productosPorSku();
+    var ventas = _ventasConEstado(u).filter(function (v) { return claveCliente(v.cliente) === k; })
+      .sort(function (a, b) { return a.fecha === b.fecha ? (a.id < b.id ? 1 : -1) : (a.fecha < b.fecha ? 1 : -1); });
+    if (!ventas.length) throw new Error('No se encontraron ventas de ese cliente.');
+    var porLinea = {};
+    var nombre = ventas[0].cliente, telefono = '';
+    var lista = ventas.map(function (v) {
+      var its = itemsPor[v.id] || [];
+      if (v.telefono && !telefono) telefono = v.telefono;
+      if (v.estado !== ESTADO.ANULADA) its.forEach(function (i) {
+        var p = productos[normSku(i.sku)];
+        var l = (p && p.linea) || i.descripcion || i.sku;
+        porLinea[l] = (porLinea[l] || 0) + num(i.cantidad);
+      });
+      return {
+        id: v.id, fecha: v.fecha, vendedor: v.vendedor, tipo: v.tipo, fiscal: v.fiscal, total: v.total, pagado: v.pagado, saldo: v.saldo,
+        estado: v.estado, estadoPago: v.estadoPago,
+        productos: its.map(function (i) { return (i.cantidad > 1 ? i.cantidad + '× ' : '') + (i.descripcion || i.sku); }).join(', '),
+        imagen: (function () { var p = its[0] && productos[normSku(its[0].sku)]; return p ? p.imagen : ''; })(),
+        pagos: (pagosPor[v.id] || []).filter(function (p) { return p.estado !== ESTADO.ANULADA; }).length
+      };
+    });
+    var activas = lista.filter(function (v) { return v.estado !== ESTADO.ANULADA; });
+    return {
+      cliente: nombre, telefono: telefono,
+      totales: {
+        ventas: activas.length, total: r2(activas.reduce(function (a, v) { return a + v.total; }, 0)),
+        pagado: r2(activas.reduce(function (a, v) { return a + v.pagado; }, 0)),
+        saldo: r2(activas.reduce(function (a, v) { return a + Math.max(0, v.saldo); }, 0)),
+        primera: activas.length ? activas[activas.length - 1].fecha : '', ultima: activas.length ? activas[0].fecha : ''
+      },
+      porLinea: Object.keys(porLinea).map(function (l) { return { linea: l, unidades: porLinea[l] }; }).sort(function (a, b) { return b.unidades - a.unidades; }),
+      ventas: lista
+    };
   }
 };
 
@@ -1584,6 +1784,7 @@ var Reportes = {
         skusNegativosPorUbicacion: conc.resumen.skusNegativosPorUbicacion,
         pagosFechaEstimada: Db.leer('Pagos').filter(function (p) { return p.fecha_estimada === 'SI' && p.estado !== ESTADO.ANULADA; }).length,
         comprasSinArchivo: Db.leer('Compras').filter(function (c) { return c.estado !== ESTADO.ANULADA && !texto(c.archivo_url); }).length,
+        ventasPorIdentificar: ventas.filter(function (v) { return esClientePendiente(v.cliente); }).length,
         comisionesPorLiquidar: r2(ventas.filter(function (v) { return !texto(v.comision_pagada_en) && v.saldo <= 0.005; }).reduce(function (a, v) { return a + num(v.comision); }, 0))
       };
     }
@@ -1703,7 +1904,7 @@ function _carpetaConfig(clave, nombre) {
 
 var Catalogo = {
   /** Todo lo que la app necesita al abrir. */
-  inicial: function (u) {
+  inicial: function (u, d) {
     var admin = esAdmin(u);
     var stock = _stockActual();
     var ubic = Db.leer('Ubicaciones').filter(function (x) { return x.activo !== 'NO'; }).map(_limpio);
@@ -1727,7 +1928,9 @@ var Catalogo = {
       ubicaciones: ubic,
       metodosPago: (cfg.METODOS_PAGO || 'EFECTIVO USD,ZELLE,BINANCE,PAGO MOVIL,TRANSFERENCIA BS,PUNTO DE VENTA,CASHEA').split(',').map(texto).filter(String),
       iaDisponible: admin && !!PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY'),
-      ubicacionPorDefecto: cfg.UBICACION_POR_DEFECTO || (ubic[0] && ubic[0].id) || ''
+      ubicacionPorDefecto: cfg.UBICACION_POR_DEFECTO || (ubic[0] && ubic[0].id) || '',
+      // La pantalla de inicio viene en el mismo viaje para abrir más rápido
+      inicio: d && d.inicio ? Reportes.inicio(u, d.inicio) : undefined
     };
   },
 
@@ -2710,6 +2913,9 @@ function acciones() {
     editarVenta: Ventas.editar,
     anularVenta: Ventas.anular,
     clientes: Ventas.clientes,
+    clientesResumen: Clientes.resumen,
+    clienteDetalle: Clientes.detalle,
+    recargarDatos: function (u) { exigirAdmin(u); Db.olvidarCache(); return true; },
     crearPago: Pagos.crear,
     anularPago: Pagos.anular,
     corregirFechaPago: Pagos.corregirFecha,

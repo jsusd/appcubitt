@@ -329,3 +329,62 @@ test('BDD: imágenes de =IMAGE(), inventario real (col. M) y catálogo de dispon
   assert.ok(hojaCat.formulas.some(f => f && /^=IMAGE\("https:\/\/cubitt\.com\.ve/.test(f[0])));
   assert.ok(JSON.stringify(hojaCat.datos).includes('130'));
 });
+
+test('clientes: historial completo, acentos agrupados y PENDIENTE como "por identificar"', () => {
+  const t = montar();
+  const { v1, v2 } = catalogoBase(t);
+  const vender = (cliente, vend, precio, fecha) => t.ok('crearVenta', { fecha: fecha || hoy(), cliente, vendedor_id: vend.id, ubicacion_id: 'UB-TRINITARIAS', tipo: 'CREDITO', items: [{ sku: 'CTHB24-7', cantidad: 1, precio_unit: precio }] });
+  vender('María Pérez', v1, 37, haceDias(200));
+  vender('MARIA PEREZ', v1, 37, haceDias(3));
+  const p1 = vender('PENDIENTE', v1, 20);
+  vender('', v2, 30);
+  const r = t.ok('clientesResumen', {});
+  assert.equal(r.clientes.length, 1);
+  assert.equal(r.clientes[0].ventas, 2); // todas, aunque una sea de hace 200 días
+  assert.equal(r.clientes[0].total, 74);
+  assert.equal(r.porIdentificar.length, 2);
+  assert.equal(r.porIdentificarSaldo, 50);
+  assert.equal(p1.cliente, 'POR IDENTIFICAR');
+  const d = t.ok('clienteDetalle', { cliente: 'maría pérez' });
+  assert.equal(d.ventas.length, 2);
+  assert.equal(d.totales.saldo, 74);
+  // En cobranza, cada venta por identificar va aparte (no es "una clienta que debe $50")
+  const cob = t.ok('cobranza', {});
+  const pend = cob.clientes.filter(c => c.porIdentificar);
+  assert.equal(pend.length, 2);
+  assert.ok(pend.every(c => c.ventas.length === 1));
+  assert.ok(!t.ok('clientes').some(c => /PENDIENTE|POR IDENTIFICAR/.test(c.cliente)));
+  assert.equal(t.ok('inicio', {}).alertas.ventasPorIdentificar, 2);
+  // La vendedora puede asignar el cliente real a su propia venta, pero no cambiar otros datos
+  t.ok('crearUsuario', { usuario: 'vendedora.a', nombre: 'A', rol: 'VENDEDOR', vendedor_id: v1.id, clave: 'temporal1' });
+  const tk = t.g.login('vendedora.a', 'temporal1').data.token;
+  t.ok('cambiarClave', { actual: 'temporal1', nueva: 'nueva-clave' }, tk);
+  const e = t.ok('editarVenta', { id: p1.id, cliente: 'Ana Gómez', telefono: '0414', comision: 99, fecha: haceDias(1) }, tk);
+  assert.equal(e.cliente, 'ANA GOMEZ'.replace('GOMEZ', 'GÓMEZ'));
+  assert.equal(e.comision, p1.comision);
+  assert.equal(e.fecha, p1.fecha);
+  assert.equal(t.ok('clientesResumen', {}).porIdentificar.length, 1);
+});
+
+test('caché del servidor: se usa entre solicitudes y nunca devuelve datos viejos tras guardar', () => {
+  const t = montar();
+  const { v1 } = catalogoBase(t);
+  t.ok('stock', {});
+  assert.ok(Object.keys(t.env.almacenCache).some(k => /^T2_Movimientos_/.test(k)), 'la tabla quedó en caché');
+  // Una edición manual de la hoja no se ve (se sirve la caché)...
+  const hoja = t.env.SpreadsheetApp.openById(t.env.props.DB_ID).getSheetByName('Productos');
+  const fila = hoja.datos.findIndex(f => f[0] === 'CTHB24-7');
+  hoja.datos[fila][6] = 99; // pvp
+  assert.equal(t.ok('inicial').productos.find(p => p.sku === 'CTHB24-7').pvp, 37);
+  // ...hasta "Recargar datos"
+  t.ok('recargarDatos', {});
+  assert.equal(t.ok('inicial').productos.find(p => p.sku === 'CTHB24-7').pvp, 99);
+  // Guardar desde la app invalida la caché al instante
+  t.ok('crearVenta', { fecha: hoy(), cliente: 'X', vendedor_id: v1.id, ubicacion_id: 'UB-TRINITARIAS', tipo: 'CONTADO', pago_inicial: 37, items: [{ sku: 'CTHB24-7', cantidad: 2, precio_unit: 18.5 }] });
+  assert.equal(t.ok('stock', {}).filas.find(f => f.sku === 'CTHB24-7').total, 3);
+  const v = t.ok('listarVentas', {}).ventas[0];
+  t.ok('editarVenta', { id: v.id, cliente: 'Cliente Nuevo' });
+  assert.equal(t.ok('listarVentas', {}).ventas[0].cliente, 'CLIENTE NUEVO');
+  // La pantalla de inicio viene junto con los datos iniciales (un solo viaje)
+  assert.equal(t.ok('inicial', { inicio: {} }).inicio.hoy.total, 37);
+});

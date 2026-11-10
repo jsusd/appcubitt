@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const src = path.join(__dirname, 'src');
 const out = path.join(__dirname, 'instalar');
-const ORDEN = ['Dominio', 'Datos', 'Auth', 'Ventas', 'Compras', 'Inventario', 'Reportes', 'Catalogo', 'Migracion', 'Codigo'];
+const ORDEN = ['Dominio', 'Datos', 'Auth', 'Ventas', 'Clientes', 'Compras', 'Inventario', 'Reportes', 'Catalogo', 'Migracion', 'Codigo'];
 
 function construir() {
   const extra = fs.readdirSync(src).filter(f => f.endsWith('.gs')).map(f => f.slice(0, -3)).filter(n => !ORDEN.includes(n));
