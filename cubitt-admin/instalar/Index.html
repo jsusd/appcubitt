@@ -586,6 +586,7 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
           return '<button data-a="ir" data-v="' + id + '"><span class="ico">' + x.ico + '</span>' + esc(x.t) + '</button>';
         }).join('') + '<button data-a="menuMas"><span class="ico">☰</span>Más</button></nav></div>';
       ir(S.vista && menuVisible().some(function (x) { return x.id === S.vista; }) ? S.vista : 'inicio');
+      setTimeout(avisarActualizacion, 4000);
     }).catch(function (e) { if (e.message !== 'SESION_VENCIDA' && e.message !== 'DEBE_CAMBIAR_CLAVE') pantallaLogin(e.message); });
   }
 
@@ -1550,7 +1551,7 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
   // ======================================================================
   var TABS_AJUSTES = [
     { id: 'productos', t: 'Productos' }, { id: 'lineas', t: 'Comisión por línea' }, { id: 'vendedores', t: 'Vendedores' }, { id: 'ubicaciones', t: 'Ubicaciones' },
-    { id: 'usuarios', t: 'Usuarios' }, { id: 'config', t: 'Configuración' }, { id: 'migracion', t: 'Migrar desde la hoja' }, { id: 'auditoria', t: 'Historial de cambios' }
+    { id: 'usuarios', t: 'Usuarios' }, { id: 'config', t: 'Configuración' }, { id: 'migracion', t: 'Migrar desde la hoja' }, { id: 'actualizaciones', t: 'Actualizaciones' }, { id: 'auditoria', t: 'Historial de cambios' }
   ];
   VISTAS.ajustes = function (c) {
     c.innerHTML = '<div class="segmento" style="flex-wrap:wrap;margin-bottom:14px;display:flex">' + TABS_AJUSTES.map(function (t) {
@@ -1685,6 +1686,7 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
         '<label class="campo" style="grid-column:1/-1">Métodos de pago (separados por coma)<input class="input" name="METODOS_PAGO" value="' + esc(cf.METODOS_PAGO) + '"></label>' +
         '<label class="campo">Clave de Google Gemini (lectura de facturas)<input class="input" type="password" name="GEMINI_API_KEY" autocomplete="off" placeholder="' + (cf.geminiConfigurado ? '•••• configurada (escribe para reemplazar)' : 'Pega tu clave de Google AI Studio') + '"></label>' +
         '<label class="campo">Modelo de Gemini<input class="input" name="MODELO_GEMINI" value="' + esc(cf.MODELO_GEMINI) + '"></label>' +
+        '<label class="campo">Rama de GitHub para actualizaciones<input class="input" name="RAMA_ACTUALIZACIONES" value="' + esc(cf.RAMA_ACTUALIZACIONES) + '"></label>' +
         '<div class="peq muted" style="grid-column:1/-1">La clave se guarda solo en el servidor de Apps Script; no se muestra ni se envía al navegador.' + (cf.geminiConfigurado ? ' <a href="#" data-a="quitarGemini">Quitar clave</a>' : '') + '</div>' +
         '<div class="acciones" style="grid-column:1/-1"><button class="btn prim">Guardar</button></div></form></div>' +
         '<div class="card"><h2>Base de datos</h2><p class="peq">Todos los registros viven en esta hoja de Google. Puedes abrirla para consultarla o exportarla, pero <b>no la edites a mano</b>: usa la app para que el stock y los saldos se mantengan correctos.</p><div class="acciones" style="justify-content:flex-start"><a class="btn" target="_blank" rel="noopener" href="' + esc(cf.baseDeDatosUrl) + '">Abrir hoja de base de datos</a>' +
@@ -1766,6 +1768,41 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: .88rem; }
     h += '<div class="card"><h2>Avisos (' + r.avisos.length + ')</h2>' + (r.errores.length ? '<div class="aviso bad">' + r.errores.map(esc).join('\n') + '</div>' : '') +
       (r.avisos.length ? '<div style="max-height:360px;overflow:auto" class="peq">' + r.avisos.map(function (a) { return '<div style="padding:4px 0;border-bottom:1px solid var(--border)">' + esc(a) + '</div>'; }).join('') + '</div>' : '<div class="muted">Sin avisos.</div>') + '</div>';
     $('migRes').innerHTML = h;
+  }
+
+  AJ.actualizaciones = function (c) {
+    c.innerHTML = '<div class="card vacio">Buscando la última versión…</div>';
+    return api('estadoActualizacion', {}).then(function (e) {
+      var h = '<div class="card"><h2>Actualizaciones de la app</h2>' +
+        '<div class="grid g2" style="margin-bottom:12px">' + kpi('Versión instalada', esc(e.actual)) + kpi('Última disponible', esc(e.disponible || '—'), e.hayNueva ? 'hay una versión nueva' : (e.error ? '' : 'estás al día'), e.hayNueva ? 'warn' : 'ok') + '</div>';
+      if (e.error) h += '<div class="aviso bad">' + esc(e.error) + '</div>';
+      if (e.notas && e.notas.length) h += '<div class="peq" style="margin-bottom:12px"><b>Novedades de ' + esc(e.disponible) + ':</b><ul style="margin:4px 0 0;padding-left:18px">' + e.notas.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul></div>';
+      h += '<div id="actRes"></div><div class="acciones" style="justify-content:flex-start"><button class="btn prim" data-a="actualizarApp"' + (e.hayNueva ? '' : ' data-forzar="1"') + '>' + (e.hayNueva ? 'Actualizar ahora' : 'Reinstalar la versión actual') + '</button></div>' +
+        '<p class="muted peq">La app descarga el código nuevo, lo instala y publica la versión en la misma dirección (URL). Tarda unos 20 segundos. Los datos no se tocan.</p></div>';
+      c.innerHTML = h;
+    }).catch(function (err) { mostrarError(err, c); });
+  };
+  A.actualizarApp = function (el) {
+    var forzar = !!el.getAttribute('data-forzar');
+    confirmar(forzar ? 'Reinstalar versión' : 'Actualizar la app', 'Se instalará el código publicado y se actualizará la app para todos los usuarios. Los datos no se modifican.', { ok: forzar ? 'Reinstalar' : 'Actualizar' }).then(function (si) {
+      if (!si) return;
+      $('actRes').innerHTML = '<div class="aviso info">Instalando… no cierres esta página.</div>';
+      return conBoton(el, api('actualizarApp', { forzar: forzar })).then(function (r) {
+        if (!r.actualizado) { $('actRes').innerHTML = '<div class="aviso ok">' + esc(r.mensaje) + '</div>'; return; }
+        $('actRes').innerHTML = '<div class="aviso ok">Listo: versión ' + esc(r.a) + ' instalada.</div>' +
+          '<div style="margin-bottom:12px"><a class="btn prim" target="_top" href="' + esc(r.url) + '">Recargar la app</a></div>';
+      });
+    }).catch(function (e) {
+      var msg = e.message.replace(/^(API_DESACTIVADA|SIN_PERMISO): /, '');
+      $('actRes').innerHTML = '<div class="aviso bad">' + esc(msg) + '</div>';
+    });
+  };
+  function avisarActualizacion() {
+    if (!esAdmin() || S.avisoActualizacion) return;
+    S.avisoActualizacion = true;
+    api('estadoActualizacion', {}).then(function (e) {
+      if (e.hayNueva) toast('Hay una versión nueva de la app (' + e.disponible + '). Instálala en Ajustes ▸ Actualizaciones.');
+    }).catch(function () {});
   }
 
   AJ.auditoria = function (c) {

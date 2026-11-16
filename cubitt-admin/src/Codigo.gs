@@ -36,6 +36,8 @@ function acciones() {
     clientesResumen: Clientes.resumen,
     clienteDetalle: Clientes.detalle,
     recargarDatos: function (u) { exigirAdmin(u); Db.olvidarCache(); return true; },
+    estadoActualizacion: Actualizador.estado,
+    actualizarApp: Actualizador.actualizar,
     crearPago: Pagos.crear,
     anularPago: Pagos.anular,
     corregirFechaPago: Pagos.corregirFecha,

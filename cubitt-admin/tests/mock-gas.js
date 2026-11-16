@@ -199,7 +199,7 @@ function crearEntorno(opciones = {}) {
       CacheService,
       SpreadsheetApp, PropertiesService, LockService, Utilities, DriveApp, UrlFetchApp,
       Session: { getScriptTimeZone: () => 'America/Caracas' },
-      ScriptApp: { getOAuthToken: () => 'token-de-prueba' },
+      ScriptApp: { getOAuthToken: () => 'token-de-prueba', getScriptId: () => 'script-123', getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/ID/exec' }) },
       HtmlService: {}
     },
     props, SpreadsheetApp, Blob, archivosDrive

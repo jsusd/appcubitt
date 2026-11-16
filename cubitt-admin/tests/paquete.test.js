@@ -13,6 +13,8 @@ test('instalar/ está al día con src/ (ejecuta: node construir.js)', () => {
   const r = construir();
   assert.equal(antes.gs, r.gs, 'instalar/Codigo.gs desactualizado');
   assert.equal(antes.html, r.html, 'instalar/Index.html desactualizado');
+  assert.equal(fs.readFileSync(path.join(dir, 'version.json'), 'utf8'), r.versionJson, 'instalar/version.json desactualizado');
+  assert.equal(fs.readFileSync(path.join(dir, 'appsscript.json'), 'utf8'), r.manifiesto, 'instalar/appsscript.json desactualizado');
 });
 
 test('el archivo único Codigo.gs instala, crea admin y registra una venta', () => {

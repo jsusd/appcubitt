@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const src = path.join(__dirname, 'src');
 const out = path.join(__dirname, 'instalar');
-const ORDEN = ['Dominio', 'Datos', 'Auth', 'Ventas', 'Clientes', 'Compras', 'Inventario', 'Reportes', 'Catalogo', 'Migracion', 'Codigo'];
+const ORDEN = ['Dominio', 'Datos', 'Auth', 'Ventas', 'Clientes', 'Compras', 'Inventario', 'Reportes', 'Catalogo', 'Migracion', 'Actualizador', 'Codigo'];
 
 function construir() {
   const extra = fs.readdirSync(src).filter(f => f.endsWith('.gs')).map(f => f.slice(0, -3)).filter(n => !ORDEN.includes(n));
@@ -18,7 +18,16 @@ function construir() {
   fs.mkdirSync(out, { recursive: true });
   fs.writeFileSync(path.join(out, 'Codigo.gs'), gs);
   fs.writeFileSync(path.join(out, 'Index.html'), html);
-  return { gs, html };
+  // Manifiesto y archivo de versión (lo lee el actualizador automático de la app)
+  const manifiesto = fs.readFileSync(path.join(src, 'appsscript.json'), 'utf8');
+  fs.writeFileSync(path.join(out, 'appsscript.json'), manifiesto);
+  const version = (gs.match(/var VERSION_APP = '([^']+)'/) || [])[1];
+  if (!version) throw new Error('Falta VERSION_APP en Actualizador.gs');
+  const novedades = JSON.parse(fs.readFileSync(path.join(__dirname, 'novedades.json'), 'utf8'));
+  const info = { version, notas: novedades[version] || [], permisos: JSON.parse(manifiesto).oauthScopes };
+  const versionJson = JSON.stringify(info, null, 2) + '\n';
+  fs.writeFileSync(path.join(out, 'version.json'), versionJson);
+  return { gs, html, versionJson, manifiesto };
 }
 
 if (require.main === module) {

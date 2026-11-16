@@ -178,6 +178,7 @@ var Catalogo = {
       MODELO_GEMINI: cfg.MODELO_GEMINI || 'gemini-flash-latest',
       HOJA_ORIGEN_ID: cfg.HOJA_ORIGEN_ID || '',
       CARPETA_FACTURAS_ORIGEN_ID: cfg.CARPETA_FACTURAS_ORIGEN_ID || '',
+      RAMA_ACTUALIZACIONES: cfg.RAMA_ACTUALIZACIONES || RAMA_ACTUALIZACIONES,
       geminiConfigurado: !!PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY'),
       baseDeDatosUrl: Db.ss().getUrl()
     };
@@ -186,7 +187,7 @@ var Catalogo = {
   guardarConfig: function (u, d) {
     exigirAdmin(u);
     return conBloqueo(function () {
-      ['NOMBRE_NEGOCIO', 'METODOS_PAGO', 'UBICACION_POR_DEFECTO', 'MODELO_GEMINI', 'HOJA_ORIGEN_ID', 'CARPETA_FACTURAS_ORIGEN_ID'].forEach(function (k) {
+      ['NOMBRE_NEGOCIO', 'METODOS_PAGO', 'UBICACION_POR_DEFECTO', 'MODELO_GEMINI', 'HOJA_ORIGEN_ID', 'CARPETA_FACTURAS_ORIGEN_ID', 'RAMA_ACTUALIZACIONES'].forEach(function (k) {
         if (d[k] !== undefined) Db.guardarConfig(k, texto(d[k]));
       });
       // La clave de Gemini se guarda solo en el servidor (propiedades del script)

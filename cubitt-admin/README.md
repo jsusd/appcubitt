@@ -42,8 +42,22 @@ viven en una hoja de Google nueva y ordenada (una pestaña por tabla), en tu Dri
    - Copia la **URL de la aplicación web**: ese es el enlace del sistema. Puedes agregarlo a la pantalla de inicio del celular.
 6. Abre la URL, escribe el código de instalación y crea tu usuario **administrador**.
 
-Para publicar cambios futuros del código: **Implementar ▸ Administrar implementaciones ▸ editar ▸ Versión: nueva**.
-Así la URL se mantiene.
+### Actualizaciones automáticas (configuración única)
+
+La app puede actualizarse sola desde **Ajustes ▸ Actualizaciones ▸ Actualizar ahora**: descarga de GitHub
+(`instalar/version.json`, `Codigo.gs`, `Index.html`), reemplaza el código con la API de Apps Script, crea una versión y
+apunta la implementación web existente a ella (la URL no cambia). Para activarlo, una sola vez:
+
+1. Activa **API de Google Apps Script** en <https://script.google.com/home/usersettings>.
+2. En el editor: *Configuración del proyecto* ▸ marca *Mostrar el archivo de manifiesto «appsscript.json»* y reemplaza su
+   contenido con [`instalar/appsscript.json`](instalar/appsscript.json) (agrega los permisos `script.projects` y `script.deployments`).
+3. Pega `instalar/Codigo.gs` e `instalar/Index.html` como siempre.
+4. Ejecuta la función **`autorizarActualizaciones`** y acepta los permisos.
+5. Publica por última vez a mano: **Implementar ▸ Administrar implementaciones ▸ editar ▸ Versión: nueva**.
+
+Al entrar como administrador, la app avisa si hay una versión nueva. La rama de GitHub de donde se descarga se cambia en
+*Ajustes ▸ Configuración*. Para publicar una versión: sube `VERSION_APP` en `src/Actualizador.gs`, agrega sus notas en
+`novedades.json`, ejecuta `node construir.js` y sube los cambios a esa rama.
 
 ## Primeros pasos después de instalar
 
