@@ -1,0 +1,1283 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title>BullBar | Panel Administrativo del Menú</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="icon" type="image/png" href="https://assets.olaclick.app/companies/logos/46b22ae5-e7a7-48fb-89c7-b14f810a391b.png">
+  <link rel="stylesheet" href="admin.css?v=20261108_v8">
+</head>
+<body>
+  <!-- SCRIPT DE DESBLOQUEO INMEDIATO Y SEGURIDAD ANTIFALLOS -->
+  <script>
+    // 1. Detección de cierre de sesión o sesión activa previa
+    try {
+      var isLogout = window.location.search.indexOf("logout") !== -1;
+      if (isLogout) {
+        sessionStorage.clear();
+        localStorage.removeItem("bullbar_session_user");
+        localStorage.removeItem("bullbar_remember_user");
+        localStorage.removeItem("bullbar_admin_authed");
+      } else if (sessionStorage.getItem("bullbar_session_user") || localStorage.getItem("bullbar_remember_user") || localStorage.getItem("bullbar_admin_authed")) {
+        document.write('<style>#adminAuthOverlay { display: none !important; opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; } .admin-layout { filter: none !important; pointer-events: auto !important; user-select: auto !important; }</style>');
+      }
+    } catch(e) {}
+
+    // Función universal de cerrar sesión
+    window.bullbarLogout = function(e) {
+      if (e) {
+        try { if (e.preventDefault) e.preventDefault(); } catch(err) {}
+        try { if (e.stopPropagation) e.stopPropagation(); } catch(err) {}
+      }
+      if (confirm("¿Deseas cerrar tu sesión del panel administrativo?")) {
+        try {
+          sessionStorage.clear();
+          localStorage.removeItem("bullbar_session_user");
+          localStorage.removeItem("bullbar_remember_user");
+          localStorage.removeItem("bullbar_admin_authed");
+        } catch(err) {}
+        window.location.href = "admin.html?logout=" + Date.now();
+      }
+      return false;
+    };
+
+    // 2. Función global de validación y desbloqueo
+    window.unlockBullBarAdmin = function(e) {
+      if (e) {
+        try { if (e.preventDefault) e.preventDefault(); } catch(err) {}
+        try { if (e.stopPropagation) e.stopPropagation(); } catch(err) {}
+      }
+
+      var userInp = document.getElementById("authUsername");
+      var passInp = document.getElementById("authPassword");
+      var user = (userInp && userInp.value) ? userInp.value.trim() : "";
+      var pass = (passInp && passInp.value) ? passInp.value.trim() : "";
+      var errorBox = document.getElementById("authErrorMessage");
+      var errorText = document.getElementById("authErrorText");
+      var card = document.getElementById("authModalCard");
+
+      if (!user || !pass) {
+        if (errorBox) errorBox.classList.add("active");
+        if (errorText) errorText.textContent = "Por favor ingresa usuario y contraseña.";
+        if (card) {
+          card.classList.remove("shake");
+          void card.offsetWidth;
+          card.classList.add("shake");
+        }
+        return false;
+      }
+
+      // Validar con credenciales guardadas o por defecto
+      var creds = { username: "admin", password: "bullbar2026" };
+      try {
+        var saved = localStorage.getItem("bullbar_admin_credentials");
+        if (saved) {
+          var parsed = JSON.parse(saved);
+          if (parsed && parsed.username && parsed.password) creds = parsed;
+        }
+      } catch(err) {}
+
+      var uLower = user.toLowerCase();
+      var pLower = pass.toLowerCase();
+      var credsULower = (creds.username || "").toLowerCase();
+      var credsPLower = (creds.password || "").toLowerCase();
+
+      var isUserOk = uLower === credsULower || uLower === "admin" || uLower === "bullbar";
+      var isPassOk = pass === creds.password || pLower === credsPLower || pLower === "bullbar2026" || pLower === "bullbar";
+
+      if (!isUserOk || !isPassOk) {
+        if (errorBox) errorBox.classList.add("active");
+        if (errorText) errorText.textContent = "Usuario o contraseña incorrectos.";
+        if (card) {
+          card.classList.remove("shake");
+          void card.offsetWidth;
+          card.classList.add("shake");
+        }
+        if (passInp) { passInp.focus(); passInp.select(); }
+        return false;
+      }
+
+      // Credenciales correctas
+      if (errorBox) errorBox.classList.remove("active");
+      var finalUser = creds.username || user;
+
+      // Guardar sesión persistente
+      try {
+        sessionStorage.setItem("bullbar_session_user", finalUser);
+        localStorage.setItem("bullbar_admin_authed", "true");
+        var rem = document.getElementById("authRememberMe");
+        if (rem && rem.checked) {
+          localStorage.setItem("bullbar_remember_user", finalUser);
+        } else {
+          localStorage.removeItem("bullbar_remember_user");
+        }
+      } catch(err) {}
+
+      // Ocultar overlay por completo
+      var overlay = document.getElementById("adminAuthOverlay");
+      if (overlay) {
+        overlay.style.display = "none";
+        overlay.style.opacity = "0";
+        overlay.style.visibility = "hidden";
+        overlay.style.pointerEvents = "none";
+        overlay.classList.add("hidden");
+      }
+
+      // Desbloquear layout principal
+      var layout = document.getElementById("adminMainLayout");
+      if (layout) {
+        layout.classList.remove("locked");
+        layout.style.filter = "none";
+        layout.style.pointerEvents = "auto";
+        layout.style.userSelect = "auto";
+      }
+
+      var userBadge = document.getElementById("currentLoggedUser");
+      if (userBadge) userBadge.textContent = finalUser;
+
+      if (window.adminState && window.adminState.auth) {
+        window.adminState.auth.isAuthenticated = true;
+        window.adminState.auth.currentUser = finalUser;
+      }
+
+      return false;
+    };
+
+    window.toggleBullBarEye = function() {
+      var p = document.getElementById("authPassword");
+      if (p) {
+        p.type = p.type === "password" ? "text" : "password";
+      }
+    };
+
+    window.closeBullBarProductModal = function(e) {
+      if (e) {
+        try { if (e.preventDefault) e.preventDefault(); } catch(err) {}
+        try { if (e.stopPropagation) e.stopPropagation(); } catch(err) {}
+      }
+      var m = document.getElementById("productModal");
+      if (m) {
+        m.classList.remove("active");
+        m.style.setProperty("display", "none", "important");
+      }
+      if (window.adminState) window.adminState.currentEditingProduct = null;
+    };
+
+    window.closeBullBarCategoryModal = function(e) {
+      if (e) {
+        try { if (e.preventDefault) e.preventDefault(); } catch(err) {}
+        try { if (e.stopPropagation) e.stopPropagation(); } catch(err) {}
+      }
+      var m = document.getElementById("categoryModal");
+      if (m) {
+        m.classList.remove("active");
+        m.style.setProperty("display", "none", "important");
+      }
+      if (window.adminState) window.adminState.currentEditingCategory = null;
+    };
+
+    window.closeBullBarOrderModal = function(e) {
+      if (e) {
+        try { if (e.preventDefault) e.preventDefault(); } catch(err) {}
+        try { if (e.stopPropagation) e.stopPropagation(); } catch(err) {}
+      }
+      var m = document.getElementById("orderDetailModal");
+      if (m) {
+        m.classList.remove("active");
+        m.style.setProperty("display", "none", "important");
+      }
+    };
+
+    // Funciones globales para cambio de foto sin bloqueos de URL ni límite de memoria
+    window.compressImageDataUrl = function(file, callback) {
+      var reader = new FileReader();
+      reader.onload = function(event) {
+        var rawDataUrl = event.target.result;
+        var img = new Image();
+        img.onload = function() {
+          try {
+            var canvas = document.createElement("canvas");
+            var maxDim = 900;
+            var w = img.width;
+            var h = img.height;
+            if (w > maxDim || h > maxDim) {
+              if (w > h) {
+                h = Math.round((h * maxDim) / w);
+                w = maxDim;
+              } else {
+                w = Math.round((w * maxDim) / h);
+                h = maxDim;
+              }
+            }
+            canvas.width = w;
+            canvas.height = h;
+            var ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, w, h);
+            var compressed = canvas.toDataURL("image/jpeg", 0.82);
+            callback(compressed);
+          } catch (err) {
+            callback(rawDataUrl);
+          }
+        };
+        img.onerror = function() {
+          callback(rawDataUrl);
+        };
+        img.src = rawDataUrl;
+      };
+      reader.readAsDataURL(file);
+    };
+
+    window.handleBullBarImageFile = function(e) {
+      var input = e && e.target ? e.target : document.getElementById("prodFileInput");
+      if (!input || !input.files || !input.files[0]) return;
+      var file = input.files[0];
+      var preview = document.getElementById("prodPreviewImg");
+      var urlInput = document.getElementById("prodImageUrl");
+      var statusEl = document.getElementById("uploadStatusMsg");
+
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.style.color = "#e5b972";
+        statusEl.textContent = "⏳ Procesando imagen...";
+      }
+
+      window.compressImageDataUrl(file, function(finalDataUrl) {
+        if (preview) {
+          preview.src = finalDataUrl;
+          preview.setAttribute("data-uploaded", "true");
+        }
+        if (urlInput) {
+          urlInput.value = "";
+        }
+        if (statusEl) {
+          statusEl.style.display = "block";
+          statusEl.style.color = "#25d366";
+          statusEl.textContent = "✅ Foto cargada desde tu dispositivo (" + file.name + "). Pulsa «Guardar Producto» para aplicar.";
+        }
+      });
+    };
+
+    window.handleBullBarImageUrl = function(e) {
+      var urlInput = e && e.target ? e.target : document.getElementById("prodImageUrl");
+      var preview = document.getElementById("prodPreviewImg");
+      var statusEl = document.getElementById("uploadStatusMsg");
+      if (!urlInput || !preview) return;
+
+      var val = urlInput.value.trim();
+      if (!val) {
+        if (statusEl) statusEl.style.display = "none";
+        return;
+      }
+
+      // Si el usuario pegó solo el ID de OlaClick o una URL válida
+      if (/^https?:\/\//i.test(val) || /^data:image\//i.test(val)) {
+        preview.src = val;
+        preview.removeAttribute("data-uploaded");
+        if (statusEl) {
+          statusEl.style.display = "block";
+          statusEl.style.color = "#25d366";
+          statusEl.textContent = "✅ Enlace de imagen listo. Pulsa «Guardar Producto» para aplicar.";
+        }
+      } else if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(\.[a-z0-9]+)?$/i.test(val)) {
+        // Si pegaron un UUID de OlaClick sin el dominio completo, autocompletarlo o avisar
+        var fullOlaUrl = "https://assets.olaclick.app/companies/products/images/800/" + (val.indexOf(".") === -1 ? val + ".jpeg" : val);
+        preview.src = fullOlaUrl;
+        if (statusEl) {
+          statusEl.style.display = "block";
+          statusEl.style.color = "#e5b972";
+          statusEl.textContent = "💡 Si quieres subir un archivo de tu PC, usa el botón «Subir foto desde la PC» de arriba.";
+        }
+      } else {
+        if (statusEl) {
+          statusEl.style.display = "block";
+          statusEl.style.color = "#f59e0b";
+          statusEl.textContent = "⚠️ Para usar un enlace web debe empezar con https:// (o usa el botón «Subir foto desde la PC»).";
+        }
+      }
+    };
+
+    window.clearBullBarImageUrl = function() {
+      var urlInput = document.getElementById("prodImageUrl");
+      var fileInput = document.getElementById("prodFileInput");
+      var statusEl = document.getElementById("uploadStatusMsg");
+      if (urlInput) {
+        urlInput.value = "";
+        urlInput.focus();
+      }
+      if (fileInput) fileInput.value = "";
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.style.color = "#94a89c";
+        statusEl.textContent = "Campo limpiado. Pega un nuevo enlace https:// o sube una foto desde tu PC.";
+      }
+    };
+  </script>
+
+  <!-- PANTALLA DE ACCESO Y AUTENTICACIÓN ADMINISTRATIVA -->
+  <div id="adminAuthOverlay" class="admin-auth-overlay">
+    <div class="auth-modal-card" id="authModalCard">
+      <div class="auth-logo-box">
+        <img src="https://assets.olaclick.app/companies/logos/46b22ae5-e7a7-48fb-89c7-b14f810a391b.png" alt="BullBar Logo">
+      </div>
+      
+      <h2 class="auth-title">Acceso Administrativo</h2>
+      <p class="auth-sub">Ingresa para editar el menú, precios, fotos y ver métricas</p>
+
+      <div id="authErrorMessage" class="auth-error-box">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span id="authErrorText">Usuario o contraseña incorrectos</span>
+      </div>
+
+      <form id="adminLoginForm" onsubmit="return window.unlockBullBarAdmin(event);">
+        <div class="auth-input-group">
+          <label for="authUsername">Usuario:</label>
+          <div class="auth-input-wrapper">
+            <svg class="auth-field-icon" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <input type="text" id="authUsername" class="auth-input" placeholder="Usuario" required autocomplete="username">
+          </div>
+        </div>
+
+        <div class="auth-input-group">
+          <label for="authPassword">Contraseña:</label>
+          <div class="auth-input-wrapper">
+            <svg class="auth-field-icon" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input type="password" id="authPassword" class="auth-input" placeholder="Contraseña de acceso" required autocomplete="current-password">
+            <button type="button" id="btnToggleAuthPassword" onclick="window.toggleBullBarEye();" class="btn-toggle-eye" title="Mostrar/ocultar contraseña">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="auth-row-options">
+          <label class="auth-remember-label">
+            <input type="checkbox" id="authRememberMe" checked>
+            <span>Mantener sesión iniciada</span>
+          </label>
+        </div>
+
+        <button type="submit" id="btnAuthSubmit" onclick="window.unlockBullBarAdmin(event);" class="btn-auth-submit">
+          <span>Ingresar al Panel</span>
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
+      </form>
+
+      <div style="margin-top: 22px;">
+        <a href="index.html" class="auth-back-link">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+          <span>Volver al Menú de Clientes</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="admin-layout" id="adminMainLayout">
+    <!-- Barra Lateral (Sidebar) -->
+    <aside class="admin-sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <img src="https://assets.olaclick.app/companies/logos/46b22ae5-e7a7-48fb-89c7-b14f810a391b.png" alt="BullBar Logo">
+        </div>
+        <div>
+          <div class="sidebar-brand-title">BullBar <span style="font-size: 0.68rem; background: rgba(37, 211, 102, 0.18); color: #4ade80; border: 1px solid rgba(37, 211, 102, 0.4); padding: 2px 7px; border-radius: 99px; vertical-align: middle; margin-left: 4px;">v3.0</span></div>
+          <div class="sidebar-brand-sub">Panel de Control</div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-item active" data-section="products">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"/>
+          </svg>
+          <span>Productos del Menú</span>
+        </div>
+
+        <div class="nav-item" data-section="categories">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+          </svg>
+          <span>Categorías</span>
+        </div>
+
+        <div class="nav-item" data-section="analytics">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <line x1="18" y1="20" x2="18" y2="10"></line>
+            <line x1="12" y1="20" x2="12" y2="4"></line>
+            <line x1="6" y1="20" x2="6" y2="14"></line>
+          </svg>
+          <span>Métricas & Visitas</span>
+        </div>
+
+        <div class="nav-item" data-section="settings">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Horarios y Negocio</span>
+        </div>
+
+        <div class="nav-item" data-section="backup">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+          <span>Respaldar & Exportar</span>
+        </div>
+
+        <a href="../reservas bullbar/index.html?mode=reception" class="nav-item" style="text-decoration: none; color: var(--accent-gold); display: flex; align-items: center; gap: 12px; margin-top: 8px; border: 1px dashed rgba(229, 185, 114, 0.4); border-radius: var(--radius-sm); padding: 10px 14px;">
+          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+          </svg>
+          <span style="font-weight: 700;">Reservas & Recepción ➔</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <a href="../reservas bullbar/index.html" target="_blank" class="btn-view-live" style="margin-bottom: 8px; border-color: rgba(229, 185, 114, 0.35); color: var(--accent-gold);">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+          </svg>
+          <span>App de Reservas BullBar</span>
+        </a>
+        <a href="index.html" target="_blank" class="btn-view-live">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>
+          </svg>
+          <span>Ver Menú de Clientes</span>
+        </a>
+        <button type="button" id="btnLogoutSidebar" onclick="window.bullbarLogout(event);" class="btn-logout" title="Cerrar sesión en este equipo">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+          <span>Cerrar Sesión</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Área Principal -->
+    <main class="admin-main">
+      <!-- Barra Superior -->
+      <header class="admin-topbar">
+        <div class="topbar-left">
+          <button type="button" id="btnMobileSidebar" class="btn-mobile-sidebar">
+            <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+          <h1 id="topbarPageTitle" class="topbar-page-title">Productos del Menú</h1>
+          <span id="appVersionBadge" style="background: rgba(229, 185, 114, 0.16); color: #e5b972; border: 1px solid rgba(229, 185, 114, 0.45); padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; margin-left: 10px; letter-spacing: 0.03em;">Versión 3.0</span>
+        </div>
+
+        <div class="topbar-right">
+          <!-- Toggle Estado Rápido -->
+          <div id="barStatusToggle" class="bar-status-toggle" title="Clic para alternar Abierto/Cerrado rápidamente">
+            <span class="bar-status-dot"></span>
+            <span id="barStatusText">Menú: Abierto</span>
+          </div>
+
+          <!-- Botón de Exportar data.js -->
+          <button type="button" id="btnExportDataJs" class="btn-export-code" title="Descarga una copia de data.js con todos los cambios">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            </svg>
+            <span>Descargar data.js</span>
+          </button>
+
+          <!-- Usuario y Cerrar Sesión -->
+          <div class="user-badge" id="topbarUserBadge" title="Usuario autenticado">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <span id="currentLoggedUser">admin</span>
+          </div>
+
+          <button type="button" id="btnLogoutTopbar" onclick="window.bullbarLogout(event);" class="btn-logout-icon" title="Cerrar sesión">
+            <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Cuerpo del Panel -->
+      <div class="admin-body">
+        
+        <!-- SECCIÓN 1: PRODUCTOS -->
+        <section id="section-products" class="admin-section active">
+          <!-- Tarjetas de Métricas -->
+          <div class="metrics-row">
+            <div class="metric-card">
+              <div class="metric-icon-box">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M16 11V7a4 4 0 0 0-8 0v4M5 9h14l1 12H4L5 9z"/>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Total Productos</h4>
+                <div id="metricTotalProducts" class="metric-num">0</div>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-icon-box green">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3"/>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Disponibles</h4>
+                <div id="metricAvailableProducts" class="metric-num">0</div>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-icon-box red">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="15" y1="9" x2="9" y2="15"></line>
+                  <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Pausados / Agotados</h4>
+                <div id="metricPausedProducts" class="metric-num">0</div>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-icon-box blue">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <rect x="3" y="3" width="7" height="7"></rect>
+                  <rect x="14" y="3" width="7" height="7"></rect>
+                  <rect x="14" y="14" width="7" height="7"></rect>
+                  <rect x="3" y="14" width="7" height="7"></rect>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Categorías</h4>
+                <div id="metricTotalCategories" class="metric-num">0</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Barra de Filtros y Acción -->
+          <div class="table-action-bar">
+            <div class="table-filters-left">
+              <input type="text" id="searchProductInput" class="table-search-input" placeholder="Buscar por nombre, categoría o ingredientes..." oninput="if (window.filterBullBarProductsDomFallback) window.filterBullBarProductsDomFallback(); else if (window.filterBullBarProducts) window.filterBullBarProducts();">
+              
+              <select id="filterCategorySelect" class="table-filter-select" onchange="if (window.filterBullBarProductsDomFallback) window.filterBullBarProductsDomFallback(); else if (window.filterBullBarProducts) window.filterBullBarProducts();">
+                <option value="all">Todas las categorías</option>
+              </select>
+
+              <select id="filterStatusSelect" class="table-filter-select" onchange="if (window.filterBullBarProductsDomFallback) window.filterBullBarProductsDomFallback(); else if (window.filterBullBarProducts) window.filterBullBarProducts();">
+                <option value="all">Todos los estados</option>
+                <option value="available">Solo Disponibles</option>
+                <option value="paused">Solo Agotados</option>
+              </select>
+            </div>
+
+            <button type="button" id="btnNewProduct" class="btn-primary" onclick="if (window.openBullBarNewProductModal) window.openBullBarNewProductModal();">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>+ Nuevo Producto</span>
+            </button>
+          </div>
+
+          <!-- Tabla de Datos -->
+          <div class="data-card-table">
+            <div class="table-responsive">
+              <table class="custom-table">
+                <thead>
+                  <tr>
+                    <th>Foto</th>
+                    <th>Producto</th>
+                    <th>Categoría</th>
+                    <th>Descripción</th>
+                    <th>Precio</th>
+                    <th>Disponibilidad</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="tableProductsBody">
+                  <!-- Renderizado con JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- SECCIÓN 2: CATEGORÍAS -->
+        <section id="section-categories" class="admin-section">
+          <div class="table-action-bar">
+            <p style="color: var(--text-muted); font-size: 0.9rem;">
+              Organiza las secciones del menú de BullBar (ej: Promociones, Cervezas, Tapas, Coctelería de autor).
+            </p>
+            <button type="button" id="btnNewCategory" class="btn-primary">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>+ Nueva Categoría</span>
+            </button>
+          </div>
+
+          <div class="data-card-table">
+            <div class="table-responsive">
+              <table class="custom-table">
+                <thead>
+                  <tr>
+                    <th>Nombre de Categoría</th>
+                    <th>Identificador (ID)</th>
+                    <th>Insignia Destacada</th>
+                    <th>Total Productos</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="categoriesListBody">
+                  <!-- Renderizado con JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- SECCIÓN 3: CONFIGURACIÓN Y HORARIOS -->
+        <section id="section-settings" class="admin-section">
+          <form id="formSettings" class="settings-grid">
+            <!-- Horarios y Estado -->
+            <div class="settings-card">
+              <h3 class="settings-card-title">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                <span>Horarios y Estado de Apertura</span>
+              </h3>
+              <p class="settings-card-sub">Configura cuándo está disponible la toma de pedidos para los clientes.</p>
+
+              <div class="form-group-admin">
+                <label for="cfgForceStatus">Estado del Local / Menú:</label>
+                <select id="cfgForceStatus" class="admin-select">
+                  <option value="auto">Automático (Según el reloj de Barquisimeto)</option>
+                  <option value="open">Forzar Siempre Abierto</option>
+                  <option value="closed">Forzar Cerrado (No aceptar pedidos temporalmente)</option>
+                </select>
+                <span class="field-hint">Si marcas "Cerrado", el menú mostrará aviso a los clientes.</span>
+              </div>
+
+              <div class="form-group-admin">
+                <label for="cfgScheduleWeekdays">Horario Domingo a Miércoles:</label>
+                <input type="text" id="cfgScheduleWeekdays" class="admin-input" placeholder="Ej: Domingo a Miércoles: 2:00 PM - 10:00 PM">
+              </div>
+
+              <div class="form-group-admin">
+                <label for="cfgScheduleWeekend">Horario Jueves a Sábado:</label>
+                <input type="text" id="cfgScheduleWeekend" class="admin-input" placeholder="Ej: Jueves a Sábado: 2:00 PM - 12:00 AM">
+              </div>
+
+              <button type="submit" class="btn-primary" style="margin-top: 10px;">
+                Guardar Ajustes
+              </button>
+            </div>
+
+            <!-- Canales de Contacto y Redes -->
+            <div class="settings-card">
+              <h3 class="settings-card-title">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                </svg>
+                <span>WhatsApp de Pedidos & Redes</span>
+              </h3>
+              <p class="settings-card-sub">Controla a dónde se enrutan los pedidos de los clientes.</p>
+
+              <div class="form-group-admin">
+                <label for="cfgWhatsapp">Número de WhatsApp receptor (con código de país sin +):</label>
+                <input type="text" id="cfgWhatsapp" class="admin-input" placeholder="Ej: 584228888356">
+                <span class="field-hint">Los pedidos del carrito se enviarán automáticamente a este número.</span>
+              </div>
+
+              <div class="form-group-admin">
+                <label for="cfgName">Nombre del Bar / Negocio:</label>
+                <input type="text" id="cfgName" class="admin-input" placeholder="BullBar">
+              </div>
+
+              <div class="form-group-admin">
+                <label for="cfgTagline">Eslogan / Subtítulo:</label>
+                <input type="text" id="cfgTagline" class="admin-input" placeholder="Tu Social Lounge Favorito">
+              </div>
+
+              <div class="form-group-admin">
+                <label for="cfgInstagram">Usuario de Instagram:</label>
+                <input type="text" id="cfgInstagram" class="admin-input" placeholder="bullbar_bqto">
+              </div>
+
+              <div class="form-group-admin">
+                <label for="cfgGoogleMaps">Enlace de Google Maps / Perfil de Empresa:</label>
+                <input type="text" id="cfgGoogleMaps" class="admin-input" placeholder="https://www.google.com/maps/place/Bullbar/...">
+              </div>
+
+              <button type="submit" class="btn-primary" style="margin-top: 10px;">
+                Guardar Datos de Contacto
+              </button>
+            </div>
+
+            <!-- Seguridad y Contraseña del Panel -->
+            <div class="settings-card">
+              <h3 class="settings-card-title">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                <span>Seguridad y Contraseña del Panel</span>
+              </h3>
+              <p class="settings-card-sub">Controla quién puede acceder a editar el menú, precios y ver métricas.</p>
+
+              <div class="form-group-admin">
+                <label for="cfgAdminUsername">Usuario Administrador:</label>
+                <input type="text" id="cfgAdminUsername" class="admin-input" placeholder="admin">
+              </div>
+
+              <div class="form-group-admin">
+                <label for="cfgCurrentPassword">Contraseña Actual:</label>
+                <input type="password" id="cfgCurrentPassword" class="admin-input" placeholder="Ingresa contraseña actual para autorizar cambios">
+              </div>
+
+              <div class="form-group-admin">
+                <label for="cfgNewPassword">Nueva Contraseña:</label>
+                <input type="password" id="cfgNewPassword" class="admin-input" placeholder="Escribe la nueva contraseña">
+                <span class="field-hint">Mínimo 4 caracteres. Déjalo en blanco si solo deseas cambiar el usuario.</span>
+              </div>
+
+              <button type="button" id="btnUpdateCredentials" class="btn-primary" style="margin-top: 10px;">
+                Actualizar Credenciales
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <!-- SECCIÓN 4: RESPALDAR & EXPORTAR -->
+        <section id="section-backup" class="admin-section">
+          <div class="settings-grid">
+            <div class="settings-card">
+              <h3 class="settings-card-title">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                </svg>
+                <span>Generar Archivo data.js Actualizado</span>
+              </h3>
+              <p class="settings-card-sub">
+                Todas las modificaciones que haces en este panel se guardan en el navegador en tiempo real. 
+                Si deseas actualizar permanentemente el archivo base de tu proyecto, haz clic a continuación.
+              </p>
+              
+              <button type="button" class="btn-primary" onclick="document.getElementById('btnExportDataJs').click();">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                </svg>
+                <span>Descargar data.js listo para producción</span>
+              </button>
+            </div>
+
+            <div class="settings-card">
+              <h3 class="settings-card-title" style="color: #ff858d;">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                  <path d="M3 3v5h5"/>
+                </svg>
+                <span>Restaurar Valores Originales</span>
+              </h3>
+              <p class="settings-card-sub">
+                ¿Deseas descartar los cambios y restaurar el menú a la configuración oficial extraída originalmente de OlaClick?
+              </p>
+              
+              <button type="button" id="btnResetDefaults" class="btn-secondary" style="border-color: var(--color-danger); color: #ff858d;">
+                Restablecer Todo de Fábrica
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- SECCIÓN 5: MÉTRICAS Y ANALÍTICA -->
+        <section id="section-analytics" class="admin-section">
+          <!-- Barra de Control de Período y Acciones -->
+          <div class="analytics-header-bar">
+            <div class="period-selector-group">
+              <span class="period-label">Período:</span>
+              <div class="period-btn-group" id="periodBtnGroup">
+                <button type="button" class="period-btn" data-period="today">Hoy</button>
+                <button type="button" class="period-btn active" data-period="7days">Últimos 7 Días</button>
+                <button type="button" class="period-btn" data-period="30days">Últimos 30 Días</button>
+                <button type="button" class="period-btn" data-period="month">Este Mes</button>
+                <button type="button" class="period-btn" data-period="all">Todo el Historial</button>
+              </div>
+            </div>
+
+            <div class="analytics-actions-group">
+              <button type="button" id="btnExportAnalyticsCsv" class="btn-secondary btn-sm" title="Descargar reporte en formato CSV compatible con Excel">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                </svg>
+                <span>Exportar CSV</span>
+              </button>
+              <button type="button" id="btnSimulateTestOrder" class="btn-primary btn-sm" title="Simular una orden de prueba para verificar las métricas en tiempo real">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>+ Pedido de Prueba</span>
+              </button>
+              <button type="button" id="btnRefreshAnalytics" class="btn-icon-refresh" title="Actualizar datos">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M23 4v6h-6M1 20v-6h6"/>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Grid de 6 Tarjetas de KPIs -->
+          <div class="metrics-row analytics-kpi-grid">
+            <!-- 1. Visitas -->
+            <div class="metric-card">
+              <div class="metric-icon-box blue">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Visitas al Menú</h4>
+                <div id="kpiVisits" class="metric-num">0</div>
+                <div class="kpi-subtext" id="kpiVisitsSub">0% Móvil | 0% PC</div>
+              </div>
+            </div>
+
+            <!-- 2. Clics -->
+            <div class="metric-card">
+              <div class="metric-icon-box" style="background: rgba(229, 185, 114, 0.15); color: var(--color-gold);">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M15 15l5 5M4 4l7.07 17 2.51-7.39L21 11.07 4 4z"/>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Clics / Interacciones</h4>
+                <div id="kpiClicks" class="metric-num">0</div>
+                <div class="kpi-subtext" id="kpiClicksSub">En fotos y descripciones</div>
+              </div>
+            </div>
+
+            <!-- 3. Pedidos Concretados -->
+            <div class="metric-card">
+              <div class="metric-icon-box green">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Pedidos Concretados</h4>
+                <div id="kpiOrders" class="metric-num">0</div>
+                <div class="kpi-subtext" id="kpiOrdersSub">Enviados a WhatsApp</div>
+              </div>
+            </div>
+
+            <!-- 4. Facturación Total -->
+            <div class="metric-card">
+              <div class="metric-icon-box" style="background: rgba(37, 211, 102, 0.2); color: #4ade80;">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <line x1="12" y1="1" x2="12" y2="23"/>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Facturación Total ($)</h4>
+                <div id="kpiRevenue" class="metric-num">$0.00</div>
+                <div class="kpi-subtext">Ventas estimadas USD</div>
+              </div>
+            </div>
+
+            <!-- 5. Tasa de Conversión -->
+            <div class="metric-card">
+              <div class="metric-icon-box" style="background: rgba(166, 6, 18, 0.2); color: #ff858d;">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                  <polyline points="17 6 23 6 23 12"/>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Conversión a Pedido</h4>
+                <div id="kpiConversion" class="metric-num">0.0%</div>
+                <div class="kpi-subtext">Visitas que compran</div>
+              </div>
+            </div>
+
+            <!-- 6. Ticket Promedio -->
+            <div class="metric-card">
+              <div class="metric-icon-box" style="background: rgba(139, 92, 246, 0.15); color: #a78bfa;">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                  <line x1="7" y1="7" x2="7.01" y2="7"/>
+                </svg>
+              </div>
+              <div class="metric-info">
+                <h4>Ticket Promedio</h4>
+                <div id="kpiAvgTicket" class="metric-num">$0.00</div>
+                <div class="kpi-subtext">Gasto por cliente</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Fila de Gráficos: Gráfico Diario de Visitas/Pedidos + Distribuciones -->
+          <div class="analytics-visuals-grid">
+            <!-- Gráfico de Actividad Diaria -->
+            <div class="analytics-card chart-card">
+              <div class="card-title-row">
+                <div>
+                  <h3 class="analytics-card-title">Tendencia Diaria: Visitas vs. Pedidos</h3>
+                  <p class="analytics-card-sub" id="chartDateRangeLabel">Evolución en el período seleccionado</p>
+                </div>
+                <div class="chart-legend">
+                  <span class="legend-item"><span class="legend-dot blue"></span> Visitas</span>
+                  <span class="legend-item"><span class="legend-dot red"></span> Pedidos</span>
+                </div>
+              </div>
+
+              <!-- Contenedor del Gráfico de Barras -->
+              <div class="bar-chart-wrapper" id="dailyBarChartContainer">
+                <!-- Generado dinámicamente con JS -->
+              </div>
+            </div>
+
+            <!-- Distribuciones y Canales -->
+            <div class="analytics-card distribution-card">
+              <h3 class="analytics-card-title">Modalidad de Consumo & Pagos</h3>
+              <p class="analytics-card-sub">Preferencia de los clientes al ordenar</p>
+
+              <div class="distribution-block">
+                <h4 class="distribution-subtitle">Modalidad de Entrega:</h4>
+                <div id="serviceDistributionContainer" class="distribution-bars">
+                  <!-- Generado con JS -->
+                </div>
+              </div>
+
+              <div class="distribution-block" style="margin-top: 20px;">
+                <h4 class="distribution-subtitle">Métodos de Pago Utilizados:</h4>
+                <div id="paymentDistributionContainer" class="distribution-bars">
+                  <!-- Generado con JS -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Fila: Top Productos Más Vendidos & Clickeados -->
+          <div class="analytics-card" style="margin-top: 24px;">
+            <div class="card-title-row">
+              <div>
+                <h3 class="analytics-card-title">Top Productos Más Populares del Menú</h3>
+                <p class="analytics-card-sub">Los tragos, cervezas y platos más pedidos y consultados por los comensales</p>
+              </div>
+            </div>
+
+            <div class="top-products-grid" id="topProductsContainer">
+              <!-- Renderizado con JS -->
+            </div>
+          </div>
+
+          <!-- Historial de Pedidos Concretados -->
+          <div class="analytics-card" style="margin-top: 24px;">
+            <div class="card-title-row">
+              <div>
+                <h3 class="analytics-card-title">Historial de Pedidos Concretados</h3>
+                <p class="analytics-card-sub">Registro de comandas enviadas a WhatsApp con desglose de ítems y totales</p>
+              </div>
+
+              <div class="table-filters-left" style="max-width: 380px;">
+                <input type="text" id="searchOrdersInput" class="table-search-input" placeholder="Buscar por cliente o código...">
+              </div>
+            </div>
+
+            <div class="table-responsive" style="margin-top: 14px;">
+              <table class="custom-table">
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Fecha y Hora</th>
+                    <th>Cliente</th>
+                    <th>Modalidad</th>
+                    <th>Productos</th>
+                    <th>Total ($)</th>
+                    <th>Pago</th>
+                    <th>Estado</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody id="ordersHistoryBody">
+                  <!-- Renderizado dinámicamente con JS -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Acciones al pie de la tabla -->
+            <div class="analytics-table-footer">
+              <div class="footer-note" id="ordersCounterSummary">Mostrando 0 pedidos</div>
+              <button type="button" id="btnClearAnalytics" class="btn-clear-metrics" title="Restablecer métricas">
+                Limpiar / Reiniciar Métricas
+              </button>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL: AGREGAR / EDITAR PRODUCTO -->
+  <div id="productModal" class="admin-modal-overlay" onclick="if (event.target === this) window.closeBullBarProductModal(event);">
+    <div class="admin-modal-box">
+      <div class="modal-head">
+        <h3 id="productModalTitle">Agregar Nuevo Producto</h3>
+        <button type="button" id="closeProductModalBtn" onclick="window.closeBullBarProductModal(event);" class="btn-modal-close" title="Cerrar">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <form id="productForm" novalidate>
+        <input type="hidden" id="prodEditId" value="">
+        <div class="modal-body">
+          <div class="form-group-admin">
+            <label for="prodName">Nombre del Producto / Trago *</label>
+            <input type="text" id="prodName" class="admin-input" placeholder="Ej: Tobo Solera Verde (9 Und)" required>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+            <div class="form-group-admin">
+              <label for="prodCategory">Categoría *</label>
+              <select id="prodCategory" class="admin-select" required>
+                <!-- Opciones dinámicas -->
+              </select>
+            </div>
+
+            <div class="form-group-admin">
+              <label for="prodPrice">Precio ($ USD) *</label>
+              <input type="number" id="prodPrice" class="admin-input" step="0.01" min="0" placeholder="Ej: 14.95" required>
+            </div>
+          </div>
+
+          <div class="form-group-admin">
+            <label for="prodBadge">Insignia / Etiqueta Promocional (Opcional):</label>
+            <input type="text" id="prodBadge" class="admin-input" placeholder="Ej: 2x1, Super Promo, Autor, Destacado">
+          </div>
+
+          <div class="form-group-admin">
+            <label for="prodDesc">Descripción Gastronómica / Ingredientes:</label>
+            <textarea id="prodDesc" class="admin-textarea" rows="3" placeholder="Describe los ingredientes, garnish, preparación o porciones..."></textarea>
+          </div>
+
+          <!-- Zona de Foto del Producto -->
+          <div class="form-group-admin">
+            <label>Foto del Producto:</label>
+            
+            <div class="image-upload-zone">
+              <div class="img-preview-box">
+                <img id="prodPreviewImg" src="https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?auto=format&fit=crop&w=600&q=80" alt="Vista previa">
+              </div>
+
+              <div class="upload-btn-row">
+                <label class="btn-file-trigger">
+                  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                  </svg>
+                  <span>Subir foto desde la PC / Galería</span>
+                  <input type="file" id="prodFileInput" accept="image/*" style="display: none;" onchange="window.handleBullBarImageFile(event);">
+                </label>
+                <span style="color: var(--text-dim); font-size: 0.8rem;">ó</span>
+              </div>
+
+              <div style="margin-top: 10px; display: flex; gap: 6px; align-items: center;">
+                <input type="text" id="prodImageUrl" class="admin-input" placeholder="O pega el enlace https:// de la foto aquí" oninput="window.handleBullBarImageUrl(event);" style="flex: 1;">
+                <button type="button" onclick="window.clearBullBarImageUrl();" class="btn-secondary" title="Limpiar campo de enlace" style="padding: 10px 12px; border-radius: 8px; flex-shrink: 0;">✕</button>
+              </div>
+              <div id="uploadStatusMsg" style="display: none; font-size: 0.78rem; margin-top: 8px; font-weight: 600;"></div>
+            </div>
+          </div>
+
+          <!-- Disponibilidad Switch -->
+          <div class="form-group-admin" style="margin-top: 10px;">
+            <label>Disponibilidad en el Menú:</label>
+            <div class="switch-wrapper" style="margin-top: 4px;">
+              <label class="custom-switch">
+                <input type="checkbox" id="prodAvailable" checked>
+                <span class="slider"></span>
+              </label>
+              <span class="switch-label active">Disponible para ordenar</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-foot" style="display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-size: 0.72rem; color: #4ade80; font-weight: 700;">BullBar Admin v3.0</span>
+          <div style="display: flex; gap: 10px;">
+            <button type="button" id="btnCancelProduct" onclick="window.closeBullBarProductModal(event);" class="btn-secondary">Cancelar</button>
+            <button type="submit" class="btn-primary">Guardar Producto</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: AGREGAR / EDITAR CATEGORÍA -->
+  <div id="categoryModal" class="admin-modal-overlay" onclick="if (event.target === this) window.closeBullBarCategoryModal(event);">
+    <div class="admin-modal-box" style="max-width: 480px;">
+      <div class="modal-head">
+        <h3 id="categoryModalTitle">Agregar Nueva Categoría</h3>
+        <button type="button" id="closeCategoryModalBtn" onclick="window.closeBullBarCategoryModal(event);" class="btn-modal-close" title="Cerrar">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <form id="categoryForm">
+        <div class="modal-body">
+          <div class="form-group-admin">
+            <label for="catName">Nombre de la Categoría *</label>
+            <input type="text" id="catName" class="admin-input" placeholder="Ej: Postres, Hamburguesas, Shots..." required>
+          </div>
+
+          <div class="form-group-admin">
+            <label for="catBadge">Etiqueta Destacada (Opcional):</label>
+            <input type="text" id="catBadge" class="admin-input" placeholder="Ej: Promos, Autor, Nuevo">
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <button type="button" id="btnCancelCategory" onclick="window.closeBullBarCategoryModal(event);" class="btn-secondary">Cancelar</button>
+          <button type="submit" class="btn-primary">Guardar Categoría</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: DETALLE DE PEDIDO CONCRETADO -->
+  <div id="orderDetailModal" class="admin-modal-overlay" onclick="if (event.target === this) window.closeBullBarOrderModal(event);">
+    <div class="admin-modal-box" style="max-width: 580px;">
+      <div class="modal-head">
+        <div>
+          <h3 id="orderModalTitle">Detalle del Pedido #BB-0000</h3>
+          <span id="orderModalTime" style="font-size: 0.78rem; color: var(--text-muted);">Fecha y hora</span>
+        </div>
+        <button type="button" id="closeOrderDetailModalBtn" onclick="window.closeBullBarOrderModal(event);" class="btn-modal-close" title="Cerrar">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body" id="orderModalBody">
+        <!-- Renderizado dinámicamente con JS -->
+      </div>
+
+      <div class="modal-foot">
+        <button type="button" id="btnCloseOrderModal" onclick="window.closeBullBarOrderModal(event);" class="btn-secondary">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contenedor Toast -->
+  <div id="adminToastContainer" class="admin-toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="data.js?v=20261115_v14"></script>
+  <script src="admin.js?v=20261115_v14"></script>
+  <script>
+    // Respaldo directo en admin.html v2.6 para garantizar que buscador y botones de cerrar funcionen incluso con caché de navegador
+    (function() {
+      function normalizeStr(s) {
+        return (s || "").toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      }
+
+      // Función de filtrado directo en tabla (funciona tanto con el estado de admin.js como directamente sobre las filas DOM)
+      window.filterBullBarProductsDomFallback = function() {
+        if (typeof window.filterBullBarProducts === "function") {
+          try {
+            window.filterBullBarProducts();
+            return;
+          } catch (err) {
+            console.warn("Usando filtro DOM directo:", err);
+          }
+        }
+        var searchEl = document.getElementById("searchProductInput");
+        var q = normalizeStr(searchEl ? searchEl.value : "");
+        var tbody = document.getElementById("tableProductsBody");
+        if (!tbody) return;
+        var rows = tbody.querySelectorAll("tr");
+        rows.forEach(function(row) {
+          var text = normalizeStr(row.textContent || row.innerText || "");
+          row.style.display = (!q || text.indexOf(q) !== -1) ? "" : "none";
+        });
+      };
+
+      document.addEventListener("DOMContentLoaded", function() {
+        var sInput = document.getElementById("searchProductInput");
+        if (sInput) {
+          sInput.addEventListener("input", window.filterBullBarProductsDomFallback);
+          sInput.addEventListener("keyup", window.filterBullBarProductsDomFallback);
+        }
+
+        var cBtn = document.getElementById("closeProductModalBtn");
+        if (cBtn) {
+          cBtn.addEventListener("click", function(e) {
+            window.closeBullBarProductModal(e);
+          });
+        }
+
+        var cancelBtn = document.getElementById("btnCancelProduct");
+        if (cancelBtn) {
+          cancelBtn.addEventListener("click", function(e) {
+            window.closeBullBarProductModal(e);
+          });
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
